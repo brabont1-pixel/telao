@@ -5,7 +5,7 @@
 // =====================================================================
 window.TELAO_CONFIG = {
   SUPABASE_URL: 'https://wslvatpyzvbrbfszdavf.supabase.co',
-  SUPABASE_ANON_KEY: 'COLE_AQUI_A_CHAVE_sb_publishable',
+  SUPABASE_ANON_KEY: 'sb_publishable_j0PpUUFg6MLeczW6GUFv6A_bEcW7q0Z',
 
   // Pagamento do Telão+ pelo Mercado Pago. Deixe false até configurar (veja pagamento-para-depois/LEIA-ME.md).
   // Enquanto estiver false, o admin ativa o plano manualmente no "Painel do admin".
