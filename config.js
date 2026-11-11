@@ -4,8 +4,8 @@
 // A chave "anon public" pode ficar no site: a segurança é feita pelo banco (RLS).
 // =====================================================================
 window.TELAO_CONFIG = {
-  SUPABASE_URL: 'COLE_AQUI_A_PROJECT_URL',          // ex: https://abcdxyz.supabase.co
-  SUPABASE_ANON_KEY: 'COLE_AQUI_A_CHAVE_ANON_PUBLIC',
+  SUPABASE_URL: 'https://supabase.com/dashboard/project/wslvatpyzvbrbfszdavf',          // ex: https://abcdxyz.supabase.co
+  SUPABASE_ANON_KEY: 'sb_secret_w1on0jQ4HhpN-xibDp6M2g_SMw_TY-1',
 
   // Servidores para conectar as chamadas. Os STUN abaixo funcionam na maioria das redes.
   // Se algum amigo não conseguir conectar (4G, rede de faculdade/empresa), adicione um TURN,
