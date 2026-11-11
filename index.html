@@ -1,0 +1,81 @@
+<!DOCTYPE html>
+<html lang="pt-BR">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<meta name="theme-color" content="#1e1f22">
+<meta name="apple-mobile-web-app-capable" content="yes">
+<meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
+<meta name="apple-mobile-web-app-title" content="Telão">
+<meta name="description" content="Telão — servidores, chat, voz e compartilhamento de tela com os amigos.">
+<title>Telão</title>
+<link rel="manifest" href="/manifest.webmanifest">
+<link rel="icon" href="/icons/icon.svg" type="image/svg+xml">
+<link rel="apple-touch-icon" href="/icons/icon-192.png">
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700;800&display=swap" rel="stylesheet">
+<link rel="stylesheet" href="/style.css">
+</head>
+<body>
+
+<!-- Configuração faltando -->
+<div id="setup" class="center hidden">
+  <div class="authcard setup">
+    <div class="brand"><span class="dot"></span>Telão</div>
+    <h2>Falta conectar o banco</h2>
+    <p class="sub">Abra o arquivo <code>config.js</code> e cole os dados do seu projeto Supabase.</p>
+    <ol>
+      <li>Supabase → seu projeto → <b>Project Settings → API</b></li>
+      <li>Copie a <b>Project URL</b> e a chave <b>anon public</b></li>
+      <li>Cole no <code>config.js</code> e publique de novo na Vercel</li>
+    </ol>
+  </div>
+</div>
+
+<!-- Login / cadastro -->
+<div id="auth" class="center hidden">
+  <form class="authcard" id="authForm" autocomplete="on">
+    <div class="brand"><span class="dot"></span>Telão</div>
+    <h2 id="authTitle">Boas-vindas de volta!</h2>
+    <p class="sub" id="authSub">Que bom te ver de novo.</p>
+    <div class="err" id="authErr"></div>
+    <label class="field"><span>E-mail</span><input class="inp" id="aEmail" type="email" required autocomplete="email"></label>
+    <div id="regFields" class="hidden">
+      <label class="field"><span>Nome de exibição</span><input class="inp" id="aDisplay" maxlength="32" placeholder="Como os amigos te veem"></label>
+      <label class="field"><span>Nome de usuário</span><input class="inp" id="aUser" maxlength="20" placeholder="sem espaços, ex: gabriel_07" autocomplete="username"></label>
+    </div>
+    <label class="field"><span>Senha</span><input class="inp" id="aPass" type="password" required minlength="6" autocomplete="current-password"></label>
+    <button class="btn full" id="authBtn">Entrar</button>
+    <div class="switch" id="authSwitch">Precisa de uma conta? <a id="toReg">Cadastre-se</a></div>
+  </form>
+</div>
+
+<!-- App -->
+<div id="app" class="hidden">
+  <nav id="rail"></nav>
+  <aside id="sidebar">
+    <div id="sbHead" class="sbhead"></div>
+    <div id="sbBody" class="sbbody"></div>
+    <div id="install" class="installbar hidden">📲 <span><b>Instale o Telão</b> como app</span><button class="btn sm" id="installBtn" style="margin-left:auto">Instalar</button></div>
+    <div id="voicePanel" class="voicepanel hidden"></div>
+    <div id="userPanel" class="userpanel"></div>
+  </aside>
+  <main id="main">
+    <header id="mainHead" class="mhead"></header>
+    <div id="mainBody" class="mbody"></div>
+  </main>
+  <aside id="members" class="hidden"></aside>
+</div>
+
+<div id="modal" class="modal hidden"></div>
+<div id="menu" class="menu hidden"></div>
+<div id="ring" class="ring hidden"></div>
+<div id="unlock" class="unlock hidden">🔊 Clique aqui para ativar o som da chamada</div>
+<div id="toast" class="toast hidden"></div>
+
+<script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script>
+<script src="/config.js"></script>
+<script src="/rtc.js"></script>
+<script src="/app.js"></script>
+</body>
+</html>

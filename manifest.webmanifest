@@ -1,0 +1,20 @@
+{
+  "name": "Telão",
+  "short_name": "Telão",
+  "description": "Servidores, chat, voz e compartilhamento de tela com os amigos.",
+  "id": "/",
+  "start_url": "/",
+  "scope": "/",
+  "display": "standalone",
+  "display_override": ["window-controls-overlay", "standalone"],
+  "background_color": "#1e1f22",
+  "theme_color": "#1e1f22",
+  "lang": "pt-BR",
+  "categories": ["social", "communication"],
+  "icons": [
+    { "src": "/icons/icon-192.png", "sizes": "192x192", "type": "image/png" },
+    { "src": "/icons/icon-512.png", "sizes": "512x512", "type": "image/png" },
+    { "src": "/icons/maskable-512.png", "sizes": "512x512", "type": "image/png", "purpose": "maskable" },
+    { "src": "/icons/icon.svg", "sizes": "any", "type": "image/svg+xml" }
+  ]
+}
