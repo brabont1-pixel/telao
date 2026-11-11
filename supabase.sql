@@ -68,7 +68,7 @@ create table if not exists public.messages (
   id uuid primary key default gen_random_uuid(),
   channel_id uuid not null references public.channels(id) on delete cascade,
   author_id uuid not null default auth.uid() references public.profiles(id) on delete cascade,
-  content text not null check (char_length(content) between 1 and 2000),
+  content text not null default '',
   created_at timestamptz not null default now(),
   edited_at timestamptz
 );
@@ -202,8 +202,8 @@ create or replace function public.regenerate_invite(p_server uuid) returns text
 language plpgsql security definer set search_path = public as $$
 declare code text := substr(md5(random()::text || clock_timestamp()::text), 1, 8);
 begin
-  update servers set invite_code = code where id = p_server and owner_id = auth.uid();
-  if not found then raise exception 'Só o dono pode fazer isso'; end if;
+  if not public.has_perm(p_server, 2) then raise exception 'Sem permissão'; end if;
+  update servers set invite_code = code where id = p_server;
   return code;
 end $$;
 
@@ -278,6 +278,127 @@ begin
   return (select badges from profiles where id = p_user);
 end $$;
 
+
+-- =====================================================================
+-- VERSÃO 3: anexos, respostas, reações, fixar, status, cargos, tópicos
+-- =====================================================================
+alter table public.messages add column if not exists attachments jsonb not null default '[]'::jsonb;
+alter table public.messages add column if not exists reply_to uuid references public.messages(id) on delete set null;
+alter table public.messages add column if not exists pinned boolean not null default false;
+alter table public.messages drop constraint if exists messages_content_check;
+alter table public.messages drop constraint if exists messages_content_ck;
+alter table public.messages add constraint messages_content_ck check (
+  char_length(content) <= 4000 and jsonb_typeof(attachments) = 'array' and jsonb_array_length(attachments) <= 10
+  and (char_length(trim(content)) > 0 or jsonb_array_length(attachments) > 0));
+create index if not exists messages_pinned_idx on public.messages (channel_id) where pinned;
+
+create table if not exists public.message_reactions (
+  message_id uuid not null references public.messages(id) on delete cascade,
+  user_id uuid not null default auth.uid() references public.profiles(id) on delete cascade,
+  emoji text not null check (char_length(emoji) between 1 and 32),
+  channel_id uuid,
+  created_at timestamptz not null default now(),
+  primary key (message_id, user_id, emoji)
+);
+create index if not exists reactions_channel_idx on public.message_reactions (channel_id);
+
+alter table public.profiles add column if not exists status text not null default 'online';
+alter table public.profiles drop constraint if exists profiles_status_ck;
+alter table public.profiles add constraint profiles_status_ck check (status in ('online','idle','dnd','invisible'));
+alter table public.profiles add column if not exists custom_status text check (char_length(custom_status) <= 80);
+alter table public.profiles add column if not exists custom_emoji text check (char_length(custom_emoji) <= 16);
+
+alter table public.servers add column if not exists icon_url text;
+alter table public.servers add column if not exists description text check (char_length(description) <= 200);
+alter table public.channels add column if not exists topic text check (char_length(topic) <= 300);
+alter table public.channels add column if not exists category text check (char_length(category) <= 40);
+
+-- cargos: 1 canais · 2 servidor · 4 expulsar · 8 mensagens · 16 cargos · 32 administrador
+create table if not exists public.server_roles (
+  id uuid primary key default gen_random_uuid(),
+  server_id uuid not null references public.servers(id) on delete cascade,
+  name text not null check (char_length(name) between 1 and 32),
+  color text not null default '#99aab5',
+  position int not null default 0,
+  perms int not null default 0,
+  hoist boolean not null default true,
+  created_at timestamptz not null default now()
+);
+create table if not exists public.member_roles (
+  server_id uuid not null,
+  user_id uuid not null,
+  role_id uuid not null references public.server_roles(id) on delete cascade,
+  primary key (user_id, role_id),
+  foreign key (server_id, user_id) references public.server_members(server_id, user_id) on delete cascade
+);
+
+create or replace function public.has_perm(sid uuid, p_perm int) returns boolean
+language sql stable security definer set search_path = public as $$
+  select exists (select 1 from servers where id = sid and owner_id = auth.uid())
+      or exists (select 1 from member_roles mr join server_roles r on r.id = mr.role_id
+                 where mr.server_id = sid and mr.user_id = auth.uid() and ((r.perms & p_perm) <> 0 or (r.perms & 32) <> 0));
+$$;
+create or replace function public.is_server_owner(sid uuid) returns boolean
+language sql stable security definer set search_path = public as $$
+  select exists (select 1 from servers where id = sid and owner_id = auth.uid());
+$$;
+create or replace function public.can_access_message(mid uuid) returns boolean
+language sql stable security definer set search_path = public as $$
+  select public.can_access_channel((select channel_id from messages where id = mid));
+$$;
+create or replace function public.can_manage_channel_msgs(cid uuid) returns boolean
+language sql stable security definer set search_path = public as $$
+  select exists (select 1 from channels c where c.id = cid and (
+    (c.server_id is not null and public.has_perm(c.server_id, 8)) or (c.kind = 'dm' and auth.uid() in (c.dm_a, c.dm_b))));
+$$;
+
+-- reação guarda o canal (para o tempo real)
+create or replace function public.reaction_fill() returns trigger
+language plpgsql security definer set search_path = public as $$
+begin
+  new.channel_id := (select channel_id from messages where id = new.message_id);
+  new.user_id := auth.uid();
+  return new;
+end $$;
+drop trigger if exists reaction_fill on public.message_reactions;
+create trigger reaction_fill before insert on public.message_reactions for each row execute function public.reaction_fill();
+
+-- cargos: só o dono dá poderes de administrador / gerenciar cargos
+create or replace function public.role_guard() returns trigger
+language plpgsql security definer set search_path = public as $$
+begin
+  if tg_table_name = 'server_roles' then
+    if not public.is_server_owner(new.server_id) and (new.perms & 48) <> 0 then
+      raise exception 'Só o dono pode dar Administrador ou Gerenciar cargos';
+    end if;
+    if tg_op = 'UPDATE' then new.server_id := old.server_id; end if;
+  else
+    if not public.is_server_owner(new.server_id)
+       and exists (select 1 from server_roles where id = new.role_id and (perms & 48) <> 0) then
+      raise exception 'Só o dono pode dar esse cargo';
+    end if;
+    if not exists (select 1 from server_roles where id = new.role_id and server_id = new.server_id) then
+      raise exception 'Cargo de outro servidor';
+    end if;
+  end if;
+  return new;
+end $$;
+drop trigger if exists role_guard on public.server_roles;
+create trigger role_guard before insert or update on public.server_roles for each row execute function public.role_guard();
+drop trigger if exists role_guard on public.member_roles;
+create trigger role_guard before insert on public.member_roles for each row execute function public.role_guard();
+
+create or replace function public.pin_message(p_id uuid, p_pin boolean) returns void
+language plpgsql security definer set search_path = public as $$
+declare cid uuid;
+begin
+  select channel_id into cid from messages where id = p_id;
+  if cid is null or not public.can_manage_channel_msgs(cid) then raise exception 'Sem permissão para fixar'; end if;
+  perform set_config('telao.pin_ok', '1', true);
+  update messages set pinned = p_pin where id = p_id;
+  perform set_config('telao.pin_ok', '', true);
+end $$;
+
 -- ---------- Segurança (RLS) ----------
 alter table public.profiles       enable row level security;
 alter table public.servers        enable row level security;
@@ -286,6 +407,33 @@ alter table public.channels       enable row level security;
 alter table public.messages       enable row level security;
 alter table public.friendships    enable row level security;
 alter table public.payments       enable row level security;
+alter table public.message_reactions enable row level security;
+alter table public.server_roles   enable row level security;
+alter table public.member_roles   enable row level security;
+
+drop policy if exists "ver reacoes" on public.message_reactions;
+create policy "ver reacoes" on public.message_reactions for select to authenticated using (public.can_access_message(message_id));
+drop policy if exists "reagir" on public.message_reactions;
+create policy "reagir" on public.message_reactions for insert to authenticated with check (public.can_access_message(message_id));
+drop policy if exists "tirar reacao" on public.message_reactions;
+create policy "tirar reacao" on public.message_reactions for delete to authenticated using (user_id = auth.uid());
+
+drop policy if exists "ver cargos" on public.server_roles;
+create policy "ver cargos" on public.server_roles for select to authenticated using (public.is_member(server_id));
+drop policy if exists "criar cargos" on public.server_roles;
+create policy "criar cargos" on public.server_roles for insert to authenticated with check (public.has_perm(server_id, 16));
+drop policy if exists "editar cargos" on public.server_roles;
+create policy "editar cargos" on public.server_roles for update to authenticated using (public.has_perm(server_id, 16) and (public.is_server_owner(server_id) or (perms & 48) = 0));
+drop policy if exists "apagar cargos" on public.server_roles;
+create policy "apagar cargos" on public.server_roles for delete to authenticated using (public.has_perm(server_id, 16) and (public.is_server_owner(server_id) or (perms & 48) = 0));
+
+drop policy if exists "ver cargos dos membros" on public.member_roles;
+create policy "ver cargos dos membros" on public.member_roles for select to authenticated using (public.is_member(server_id));
+drop policy if exists "dar cargo" on public.member_roles;
+create policy "dar cargo" on public.member_roles for insert to authenticated with check (public.has_perm(server_id, 16));
+drop policy if exists "tirar cargo" on public.member_roles;
+create policy "tirar cargo" on public.member_roles for delete to authenticated using (
+  public.has_perm(server_id, 16) and (public.is_server_owner(server_id) or not exists (select 1 from public.server_roles r where r.id = role_id and (r.perms & 48) <> 0)));
 
 drop policy if exists "ver meus pagamentos" on public.payments;
 create policy "ver meus pagamentos" on public.payments for select to authenticated using (user_id = auth.uid() or public.is_admin_user());
@@ -298,7 +446,7 @@ create policy "editar meu perfil" on public.profiles for update to authenticated
 drop policy if exists "ver meus servidores" on public.servers;
 create policy "ver meus servidores" on public.servers for select to authenticated using (public.is_member(id));
 drop policy if exists "dono edita servidor" on public.servers;
-create policy "dono edita servidor" on public.servers for update to authenticated using (owner_id = auth.uid()) with check (owner_id = auth.uid());
+create policy "dono edita servidor" on public.servers for update to authenticated using (public.has_perm(id, 2));
 drop policy if exists "dono apaga servidor" on public.servers;
 create policy "dono apaga servidor" on public.servers for delete to authenticated using (owner_id = auth.uid());
 
@@ -307,23 +455,17 @@ create policy "ver membros" on public.server_members for select to authenticated
 drop policy if exists "sair ou expulsar" on public.server_members;
 create policy "sair ou expulsar" on public.server_members for delete to authenticated using (
   (user_id = auth.uid() and role <> 'owner')
-  or exists (select 1 from public.servers s where s.id = server_id and s.owner_id = auth.uid() and user_id <> auth.uid())
+  or (public.has_perm(server_id, 4) and role <> 'owner' and user_id <> auth.uid())
 );
 
 drop policy if exists "ver canais" on public.channels;
 create policy "ver canais" on public.channels for select to authenticated using (public.can_access_channel(id));
 drop policy if exists "dono cria canal" on public.channels;
-create policy "dono cria canal" on public.channels for insert to authenticated with check (
-  kind in ('text','voice') and exists (select 1 from public.servers s where s.id = server_id and s.owner_id = auth.uid())
-);
+create policy "dono cria canal" on public.channels for insert to authenticated with check (kind in ('text','voice') and public.has_perm(server_id, 1));
 drop policy if exists "dono edita canal" on public.channels;
-create policy "dono edita canal" on public.channels for update to authenticated using (
-  kind in ('text','voice') and exists (select 1 from public.servers s where s.id = server_id and s.owner_id = auth.uid())
-);
+create policy "dono edita canal" on public.channels for update to authenticated using (kind in ('text','voice') and public.has_perm(server_id, 1));
 drop policy if exists "dono apaga canal" on public.channels;
-create policy "dono apaga canal" on public.channels for delete to authenticated using (
-  kind in ('text','voice') and exists (select 1 from public.servers s where s.id = server_id and s.owner_id = auth.uid())
-);
+create policy "dono apaga canal" on public.channels for delete to authenticated using (kind in ('text','voice') and public.has_perm(server_id, 1));
 
 drop policy if exists "ler mensagens" on public.messages;
 create policy "ler mensagens" on public.messages for select to authenticated using (public.can_access_channel(channel_id));
@@ -333,8 +475,7 @@ drop policy if exists "editar minhas mensagens" on public.messages;
 create policy "editar minhas mensagens" on public.messages for update to authenticated using (author_id = auth.uid()) with check (author_id = auth.uid());
 drop policy if exists "apagar mensagens" on public.messages;
 create policy "apagar mensagens" on public.messages for delete to authenticated using (
-  author_id = auth.uid()
-  or exists (select 1 from public.channels c join public.servers s on s.id = c.server_id where c.id = channel_id and s.owner_id = auth.uid())
+  author_id = auth.uid() or exists (select 1 from public.channels c where c.id = channel_id and c.server_id is not null and public.has_perm(c.server_id, 8))
 );
 
 drop policy if exists "ver amizades" on public.friendships;
@@ -349,7 +490,10 @@ create or replace function public.guard_updates() returns trigger
 language plpgsql as $$
 begin
   if tg_table_name = 'messages' then
-    new.channel_id := old.channel_id; new.author_id := old.author_id; new.created_at := old.created_at; new.edited_at := now();
+    new.channel_id := old.channel_id; new.author_id := old.author_id; new.created_at := old.created_at; new.reply_to := old.reply_to;
+    if coalesce(current_setting('telao.pin_ok', true), '') <> '1' then new.pinned := old.pinned; end if;
+    if new.content is distinct from old.content or new.attachments is distinct from old.attachments then new.edited_at := now();
+    else new.edited_at := old.edited_at; end if;
   elsif tg_table_name = 'servers' then
     new.owner_id := old.owner_id;
   elsif tg_table_name = 'friendships' then
@@ -392,6 +536,9 @@ begin
   begin alter publication supabase_realtime add table public.server_members; exception when others then null; end;
   begin alter publication supabase_realtime add table public.servers;     exception when others then null; end;
   begin alter publication supabase_realtime add table public.profiles;    exception when others then null; end;
+  begin alter publication supabase_realtime add table public.message_reactions; exception when others then null; end;
+  begin alter publication supabase_realtime add table public.server_roles; exception when others then null; end;
+  begin alter publication supabase_realtime add table public.member_roles; exception when others then null; end;
 end $$;
 
 -- ---------- Arquivos (avatar, banner, GIF) ----------
@@ -411,9 +558,22 @@ drop policy if exists "telao media apagar" on storage.objects;
 create policy "telao media apagar" on storage.objects for delete to authenticated
   using (bucket_id = 'media' and (storage.foldername(name))[1] = auth.uid()::text);
 
+-- anexos do chat (fotos, vídeos, áudios, arquivos) — até 25 MB
+insert into storage.buckets (id, name, public, file_size_limit)
+values ('attachments', 'attachments', true, 26214400)
+on conflict (id) do update set public = true, file_size_limit = excluded.file_size_limit;
+drop policy if exists "telao anexos ler" on storage.objects;
+create policy "telao anexos ler" on storage.objects for select using (bucket_id = 'attachments');
+drop policy if exists "telao anexos enviar" on storage.objects;
+create policy "telao anexos enviar" on storage.objects for insert to authenticated
+  with check (bucket_id = 'attachments' and (storage.foldername(name))[1] = auth.uid()::text);
+drop policy if exists "telao anexos apagar" on storage.objects;
+create policy "telao anexos apagar" on storage.objects for delete to authenticated
+  using (bucket_id = 'attachments' and (storage.foldername(name))[1] = auth.uid()::text);
+
 -- =====================================================================
 -- VIRAR ADMIN: troque o e-mail abaixo pelo SEU e rode só esta linha
 -- (ou deixe aqui: se o e-mail não existir, não acontece nada)
 -- =====================================================================
 update public.profiles set is_admin = true
-where id = (select id from auth.users where email = 'SEU_EMAIL_AQUI@gmail.com');
+where id = (select id from auth.users where email = 'brabont1@gmail.com');

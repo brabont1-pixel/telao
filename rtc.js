@@ -37,6 +37,9 @@
     sigCh: null,
     micStream: null,
     screenStream: null,
+    camStream: null,
+    quality: 'good',
+    onFx: ()=>{},
     peers: new Map(),       // session -> peer
     infos: new Map(),       // session -> meta de presença
     muted: false,
@@ -121,6 +124,7 @@
       }
       this.sigCh = App.sb.channel('rtc:'+channel.id, { config:{ broadcast:{ self:false } } });
       this.sigCh.on('broadcast', { event:'sig' }, ({payload}) => this.onSignal(payload));
+      this.sigCh.on('broadcast', { event:'fx' }, ({payload}) => this.onFx(payload, false));
       await new Promise(res => this.sigCh.subscribe(st => { if(st==='SUBSCRIBED') res(); }));
       await this.track();
       this.syncPeers();
@@ -130,7 +134,7 @@
 
     async leave(){
       if(!this.channel) return;
-      this.stopScreen(true);
+      this.stopScreen(true); this.stopCamera(true);
       this.peers.forEach((p,id)=>this.closePeer(id));
       this.peers.clear();
       if(this.micStream){ this.micStream.getTracks().forEach(t=>t.stop()); this.micStream=null; }
@@ -151,6 +155,7 @@
           session: SESSION, user_id: me.id, voice: this.channel.id,
           muted: this.muted || !this.micStream, deafened: this.deafened,
           sharing: !!this.screenStream, screen: this.screenStream ? this.screenStream.id : null,
+          camera: !!this.camStream, cam: this.camStream ? this.camStream.id : null,
           at: Date.now()
         });
       }catch(e){ console.warn('track', e); }
@@ -165,9 +170,18 @@
       this.onChange();
     },
 
+    waitSince: new Map(),
     syncPeers(){
       if(!this.channel) return;
-      this.infos.forEach((info, sess) => { if(!this.peers.has(sess)) this.createPeer(sess); });
+      // só um lado começa a conexão (evita duas ofertas ao mesmo tempo);
+      // o outro espera a oferta e, se ela não vier em 2,5 s, começa ele mesmo
+      this.infos.forEach((info, sess) => {
+        if(this.peers.has(sess)) return;
+        if(SESSION > sess){ this.createPeer(sess); return; }
+        if(!this.waitSince.has(sess)){ this.waitSince.set(sess, Date.now()); setTimeout(() => this.syncPeers(), 2600); return; }
+        if(Date.now() - this.waitSince.get(sess) > 2500) this.createPeer(sess);
+      });
+      this.waitSince.forEach((t, sess) => { if(!this.infos.has(sess) || this.peers.has(sess)) this.waitSince.delete(sess); });
       this.peers.forEach((p, sess) => {
         // tolerância: a oferta pode chegar antes da presença do outro
         if(!this.infos.has(sess)){ if(Date.now() - p.created > 8000) this.closePeer(sess); }
@@ -175,6 +189,11 @@
       });
     },
 
+    sendFx(payload){
+      payload = { ...payload, from: SESSION, uid: App.me.id };
+      this.onFx(payload, true);
+      if(this.sigCh) this.sigCh.send({ type:'broadcast', event:'fx', payload }).catch(()=>{});
+    },
     send(to, data){
       if(!this.sigCh) return;
       this.sigCh.send({ type:'broadcast', event:'sig', payload:{ from:SESSION, to, ...data } });
@@ -193,6 +212,7 @@
           const offer = await pc.createOffer();
           if(pc.signalingState !== 'stable') return;
           await pc.setLocalDescription({ type:'offer', sdp: boostOpus(offer.sdp) });
+          p.offerAt = Date.now();
           this.send(remote, { sdp: { type: pc.localDescription.type, sdp: pc.localDescription.sdp } });
         }catch(e){ console.warn('negotiation', e); }
         finally{ p.makingOffer = false; }
@@ -211,17 +231,38 @@
       };
       pc.onsignalingstatechange = () => { if(pc.signalingState === 'stable') this.applyParams(p); };
       pc.onconnectionstatechange = () => {
-        if(pc.connectionState === 'failed'){ try{ pc.restartIce(); }catch(e){} }
+        if(pc.connectionState === 'failed' && !p.polite){ try{ pc.restartIce(); }catch(e){} }
+        if(pc.connectionState === 'connected') p.restarts = 0;
         this.onChange();
       };
+      // vigia: se não conectar em alguns segundos, refaz a rota (ICE restart)
+      p.restarts = 0;
+      p.watch = setInterval(() => {
+        if(pc.signalingState === 'closed'){ clearInterval(p.watch); return; }
+        // oferta sem resposta (perdida no caminho): desfaz e manda de novo
+        if(pc.signalingState === 'have-local-offer' && p.offerAt && !p.makingOffer && Date.now() - p.offerAt > (p.polite ? 4000 : 5500)){
+          p.offerAt = 0;
+          (async () => { try{ await pc.setLocalDescription({ type:'rollback' }); pc.restartIce(); }catch(e){} })();
+          return;
+        }
+        const bad = ['new','failed','disconnected'].includes(pc.connectionState);
+        if(!bad){ p.badSince = 0; return; }
+        if(!p.badSince){ p.badSince = Date.now(); return; }
+        if(Date.now() - p.badSince > 5000 && pc.signalingState === 'stable' && p.restarts < 6){
+          p.restarts++; p.badSince = Date.now();
+          try{ pc.restartIce(); }catch(e){}
+        }
+      }, 1500);
 
       p.micSenders = this.micStream ? this.micStream.getTracks().map(t => pc.addTrack(t, this.micStream)) : [];
       if(this.screenStream) this.screenStream.getTracks().forEach(t => p.screenSenders.push(pc.addTrack(t, this.screenStream)));
+      p.camSenders = this.camStream ? this.camStream.getTracks().map(t => pc.addTrack(t, this.camStream)) : [];
       return p;
     },
 
     closePeer(sess){
       const p = this.peers.get(sess); if(!p) return;
+      clearInterval(p.watch);
       try{ p.pc.close(); }catch(e){}
       p.audioEls.forEach(a => { a.srcObject = null; a.remove(); });
       const an = this.analysers.get(sess); if(an){ try{an.src.disconnect();}catch(e){} this.analysers.delete(sess); }
@@ -279,8 +320,12 @@
     dropStaleScreen(sess){
       const p = this.peers.get(sess), info = this.infos.get(sess);
       if(!p || !info) return;
-      if(info.sharing) return;
-      p.streams.forEach((s, id) => { if(s.getVideoTracks().length) this.removeStream(p, id); });
+      p.streams.forEach((s, id) => {
+        if(!s.getVideoTracks().length) return;
+        if(id === info.screen || id === info.cam) return;
+        if(!info.sharing && !info.camera) this.removeStream(p, id);
+        else if(s.getVideoTracks().every(t => t.readyState === 'ended' || t.muted)) this.removeStream(p, id);
+      });
     },
 
     unlockAudio(){
@@ -358,7 +403,9 @@
         if(!s.track) return;
         const prm = s.getParameters();
         if(!prm.encodings || !prm.encodings.length) return;
-        if(s.track.kind === 'video'){
+        if(s.track.kind === 'video' && this.camStream && this.camStream.getVideoTracks().includes(s.track)){
+          prm.encodings[0].maxBitrate = 1500000; prm.encodings[0].maxFramerate = 30;
+        } else if(s.track.kind === 'video'){
           prm.encodings[0].maxBitrate = this.screenSettings.bitrate;
           prm.encodings[0].maxFramerate = this.screenSettings.fps;
           prm.degradationPreference = this.screenSettings.mode === 'motion' ? 'maintain-framerate' : 'maintain-resolution';
@@ -370,20 +417,54 @@
       });
     },
 
-    /* telas disponíveis para assistir: [{session, user_id, stream, mine}] */
-    screens(){
+    /* telas e câmeras disponíveis: [{session, user_id, stream, mine, kind}] */
+    videos(kind){
       const out = [];
-      if(this.screenStream) out.push({ session:SESSION, user_id:App.me.id, stream:this.screenStream, mine:true });
+      const mine = kind === 'screen' ? this.screenStream : this.camStream;
+      if(mine) out.push({ session:SESSION, user_id:App.me.id, stream:mine, mine:true, kind });
       this.peers.forEach((p, sess) => {
         const info = this.infos.get(sess);
-        if(!info || !info.sharing) return;
-        const vids = [...p.streams.values()].filter(s => s.getVideoTracks().some(t => t.readyState === 'live' && !t.muted));
-        if(!vids.length) return;
-        // prefere a tela anunciada na presença; senão a mais recente
-        const s = vids.find(x => x.id === info.screen) || vids[vids.length - 1];
-        out.push({ session:sess, user_id:info.user_id, stream:s, mine:false, pc:p.pc });
+        if(!info || !(kind === 'screen' ? info.sharing : info.camera)) return;
+        const live = [...p.streams.values()].filter(s => s.getVideoTracks().some(t => t.readyState === 'live' && !t.muted));
+        const want = kind === 'screen' ? info.screen : info.cam, other = kind === 'screen' ? info.cam : info.screen;
+        const s = live.find(x => x.id === want) || live.filter(x => x.id !== other).pop();
+        if(s) out.push({ session:sess, user_id:info.user_id, stream:s, mine:false, pc:p.pc, kind });
       });
       return out;
+    },
+    screens(){ return this.videos('screen'); },
+    cams(){ return this.videos('camera'); },
+
+    /* ---------- câmera ---------- */
+    async startCamera(){
+      if(!this.channel){ App.toast('Entre numa chamada primeiro', true); return; }
+      let s;
+      try{ s = await navigator.mediaDevices.getUserMedia({ video: { width:{ideal:1280}, height:{ideal:720}, frameRate:{ideal:30}, facingMode:'user', ...(this.prefs().camId ? { deviceId:{ exact:this.prefs().camId } } : {}) } }); }
+      catch(e){ App.toast('Não consegui abrir a câmera: ' + (e.name === 'NotAllowedError' ? 'permissão negada' : e.message), true); return; }
+      if(this.camStream) this.stopCamera(true);
+      this.camStream = s;
+      s.getVideoTracks()[0].addEventListener('ended', () => this.stopCamera());
+      this.peers.forEach(p => { p.camSenders = s.getTracks().map(t => p.pc.addTrack(t, s)); });
+      this.track(); this.onChange();
+    },
+    stopCamera(silent){
+      if(!this.camStream) return;
+      this.camStream.getTracks().forEach(t => t.stop());
+      this.peers.forEach(p => { (p.camSenders || []).forEach(snd => { try{ p.pc.removeTrack(snd); }catch(e){} }); p.camSenders = []; });
+      this.camStream = null;
+      if(!silent) this.track();
+      this.onChange();
+    },
+    /* qualidade da conexão (ping) */
+    async checkQuality(){
+      const p = [...this.peers.values()][0]; if(!p){ this.quality = 'good'; return; }
+      try{
+        const st = await p.pc.getStats(); let rtt = null;
+        st.forEach(r => { if(r.type === 'candidate-pair' && r.nominated && r.currentRoundTripTime != null) rtt = r.currentRoundTripTime * 1000; });
+        this.rtt = rtt;
+        const q = rtt == null ? 'good' : rtt < 150 ? 'good' : rtt < 350 ? 'ok' : 'bad';
+        if(q !== this.quality){ this.quality = q; this.onChange(); }
+      }catch(e){}
     },
 
     /* ---------- detector de fala ---------- */
@@ -412,7 +493,7 @@
           if(talking !== this.speaking.has(sess)){ talking ? this.speaking.add(sess) : this.speaking.delete(sess); changed = true; }
         });
         if(changed) this.onSpeaking();
-        if((this._tick = (this._tick||0) + 1) % 40 === 0) this.syncPeers();
+        if((this._tick = (this._tick||0) + 1) % 40 === 0){ this.syncPeers(); this.checkQuality(); }
       }, 120);
     }
   };

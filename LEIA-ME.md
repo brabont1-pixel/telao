@@ -104,3 +104,40 @@ O Gmail envia até cerca de 500 e-mails por dia, o que sobra para um grupo de am
 
 - **Admin** (você): tem todas as insígnias e o Telão+ para sempre. Em **⚙️ → 👑 Painel do admin**, você procura qualquer pessoa e dá **+30 dias**, **+1 ano** ou insígnias.
 - **Pagamento automático:** está **desligado** por enquanto. Quando quiser ligar, siga `pagamento-para-depois/LEIA-ME.md`.
+
+---
+
+# Versão 3: o que tem de novo
+
+**Para atualizar:** rode o `supabase.sql` inteiro de novo no SQL Editor (não apaga nada) e suba todos os arquivos na Vercel, **menos o seu `config.js`**. Arquivos novos: `icons.js` e `emoji.js`.
+
+### Chat
+- **Fotos, vídeos, áudios e arquivos:** pelo botão ＋, arrastando para a tela ou colando com Ctrl+V. As fotos são reduzidas e convertidas para WebP antes de enviar (uma foto de 5 MB vira uns 200 KB) e aparecem na hora, com uma prévia borrada enquanto carregam.
+- Visualizador de imagens em tela cheia, com setas para passar de uma foto a outra.
+- **Responder** mensagens, **reações** com emoji, **fixar** mensagens e **buscar** na conversa.
+- Aviso de **"fulano está digitando…"** e **mensagens de voz** (botão do microfone).
+- Formatação: `**negrito**`, `*itálico*`, `__sublinhado__`, `~~riscado~~`, `||spoiler||`, `` `código` ``, blocos de código com três crases, `> citação` e `# título`.
+- Links do YouTube viram vídeo dentro do chat. Atalhos de emoji como `:fogo:` viram 🔥.
+- **@menções** com autocompletar e `@todos`. Quando alguém te marca, a mensagem fica destacada.
+- Seta ↑ edita sua última mensagem. Clicar com o botão direito numa mensagem abre o menu completo.
+- Uma linha **NOVAS** mostra onde você parou de ler, e um botão leva de volta ao fim da conversa.
+
+### Chamadas
+- **Câmera** (vídeo), além de voz e tela.
+- **Soundboard** com 10 sons que todo mundo na chamada ouve.
+- **Reações flutuantes** na tela da chamada.
+- **Assistir juntos:** um vídeo do YouTube tocando sincronizado para todos. Se alguém pausa, pausa para todo mundo.
+- **Janela flutuante** (picture-in-picture), **print** e **gravação** da transmissão.
+- Indicador de qualidade da conexão e reconexão automática se a rede oscilar.
+
+### Social e servidores
+- **Status:** Online, Ausente (entra sozinho depois de 10 minutos parado), Não perturbe (silencia as notificações) e Invisível. Também dá para escrever um **status personalizado** com emoji.
+- **Ctrl+K** abre a troca rápida para ir a qualquer amigo, canal ou servidor.
+- **Cargos** com cor e permissões: Administrador, Gerenciar servidor, canais, cargos e mensagens, e Expulsar.
+- **Ícone de servidor com imagem**, descrição do servidor e **modelos** prontos ao criar (Jogos, Amigos, Estudos, Filmes).
+- **Tópico** em cada canal e **categorias** que abrem e fecham.
+- Convidar amigos direto pela lista de amigos.
+- **Cor de destaque** personalizável em Configurações → Aparência.
+
+### Para quem for mexer no código
+O código fica na pasta `src/`. Depois de editar, rode `./build.sh` para gerar o `app.js`.
