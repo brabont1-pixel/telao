@@ -10,6 +10,27 @@ create table if not exists public.profiles (
   avatar_color text not null default '#5865f2',
   created_at timestamptz not null default now()
 );
+alter table public.profiles add column if not exists bio text not null default '' check (char_length(bio) <= 190);
+-- perfil personalizado + Telão+
+alter table public.profiles add column if not exists avatar_url text;
+alter table public.profiles add column if not exists banner_url text;
+alter table public.profiles add column if not exists banner_color text;
+alter table public.profiles add column if not exists theme_a text;
+alter table public.profiles add column if not exists theme_b text;
+alter table public.profiles add column if not exists house text check (house in ('chama','raio','onda'));
+alter table public.profiles add column if not exists is_admin boolean not null default false;
+alter table public.profiles add column if not exists plan_until timestamptz;
+alter table public.profiles add column if not exists plus_months int not null default 0;
+alter table public.profiles add column if not exists badges text[] not null default '{}';
+
+create table if not exists public.payments (
+  id text primary key,
+  user_id uuid references public.profiles(id) on delete set null,
+  amount numeric,
+  status text,
+  provider text not null default 'mercadopago',
+  created_at timestamptz not null default now()
+);
 
 create table if not exists public.servers (
   id uuid primary key default gen_random_uuid(),
@@ -103,7 +124,9 @@ begin
   end loop;
   insert into profiles (id, username, display_name, avatar_color)
   values (new.id, final,
-          left(coalesce(nullif(trim(new.raw_user_meta_data->>'display_name'), ''), final), 32),
+          left(coalesce(nullif(trim(new.raw_user_meta_data->>'display_name'), ''),
+                        nullif(trim(new.raw_user_meta_data->>'full_name'), ''),
+                        nullif(trim(new.raw_user_meta_data->>'name'), ''), final), 32),
           colors[1 + floor(random() * array_length(colors, 1))::int]);
   return new;
 end $$;
@@ -184,6 +207,77 @@ begin
   return code;
 end $$;
 
+
+-- ---------- Conta: trocar nome de usuário e excluir conta ----------
+create or replace function public.set_username(p_username text) returns text
+language plpgsql security definer set search_path = public as $$
+declare u text := lower(trim(p_username));
+begin
+  if auth.uid() is null then raise exception 'Não autenticado'; end if;
+  if u !~ '^[a-z0-9_]{3,24}$' then raise exception 'Use de 3 a 24 caracteres: letras minúsculas, números e _'; end if;
+  if exists (select 1 from profiles where username = u and id <> auth.uid()) then raise exception 'Esse nome de usuário já está em uso'; end if;
+  perform set_config('telao.username_ok', '1', true);
+  update profiles set username = u where id = auth.uid();
+  perform set_config('telao.username_ok', '', true);
+  return u;
+end $$;
+
+create or replace function public.delete_my_account() returns void
+language plpgsql security definer set search_path = public, auth as $$
+begin
+  if auth.uid() is null then raise exception 'Não autenticado'; end if;
+  delete from auth.users where id = auth.uid();
+end $$;
+
+
+-- ---------- Telão+ e admin ----------
+create or replace function public.is_privileged() returns boolean
+language sql stable as $$
+  select coalesce(current_setting('telao.priv_ok', true), '') = '1'
+      or coalesce(nullif(current_setting('request.jwt.claims', true), ''), '{}')::jsonb->>'role' = 'service_role'
+      or coalesce(current_setting('request.jwt.claims', true), '') = '';   -- SQL Editor do painel
+$$;
+
+create or replace function public.is_admin_user() returns boolean
+language sql stable security definer set search_path = public as $$
+  select coalesce((select is_admin from profiles where id = auth.uid()), false);
+$$;
+
+create or replace function public.has_plus(uid uuid) returns boolean
+language sql stable security definer set search_path = public as $$
+  select coalesce((select is_admin or (plan_until is not null and plan_until > now()) from profiles where id = uid), false);
+$$;
+
+create or replace function public.admin_set_plus(p_user uuid, p_days int) returns timestamptz
+language plpgsql security definer set search_path = public as $$
+declare r timestamptz;
+begin
+  if not (public.is_admin_user() or public.is_privileged()) then raise exception 'Só o admin pode fazer isso'; end if;
+  perform set_config('telao.priv_ok', '1', true);
+  if p_days <= 0 then
+    update profiles set plan_until = null where id = p_user;
+  else
+    update profiles set plan_until = greatest(coalesce(plan_until, now()), now()) + make_interval(days => p_days),
+                        plus_months = plus_months + greatest(1, p_days / 30)
+    where id = p_user;
+  end if;
+  perform set_config('telao.priv_ok', '', true);
+  select plan_until into r from profiles where id = p_user;
+  return r;
+end $$;
+
+create or replace function public.admin_set_badges(p_user uuid, p_badges text[]) returns text[]
+language plpgsql security definer set search_path = public as $$
+begin
+  if not (public.is_admin_user() or public.is_privileged()) then raise exception 'Só o admin pode fazer isso'; end if;
+  perform set_config('telao.priv_ok', '1', true);
+  update profiles set badges = (select coalesce(array_agg(distinct b), '{}') from unnest(p_badges) b
+                                where b in ('staff','dev','mod','bug1','bug2','evento','apoiador'))
+  where id = p_user;
+  perform set_config('telao.priv_ok', '', true);
+  return (select badges from profiles where id = p_user);
+end $$;
+
 -- ---------- Segurança (RLS) ----------
 alter table public.profiles       enable row level security;
 alter table public.servers        enable row level security;
@@ -191,6 +285,10 @@ alter table public.server_members enable row level security;
 alter table public.channels       enable row level security;
 alter table public.messages       enable row level security;
 alter table public.friendships    enable row level security;
+alter table public.payments       enable row level security;
+
+drop policy if exists "ver meus pagamentos" on public.payments;
+create policy "ver meus pagamentos" on public.payments for select to authenticated using (user_id = auth.uid() or public.is_admin_user());
 
 drop policy if exists "perfis visiveis" on public.profiles;
 create policy "perfis visiveis" on public.profiles for select to authenticated using (true);
@@ -257,7 +355,18 @@ begin
   elsif tg_table_name = 'friendships' then
     new.requester := old.requester; new.addressee := old.addressee;
   elsif tg_table_name = 'profiles' then
-    new.id := old.id; new.username := old.username;
+    new.id := old.id;
+    if coalesce(current_setting('telao.username_ok', true), '') <> '1' then new.username := old.username; end if;
+    if not public.is_privileged() then
+      new.is_admin := old.is_admin; new.plan_until := old.plan_until; new.plus_months := old.plus_months; new.badges := old.badges;
+      -- recursos do Telão+ só para quem tem o plano
+      if not public.has_plus(old.id) then
+        if new.banner_url is distinct from old.banner_url and new.banner_url is not null then new.banner_url := old.banner_url; end if;
+        if new.avatar_url is distinct from old.avatar_url and new.avatar_url ~* '\.gif($|\?)' then new.avatar_url := old.avatar_url; end if;
+        if new.theme_a is distinct from old.theme_a and new.theme_a is not null then new.theme_a := old.theme_a; end if;
+        if new.theme_b is distinct from old.theme_b and new.theme_b is not null then new.theme_b := old.theme_b; end if;
+      end if;
+    end if;
   elsif tg_table_name = 'channels' then
     new.server_id := old.server_id; new.kind := old.kind; new.dm_a := old.dm_a; new.dm_b := old.dm_b;
   end if;
@@ -284,3 +393,27 @@ begin
   begin alter publication supabase_realtime add table public.servers;     exception when others then null; end;
   begin alter publication supabase_realtime add table public.profiles;    exception when others then null; end;
 end $$;
+
+-- ---------- Arquivos (avatar, banner, GIF) ----------
+insert into storage.buckets (id, name, public, file_size_limit, allowed_mime_types)
+values ('media', 'media', true, 8388608, array['image/png','image/jpeg','image/gif','image/webp'])
+on conflict (id) do update set public = true, file_size_limit = excluded.file_size_limit, allowed_mime_types = excluded.allowed_mime_types;
+
+drop policy if exists "telao media ler" on storage.objects;
+create policy "telao media ler" on storage.objects for select using (bucket_id = 'media');
+drop policy if exists "telao media enviar" on storage.objects;
+create policy "telao media enviar" on storage.objects for insert to authenticated
+  with check (bucket_id = 'media' and (storage.foldername(name))[1] = auth.uid()::text);
+drop policy if exists "telao media trocar" on storage.objects;
+create policy "telao media trocar" on storage.objects for update to authenticated
+  using (bucket_id = 'media' and (storage.foldername(name))[1] = auth.uid()::text);
+drop policy if exists "telao media apagar" on storage.objects;
+create policy "telao media apagar" on storage.objects for delete to authenticated
+  using (bucket_id = 'media' and (storage.foldername(name))[1] = auth.uid()::text);
+
+-- =====================================================================
+-- VIRAR ADMIN: troque o e-mail abaixo pelo SEU e rode só esta linha
+-- (ou deixe aqui: se o e-mail não existir, não acontece nada)
+-- =====================================================================
+update public.profiles set is_admin = true
+where id = (select id from auth.users where email = 'SEU_EMAIL_AQUI@gmail.com');

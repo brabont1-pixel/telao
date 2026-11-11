@@ -50,6 +50,57 @@
     userVolumes: new Map(), // user_id -> 0..2
 
     get active(){ return !!this.channel; },
+    pttDown: false,
+    prefs(){ return (window.App && App.prefs) || {}; },
+    micConstraints(){
+      const P = this.prefs();
+      const c = { echoCancellation: P.echo !== false, noiseSuppression: P.noise !== false, autoGainControl: P.agc !== false };
+      if(P.inputId) c.deviceId = { exact: P.inputId };
+      return { audio: c };
+    },
+    async getMic(){
+      try{ return await navigator.mediaDevices.getUserMedia(this.micConstraints()); }
+      catch(e){
+        if(e.name === 'OverconstrainedError' || e.name === 'NotFoundError'){ // microfone escolhido sumiu: usa o padrão
+          const c = this.micConstraints(); delete c.audio.deviceId; return navigator.mediaDevices.getUserMedia(c);
+        }
+        throw e;
+      }
+    },
+    micEnabled(){
+      const P = this.prefs();
+      return !this.muted && !this.deafened && (P.mode !== 'ptt' || this.pttDown);
+    },
+    setPtt(down){
+      if(this.pttDown === down) return;
+      this.pttDown = down;
+      if(this.micStream) this.micStream.getAudioTracks().forEach(t => t.enabled = this.micEnabled());
+      if(this.channel && this.prefs().mode === 'ptt' && this.prefs().soundPtt) App.sfx(down ? 'unmute' : 'mute');
+      this.onSpeaking();
+    },
+    /* troca o microfone durante a chamada (dispositivo ou filtros mudaram) */
+    async switchMic(){
+      if(!this.channel) return;
+      let ns;
+      try{ ns = await this.getMic(); }catch(e){ App.toast('Não consegui usar esse microfone: ' + e.message, true); return; }
+      const nt = ns.getAudioTracks()[0];
+      nt.enabled = this.micEnabled(); if('contentHint' in nt) nt.contentHint = 'speech';
+      const old = this.micStream;
+      this.peers.forEach(p => {
+        const snd = p.micSenders && p.micSenders[0];
+        if(snd) snd.replaceTrack(nt).catch(()=>{});
+        else p.micSenders = [p.pc.addTrack(nt, ns)];
+      });
+      this.micStream = ns;
+      if(old) old.getTracks().forEach(t => t.stop());
+      const a = this.analysers.get(SESSION); if(a){ try{a.src.disconnect();}catch(e){} this.analysers.delete(SESSION); }
+      this.addAnalyser(SESSION, ns);
+      this.track();
+    },
+    applySink(){
+      const id = this.prefs().outputId || '';
+      this.peers.forEach(p => p.audioEls.forEach(a => { if(a.setSinkId) a.setSinkId(id).catch(()=>{}); }));
+    },
 
     ensureCtx(){
       try{ if(!this.audioCtx) this.audioCtx = new (window.AudioContext||window.webkitAudioContext)(); this.audioCtx.resume(); }catch(e){}
@@ -61,8 +112,8 @@
       this.ensureCtx();
       this.channel = channel; this.topic = topic; this.presenceCh = presenceCh;
       try{
-        this.micStream = await navigator.mediaDevices.getUserMedia({ audio:{ echoCancellation:true, noiseSuppression:true, autoGainControl:true } });
-        this.micStream.getAudioTracks().forEach(t=>{ t.enabled = !this.muted && !this.deafened; if('contentHint' in t) t.contentHint='speech'; });
+        this.micStream = await this.getMic();
+        this.micStream.getAudioTracks().forEach(t=>{ t.enabled = this.micEnabled(); if('contentHint' in t) t.contentHint='speech'; });
         this.addAnalyser(SESSION, this.micStream);
       }catch(e){
         this.micStream = null;
@@ -164,7 +215,7 @@
         this.onChange();
       };
 
-      if(this.micStream) this.micStream.getTracks().forEach(t => pc.addTrack(t, this.micStream));
+      p.micSenders = this.micStream ? this.micStream.getTracks().map(t => pc.addTrack(t, this.micStream)) : [];
       if(this.screenStream) this.screenStream.getTracks().forEach(t => p.screenSenders.push(pc.addTrack(t, this.screenStream)));
       return p;
     },
@@ -213,6 +264,7 @@
         p.audioEls.set(s.id, a);
       }
       if(a.srcObject !== s) a.srcObject = s;
+      const sink = this.prefs().outputId; if(sink && a.setSinkId) a.setSinkId(sink).catch(()=>{});
       this.applyVolume(p);
       a.play().catch(err => { if(err && err.name !== 'AbortError') App.needAudioUnlock(); });
       // detector de fala só no microfone (stream sem vídeo)
@@ -253,7 +305,7 @@
       this.applyMicState(); App.sfx(this.deafened ? 'mute' : 'unmute');
     },
     applyMicState(){
-      if(this.micStream) this.micStream.getAudioTracks().forEach(t => t.enabled = !this.muted && !this.deafened);
+      if(this.micStream) this.micStream.getAudioTracks().forEach(t => t.enabled = this.micEnabled());
       this.peers.forEach(p => this.applyVolume(p));
       this.track(); this.onChange();
     },
@@ -353,7 +405,8 @@
           let sum = 0; for(const x of a.buf){ const d = x - 128; sum += d*d; }
           const rms = Math.sqrt(sum / a.buf.length);
           let talking = rms > 4;
-          if(sess === SESSION && (this.muted || this.deafened)) talking = false;
+          if(sess === SESSION && !this.micEnabled()) talking = false;
+          if(sess === SESSION && talking){ const th = this.prefs().sensitivity ?? 4; if(rms < th) talking = false; }
           const info = this.infos.get(sess);
           if(info && info.muted) talking = false;
           if(talking !== this.speaking.has(sess)){ talking ? this.speaking.add(sess) : this.speaking.delete(sess); changed = true; }
