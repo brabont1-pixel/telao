@@ -21,9 +21,11 @@ const S = {
 const App = window.App = { sb: null, get me(){ return S.me; }, S };
 
 /* ---------------- utilidades ---------------- */
-App.toast = (t, err) => {
-  const el = $('#toast'); el.textContent = t; el.className = 'toast' + (err ? ' err' : '');
-  clearTimeout(el._t); el._t = setTimeout(() => el.classList.add('hidden'), err ? 6000 : 3200);
+App.toast = (t, err, action) => {
+  const el = $('#toast'); el.className = 'toast' + (err ? ' err' : '') + (action ? ' act' : '');
+  el.innerHTML = `<span>${esc(t)}</span>` + (action ? `<button class="btn sm" id="toastAct">${esc(action.label)}</button>` : '');
+  if(action) $('#toastAct').onclick = () => { el.classList.add('hidden'); action.fn(); };
+  clearTimeout(el._t); el._t = setTimeout(() => el.classList.add('hidden'), action ? 9000 : err ? 6000 : 3200);
 };
 App.needAudioUnlock = () => $('#unlock').classList.remove('hidden');
 $('#unlock').onclick = () => { Voice.unlockAudio(); $('#unlock').classList.add('hidden'); };
@@ -31,17 +33,20 @@ $('#unlock').onclick = () => { Voice.unlockAudio(); $('#unlock').classList.add('
 let sfxCtx = null;
 App.sfx = (type) => {
   const PR = App.prefs || {};
-  if(['join','leave','mute','unmute'].includes(type) && PR.soundVoice === false) return;
+  if(['join','leave','mute','unmute','selfjoin','screen','screenoff','cam'].includes(type) && PR.soundVoice === false) return;
   if(type === 'msg' && PR.soundMsg === false) return;
   try{
     if(!sfxCtx) sfxCtx = new (window.AudioContext || window.webkitAudioContext)();
-    const seq = { join:[[523,.08],[784,.12]], leave:[[784,.08],[523,.12]], mute:[[392,.08]], unmute:[[587,.08]],
-                  msg:[[880,.06],[1175,.08]], ring:[[660,.18],[0,.06],[880,.18],[0,.06],[660,.18]] }[type];
+    const seq = {
+      selfjoin:[[523,.07],[659,.07],[784,.07],[1047,.16]], join:[[587,.08],[880,.16]], leave:[[880,.08],[523,.2]],
+      mute:[[440,.07]], unmute:[[660,.07]], msg:[[880,.05],[1320,.09]], cam:[[700,.05],[1050,.1]],
+      screen:[[784,.06],[988,.06],[1319,.16]], screenoff:[[1319,.06],[988,.06],[659,.16]],
+      ring:[[660,.18],[0,.06],[880,.18],[0,.06],[660,.18]] }[type];
     if(!seq) return;
     let t = sfxCtx.currentTime;
     seq.forEach(([f,d]) => {
       if(f){ const o = sfxCtx.createOscillator(), g = sfxCtx.createGain();
-        o.type = 'sine'; o.frequency.value = f; g.gain.setValueAtTime(.0001, t); g.gain.exponentialRampToValueAtTime(.12, t+.01); g.gain.exponentialRampToValueAtTime(.0001, t+d);
+        o.type = type === 'ring' ? 'sine' : 'triangle'; o.frequency.value = f; g.gain.setValueAtTime(.0001, t); g.gain.exponentialRampToValueAtTime(.12, t+.01); g.gain.exponentialRampToValueAtTime(.0001, t+d);
         o.connect(g).connect(sfxCtx.destination); o.start(t); o.stop(t+d+.02); }
       t += d;
     });
@@ -52,7 +57,8 @@ const prof = id => S.profiles.get(id) || { id, display_name:'…', username:'…
 const initials = p => (p.display_name || p.username || '?').trim().split(/\s+/).map(w=>w[0]).slice(0,2).join('').toUpperCase();
 function avatar(p, cls='', status=false){
   const img = p.avatar_url && (!/\.gif($|\?)/i.test(p.avatar_url) || hasPlus(p)) ? `<img src="${esc(p.avatar_url)}" alt="" loading="lazy" decoding="async">` : `<span class="ini">${esc(initials(p))}</span>`;
-  return `<div class="av ${cls}" style="--avc:${esc(p.avatar_color||'#5865f2')}">${img}${status?`<span class="st s-${statusOf(p.id)}"></span>`:''}</div>`;
+  const ring = p.avatar_ring && hasPlus(p) ? ` avring avring-${esc(p.avatar_ring)}` : '';
+  return `<div class="av ${cls}${ring}" style="--avc:${esc(p.avatar_color||'#ff6b4a')}">${img}${status?`<span class="st s-${statusOf(p.id)}"></span>`:''}</div>`;
 }
 function serverInitials(n){ return n.trim().split(/\s+/).map(w=>w[0]).slice(0,2).join('').toUpperCase() || '?'; }
 function fmtTime(d){
@@ -336,6 +342,36 @@ function subscribeRealtime(){
     .subscribe();
 }
 
+S.liveSeen = new Set();
+function liveWatch(topic, prev, metas){
+  const others = l => new Map(l.filter(m => m.voice && m.session !== Voice.SESSION).map(m => [m.session, m]));
+  const a = others(prev), b = others(metas);
+  const mine = Voice.channel && Voice.topic === topic ? Voice.channel.id : null;
+  b.forEach((m, sess) => {
+    const was = a.get(sess);
+    if(mine && m.voice === mine){
+      if(!was || was.voice !== mine) App.sfx('join');
+      else if(m.sharing && !was.sharing) App.sfx('screen');
+      else if(!m.sharing && was.sharing) App.sfx('screenoff');
+    }
+    const key = m.voice + ':' + sess + ':' + (m.screen || '');
+    if(m.sharing && (!was || !was.sharing) && !S.liveSeen.has(key) && m.user_id !== S.me.id){
+      S.liveSeen.add(key);
+      if(mine === m.voice || isDnd()) return;
+      const ch = findChannel(m.voice); if(!ch) return;
+      const where = ch.kind === 'dm' ? 'numa chamada com você' : 'em ' + ch.name;
+      App.toast(`🔴 ${prof(m.user_id).display_name} está transmitindo ${where}`, false, { label: 'Assistir', fn: () => watchLive(m.voice, sess) });
+    }
+  });
+  if(mine) a.forEach((m, sess) => { if(m.voice === mine && (!b.has(sess) || b.get(sess).voice !== mine)) App.sfx('leave'); });
+}
+async function watchLive(cid, sess){
+  const ch = findChannel(cid); if(!ch) return;
+  if(typeof SET !== 'undefined' && SET) closeSettings();
+  openChannel(ch);
+  if(!(Voice.channel && Voice.channel.id === cid)) await joinVoice(ch);
+  S.focus = 's:' + sess; renderStage();
+}
 function vpChannel(topic){
   if(S.vpCh.has(topic)) return S.vpCh.get(topic);
   const ch = App.sb.channel(topic, { config:{ presence:{ key: Voice.SESSION } } });
@@ -345,13 +381,8 @@ function vpChannel(topic){
       const metas = Object.values(st).map(a => a[a.length-1]).filter(Boolean);
       const prev = S.vp.get(topic) || [];
       S.vp.set(topic, metas);
-      // sons de entrar/sair no meu canal
-      if(Voice.channel && Voice.topic === topic){
-        const mine = l => new Set(l.filter(m => m.voice === Voice.channel.id && m.session !== Voice.SESSION).map(m => m.session));
-        const a = mine(prev), b = mine(metas);
-        if([...b].some(x => !a.has(x))) App.sfx('join');
-        else if([...a].some(x => !b.has(x))) App.sfx('leave');
-      }
+      // sons de entrar/sair/transmitir no meu canal + aviso de transmissão em outros canais
+      ensureProfiles(metas.map(m => m.user_id)).then(() => liveWatch(topic, prev, metas));
       ensureProfiles(metas.map(m => m.user_id)).then(() => {
         Voice.onPresence(topic, metas);
         renderSidebar(); renderStage();
@@ -442,7 +473,7 @@ async function go(route, first){
       route.cid = (list.find(c => c.id === last) || list.find(c => c.kind === 'text') || list[0] || {}).id || null;
     }
     if(route.cid){ S.lastChannel[route.sid] = route.cid; ls.set('telao-last', S.lastChannel); }
-    if(!S.members.has(route.sid)) loadMembers(route.sid).then(renderMembers);
+    if(!S.members.has(route.sid)) loadMembers(route.sid).then(() => { renderMembers(); renderSidebar(); });
   }
   const cid = route.kind === 'server' ? route.cid : route.dm;
   if(cid && S.unread.delete(cid)) saveUnread();
@@ -458,6 +489,7 @@ function renderAll(){ renderRail(); renderSidebar(); renderUserPanel(); renderVo
 function renderLight(){ renderRail(); renderSidebar(); renderUserPanel(); renderMembers(); refreshFriends(); }
 function refreshFriends(){ if(S.route.kind==='home' && !S.route.dm && S.friendTab !== 'add') renderMain(); }
 
+const LOGO = `<svg viewBox="0 0 32 32" width="26" height="26"><defs><linearGradient id="lg1" x1="0" y1="0" x2="1" y2="1"><stop offset="0" stop-color="#ff8a4c"/><stop offset="1" stop-color="#ff3d7f"/></linearGradient></defs><rect x="2" y="5" width="28" height="19" rx="6" fill="url(#lg1)"/><path d="M13 10.5v8l7-4z" fill="#fff"/><rect x="10" y="26" width="12" height="2.6" rx="1.3" fill="url(#lg1)"/></svg>`;
 /* ---------------- barra de servidores ---------------- */
 function serverIcon(s, size){
   return s.icon_url ? `<img src="${esc(s.icon_url)}" alt="" loading="lazy" decoding="async">` : esc(serverInitials(s.name));
@@ -466,7 +498,7 @@ function renderRail(){
   const pend = S.friends.filter(f => f.status === 'pending' && f.incoming).length;
   const dmUnread = S.dms.filter(d => S.unread.has(d.id)).length;
   const homeBadge = pend + dmUnread;
-  let h = `<button class="ricon home ${S.route.kind==='home'?'on':''}" id="rHome" data-tip="Mensagens diretas" data-tipside="r">${ic('chat',24)}
+  let h = `<button class="ricon home ${S.route.kind==='home'?'on':''}" id="rHome" data-tip="Início · amigos e conversas" data-tipside="r">${ic('chat',22)}
       ${homeBadge ? `<span class="badge">${homeBadge > 99 ? '99+' : homeBadge}</span>` : ''}</button>`;
   // DMs com mensagem nova aparecem na barra, como no Discord
   S.dms.filter(d => S.unread.has(d.id)).slice(0, 4).forEach(d => {
@@ -505,8 +537,8 @@ function renderSidebar(){
   if(!S.me) return;
   const head = $('#sbHead'), body = $('#sbBody');
   if(S.route.kind === 'home'){
-    head.className = 'sbhead search';
-    head.innerHTML = `<button class="findbtn" id="sbFind">Encontrar ou começar uma conversa <kbd>Ctrl K</kbd></button>`; head.onclick = null;
+    head.className = 'sbhead home'; head.style.removeProperty('--sc');
+    head.innerHTML = `<div class="brandrow"><span class="logo">${LOGO}</span><b>telão</b></div><button class="findbtn" id="sbFind">${ic('search',15)}<span>Buscar ou ir para…</span><kbd>Ctrl K</kbd></button>`; head.onclick = null;
     $('#sbFind').onclick = quickSwitcher;
     const pend = S.friends.filter(f => f.status === 'pending' && f.incoming).length;
     const dms = [...S.dms].sort((a,b) => (S.dmActivity[b.id] || b.created_at).localeCompare(S.dmActivity[a.id] || a.created_at));
@@ -528,8 +560,11 @@ function renderSidebar(){
   }
   const s = curServer(); if(!s){ go({kind:'home', dm:null}); return; }
   const canCh = App.hasPerm(s.id, 1);
-  head.className = 'sbhead';
-  head.innerHTML = `<span class="nm">${esc(s.name)}</span>${ic('chevDown',18)}`;
+  head.className = 'sbhead hero';
+  head.style.setProperty('--sc', s.icon_color);
+  const memList = S.members.get(s.id) || [];
+  const onl = memList.filter(m => S.online.has(m.user_id) || m.user_id === S.me.id).length;
+  head.innerHTML = `<div class="hero-in"><span class="hero-ic">${serverIcon(s)}</span><div class="hero-t"><b>${esc(s.name)}</b><small>${memList.length ? `<i class="odot"></i>${onl} online · ${memList.length} membro${memList.length>1?'s':''}` : '&nbsp;'}</small></div><span class="hero-ch">${ic('chevDown',18)}</span></div>`;
   head.onclick = e => serverMenu(s, e);
   const list = (S.channels.get(s.id) || []).slice().sort((a,b) => a.position - b.position);
   // agrupa por categoria (ou Texto/Voz)
@@ -566,8 +601,9 @@ function renderSidebar(){
   });
   body.querySelectorAll('[data-new]').forEach(b => b.onclick = () => createChannelModal(s, b.dataset.new, b.dataset.newcat));
   body.querySelectorAll('[data-edch]').forEach(b => b.onclick = e => { e.stopPropagation(); editChannelModal(list.find(c => c.id === b.dataset.edch)); });
+  body.querySelectorAll('[data-watch]').forEach(b => b.onclick = e => { e.stopPropagation(); watchLive(b.dataset.watch, b.dataset.wsess); });
   body.querySelectorAll('[data-vuser]').forEach(el => {
-    el.onclick = e => userMenu(el.dataset.vuser, e.clientX, e.clientY);
+    el.onclick = e => { if(e.target.closest('[data-watch]')) return; userMenu(el.dataset.vuser, e.clientX, e.clientY); };
     el.oncontextmenu = e => { e.preventDefault(); userMenu(el.dataset.vuser, e.clientX, e.clientY); };
   });
   onSpeaking();
@@ -575,7 +611,7 @@ function renderSidebar(){
 function vuRow(u){
   const p = prof(u.user_id);
   return `<div class="vu" data-vuser="${u.user_id}">${avatar(p,'sm').replace('class="av ', `data-sess="${u.session}" class="av `)}<span class="nm" style="${App.roleColorOf(u.user_id) ? 'color:' + App.roleColorOf(u.user_id) : ''}">${esc(p.display_name)}</span>
-    <span class="icons">${u.camera ? `<span class="vi">${ic('video',14)}</span>` : ''}${u.sharing ? '<span class="live">AO VIVO</span>' : ''}${u.deafened ? `<span class="vi off">${ic('headphonesOff',14)}</span>` : u.muted ? `<span class="vi off">${ic('micOff',14)}</span>` : ''}</span></div>`;
+    <span class="icons">${u.camera ? `<span class="vi">${ic('video',14)}</span>` : ''}${u.sharing ? `<button class="live" data-watch="${u.voice}" data-wsess="${u.session}" data-tip="Clique para assistir">AO VIVO</button>` : ''}${u.deafened ? `<span class="vi off">${ic('headphonesOff',14)}</span>` : u.muted ? `<span class="vi off">${ic('micOff',14)}</span>` : ''}</span></div>`;
 }
 
 /* ---------------- painel do usuário e de voz ---------------- */
@@ -632,7 +668,7 @@ function renderVoicePanel(){
   const where = c.kind === 'dm' ? 'Chamada com ' + esc(prof(dmOther(c)).display_name) : esc(c.name) + ' / ' + esc((S.servers.find(s => s.id === c.server_id) || {}).name || '');
   const ping = Voice.quality || 'good';
   el.classList.remove('hidden');
-  el.innerHTML = `<div class="vst"><div class="vwhere" id="vpGo"><b class="q-${ping}">${ic('signal',16)} Voz conectada</b><small>${where}</small></div>
+  el.innerHTML = `<div class="vst"><div class="vwhere" id="vpGo"><b class="q-${ping}">${ic('signal',16)} Voz conectada <span class="ctimer" id="cTimer"></span></b><small>${where}</small></div>
       <button class="ibtn hang" id="vpLeave" data-tip="Desconectar">${ic('phoneOff',20)}</button></div>
     <div class="vbtns">
       <button class="vb ${Voice.camStream?'on':''}" id="vpCam" data-tip="${Voice.camStream?'Desligar câmera':'Ligar câmera'}">${ic(Voice.camStream?'video':'videoOff',18)}</button>
@@ -641,8 +677,11 @@ function renderVoicePanel(){
       <button class="vb" id="vpQual" data-tip="Qualidade e áudio">${ic('sliders',18)}</button>
     </div>`;
   $('#vpGo').onclick = () => openChannel(c);
+  clearInterval(S.callTimer);
+  const tick = () => { const t = $('#cTimer'); if(!t || !Voice.channel){ clearInterval(S.callTimer); return; } const sec = (Date.now() - (Voice.joinedAt || Date.now())) / 1000; t.textContent = (sec >= 3600 ? Math.floor(sec/3600) + ':' : '') + String(Math.floor(sec/60) % 60).padStart(sec >= 3600 ? 2 : 1, '0') + ':' + String(Math.floor(sec % 60)).padStart(2,'0'); };
+  tick(); S.callTimer = setInterval(tick, 1000);
   $('#vpLeave').onclick = leaveVoice;
-  $('#vpCam').onclick = () => Voice.camStream ? Voice.stopCamera() : Voice.startCamera();
+  $('#vpCam').onclick = () => Voice.camStream ? Voice.stopCamera() : cameraSetup();
   $('#vpScreen').onclick = () => Voice.screenStream ? Voice.stopScreen() : Voice.startScreen();
   $('#vpAct').onclick = e => activitiesMenu(e.currentTarget);
   $('#vpQual').onclick = () => openSettings('user','voice');
@@ -666,7 +705,7 @@ function renderMain(keepMessages){
       ${headBtns([['hPins','pin','Mensagens fixadas'],['hSearch','search','Buscar']])}`;
     $('#hProf').onclick = e => userMenu(p.id, e.clientX, e.clientY + 20);
     const callBtn = $('#dmCall'); if(callBtn) callBtn.onclick = () => joinVoice(d);
-    const vBtn = $('#dmVideo'); if(vBtn) vBtn.onclick = async () => { await joinVoice(d); Voice.startCamera(); };
+    const vBtn = $('#dmVideo'); if(vBtn) vBtn.onclick = async () => { await joinVoice(d); cameraSetup(); };
     $('#hPins').onclick = e => showPins(e.currentTarget); $('#hSearch').onclick = e => showSearch(e.currentTarget);
     bindBack();
     if(keepMessages && M.cid === d.id && body.querySelector('.msgs')){ renderStage(); return; }
@@ -775,7 +814,7 @@ function renderFriends(head, body, back){
   else { rows = pend; title = 'Pendentes — ' + rows.length; }
   rows.sort((a,b) => prof(a.uid).display_name.localeCompare(prof(b.uid).display_name));
   const activity = uid => {
-    for(const [topic, metas] of S.vp) { const m = metas.find(x => x.user_id === uid && x.voice); if(m){ const ch = findChannel(m.voice); if(ch) return m.sharing ? `${ic('screenUp',13)} Transmitindo em ${ch.kind==='dm'?'uma chamada':esc(ch.name)}` : `${ic('volume',13)} Em ${ch.kind==='dm'?'uma chamada':esc(ch.name)}`; } }
+    for(const [topic, metas] of S.vp) { const m = metas.find(x => x.user_id === uid && x.voice); if(m){ const ch = findChannel(m.voice); if(ch) return m.sharing ? `<span class="livetag" data-watch="${m.voice}" data-wsess="${m.session}">${ic('screenUp',13)} AO VIVO em ${ch.kind==='dm'?'uma chamada':esc(ch.name)} · Assistir</span>` : `${ic('volume',13)} Em ${ch.kind==='dm'?'uma chamada':esc(ch.name)}`; } }
     return '';
   };
   body.innerHTML = `<div class="flist"><div class="fsearch">${ic('search',16)}<input id="fQ" placeholder="Buscar" autocomplete="off"></div><h4>${title}</h4><div id="fRows">${rows.length ? rows.map(f => {
@@ -788,7 +827,8 @@ function renderFriends(head, body, back){
   }).join('') : `<div class="empty big">${ic(tab==='pending'?'inbox':'users',56)}<p>${tab==='online'?'Nenhum amigo online agora. Que tal chamar alguém?':tab==='pending'?'Nenhum pedido pendente.':'Você ainda não tem amigos aqui.'}</p><button class="btn" id="goAdd">Adicionar amigo</button></div>`}</div></div>`;
   const fq = $('#fQ'); if(fq) fq.oninput = () => { const v = fq.value.toLowerCase(); body.querySelectorAll('.frow').forEach(r => r.style.display = r.dataset.n.includes(v) ? '' : 'none'); };
   const ga = $('#goAdd'); if(ga) ga.onclick = () => { S.friendTab = 'add'; renderMain(); };
-  body.querySelectorAll('.frow').forEach(r => r.onclick = e => { if(e.target.closest('button')) return; const f = S.friends.find(x => x.uid === r.dataset.fu); if(f && f.status === 'accepted') openDM(f.uid); });
+  body.querySelectorAll('[data-watch]').forEach(b => b.onclick = e => { e.stopPropagation(); watchLive(b.dataset.watch, b.dataset.wsess); });
+  body.querySelectorAll('.frow').forEach(r => r.onclick = e => { if(e.target.closest('button,[data-watch]')) return; const f = S.friends.find(x => x.uid === r.dataset.fu); if(f && f.status === 'accepted') openDM(f.uid); });
   body.querySelectorAll('[data-acc]').forEach(b => b.onclick = async () => {
     const { error } = await App.sb.from('friendships').update({ status:'accepted' }).eq('requester', b.dataset.acc).eq('addressee', S.me.id);
     if(error) App.toast(error.message, true); else { await loadFriends(); renderLight(); renderMain(); App.sfx('join'); }
@@ -803,7 +843,7 @@ function renderFriends(head, body, back){
   body.querySelectorAll('[data-rm]').forEach(b => b.onclick = () => removeFriend(b.dataset.rm));
   body.querySelectorAll('[data-fmore]').forEach(b => b.onclick = e => { const r = b.getBoundingClientRect(); menu(r.left - 160, r.bottom + 4, [
     { label:'Ver perfil', icon: ic('user',18), onClick: () => userMenu(b.dataset.fmore, r.left - 200, r.bottom) },
-    { label:'Chamada de vídeo', icon: ic('video',18), onClick: async () => { const d = await openDM(b.dataset.fmore); if(d){ await joinVoice(d); Voice.startCamera(); } } },
+    { label:'Chamada de vídeo', icon: ic('video',18), onClick: async () => { const d = await openDM(b.dataset.fmore); if(d){ await joinVoice(d); cameraSetup(); } } },
     '-', { label:'Desfazer amizade', icon: ic('x',18), danger:true, onClick: () => removeFriend(b.dataset.fmore) } ]); });
   body.querySelectorAll('[data-dm]').forEach(b => b.onclick = () => openDM(b.dataset.dm));
   body.querySelectorAll('[data-call]').forEach(b => b.onclick = async () => { const d = await openDM(b.dataset.call); if(d) joinVoice(d); });
@@ -827,6 +867,90 @@ const isImg = a => /^image\//.test(a.type || '');
 const isVid = a => /^video\//.test(a.type || '');
 const isAud = a => /^audio\//.test(a.type || '');
 const ytId = u => { const m = u.match(/(?:youtube\.com\/(?:watch\?v=|shorts\/|embed\/)|youtu\.be\/)([\w-]{11})/); return m ? m[1] : null; };
+
+/* ---------- comandos com / ---------- */
+const CMDS = [
+  ['dado', '[lados]', 'Rola um dado (padrão: 6 lados)', '🎲'],
+  ['moeda', '', 'Cara ou coroa', '🪙'],
+  ['sorteio', 'a, b, c', 'Sorteia uma das opções', '🎯'],
+  ['enquete', 'Pergunta | opção 1 | opção 2', 'Cria uma enquete com votação', '📊'],
+  ['confete', '[mensagem]', 'Solta confete na tela de todo mundo', '🎉'],
+  ['eu', 'ação', 'Fala na terceira pessoa', '💬'],
+  ['spoiler', 'texto', 'Esconde o texto até clicarem', '🙈'],
+  ['shrug', '[texto]', 'Adiciona ¯\\_(ツ)_/¯', '🤷'],
+  ['tableflip', '[texto]', 'Vira a mesa (╯°□°)╯︵ ┻━┻', '😤'],
+  ['unflip', '[texto]', 'Desvira a mesa ┬─┬ノ( º _ ºノ)', '😌'],
+  ['lenny', '[texto]', '( ͡° ͜ʖ ͡°)', '😏'],
+];
+function runCommand(text){
+  const m = text.match(/^\/(\w+)\s*([\s\S]*)$/); if(!m) return null;
+  const [, cmd, arg] = m, a = arg.trim(), me = S.me.display_name;
+  const rnd = n => Math.floor(Math.random() * n);
+  switch(cmd.toLowerCase()){
+    case 'dado': { const n = Math.max(2, Math.min(1000, parseInt(a) || 6)); return { content: `🎲 **${me}** rolou um d${n} e tirou **${1 + rnd(n)}**` }; }
+    case 'moeda': return { content: `🪙 **${me}** jogou a moeda: deu **${rnd(2) ? 'Cara' : 'Coroa'}**!` };
+    case 'sorteio': { const ops = a.split(/[,;|]/).map(x => x.trim()).filter(Boolean); if(ops.length < 2) return { error: 'Use: /sorteio opção 1, opção 2, opção 3' }; return { content: `🎯 Sorteio entre ${ops.map(x => '`' + x + '`').join(', ')}…\nO escolhido foi: **${ops[rnd(ops.length)]}**! 🎉` }; }
+    case 'enquete': { const parts = a.split('|').map(x => x.trim()).filter(Boolean); if(parts.length < 3) return { error: 'Use: /enquete Pergunta | opção 1 | opção 2' }; return { content: '', attachments: [{ type:'poll', q: parts[0].slice(0, 200), opts: parts.slice(1, 11).map(x => x.slice(0, 80)) }] }; }
+    case 'confete': return { content: (a || '🎉🎉🎉') + ' ', fx: 'confete' };
+    case 'eu': return a ? { content: `*${me} ${a}*` } : { error: 'Use: /eu está jogando' };
+    case 'spoiler': return a ? { content: `||${a}||` } : { error: 'Use: /spoiler texto' };
+    case 'shrug': return { content: (a ? a + ' ' : '') + '¯\\_(ツ)_/¯' };
+    case 'tableflip': return { content: (a ? a + ' ' : '') + '(╯°□°)╯︵ ┻━┻' };
+    case 'unflip': return { content: (a ? a + ' ' : '') + '┬─┬ノ( º _ ºノ)' };
+    case 'lenny': return { content: (a ? a + ' ' : '') + '( ͡° ͜ʖ ͡°)' };
+  }
+  return null;
+}
+
+/* ---------- efeitos de mensagem (confete, corações) ---------- */
+function msgEffectFor(text){
+  if(!text) return null;
+  if(/parab[eé]ns|feliz anivers[aá]rio|🎉{2,}|^🎉\s*$/i.test(text)) return 'confete';
+  if(/\bte amo\b|❤️{2,}|^❤️\s*$|💖|😍{2,}/i.test(text)) return 'coracoes';
+  if(/\bgg\b|ganhamos|vit[oó]ria|🏆/i.test(text)) return 'trofeu';
+  return null;
+}
+function burst(kind){
+  const host = $('#msgWrapIn') || $('#mainBody'); if(!host) return;
+  const cv = document.createElement('canvas'); cv.className = 'burst'; host.appendChild(cv);
+  const r = host.getBoundingClientRect(); cv.width = r.width; cv.height = r.height;
+  const ctx = cv.getContext('2d'), N = kind === 'confete' ? 140 : 40;
+  const colors = ['#ff6b4a','#ffd166','#06d6a0','#4cc9f0','#b388ff','#ff4d8d'];
+  const glyph = kind === 'coracoes' ? ['❤️','💖','💗','💕'] : kind === 'trofeu' ? ['🏆','⭐','✨','🥇'] : null;
+  const ps = Array.from({ length: N }, () => ({ x: r.width * (0.2 + Math.random() * 0.6), y: glyph ? r.height + 20 : r.height * 0.3, vx: (Math.random() - .5) * (glyph ? 2 : 11), vy: glyph ? -(3 + Math.random() * 4) : -(4 + Math.random() * 9),
+    rot: Math.random() * 6, vr: (Math.random() - .5) * .3, c: colors[Math.floor(Math.random() * colors.length)], s: 6 + Math.random() * 7, g: glyph ? glyph[Math.floor(Math.random() * glyph.length)] : null }));
+  const t0 = performance.now();
+  const loop = now => {
+    const t = now - t0; ctx.clearRect(0, 0, cv.width, cv.height);
+    ps.forEach(p => {
+      p.x += p.vx; p.y += p.vy; p.vy += glyph ? -0.02 : 0.25; p.vx *= .99; p.rot += p.vr;
+      ctx.save(); ctx.globalAlpha = Math.max(0, 1 - t / 2800); ctx.translate(p.x, p.y); ctx.rotate(p.rot);
+      if(p.g){ ctx.font = (p.s * 3) + 'px serif'; ctx.fillText(p.g, 0, 0); } else { ctx.fillStyle = p.c; ctx.fillRect(-p.s/2, -p.s/4, p.s, p.s/2); }
+      ctx.restore();
+    });
+    if(t < 2800) requestAnimationFrame(loop); else cv.remove();
+  };
+  requestAnimationFrame(loop);
+}
+
+/* ---------- enquetes (votos usam as reações "opt:N") ---------- */
+function pollHtml(m, a){
+  const mm = M.reacts.get(m.id) || new Map();
+  const counts = a.opts.map((_, i) => (mm.get('opt:' + i) || new Set()).size);
+  const total = counts.reduce((x, y) => x + y, 0);
+  const mine = a.opts.findIndex((_, i) => (mm.get('opt:' + i) || new Set()).has(S.me.id));
+  return `<div class="poll" data-poll="${m.id}"><div class="pq">${ic('poll',18)} ${esc(a.q)}</div>
+    ${a.opts.map((o, i) => { const pct = total ? Math.round(counts[i] / total * 100) : 0;
+      return `<button class="popt ${mine===i?'mine':''}" data-vote="${i}" data-mid="${m.id}"><span class="pbar" style="width:${pct}%"></span><span class="ptx">${mine===i?ic('check',15):''}${esc(o)}</span><b>${counts[i] ? pct + '%' : ''}</b></button>`; }).join('')}
+    <div class="pfoot">${total} voto${total===1?'':'s'}${mine >= 0 ? ' · clique de novo para tirar seu voto' : ' · clique para votar'}</div></div>`;
+}
+async function vote(mid, i){
+  const mm = M.reacts.get(mid) || new Map();
+  const cur = [...mm.keys()].filter(k => k.startsWith('opt:') && mm.get(k).has(S.me.id));
+  for(const k of cur){ delReact(mid, k, S.me.id); await App.sb.from('message_reactions').delete().eq('message_id', mid).eq('user_id', S.me.id).eq('emoji', k); }
+  if(!cur.includes('opt:' + i)){ addReact(mid, 'opt:' + i, S.me.id); await App.sb.from('message_reactions').insert({ message_id: mid, emoji: 'opt:' + i }); }
+  patchReacts(mid);
+}
 
 /* ---------- markdown ---------- */
 function richText(t){
@@ -886,7 +1010,7 @@ async function mountMessages(ch, container, welcome){
         <div class="recbar hidden" id="recBar"></div>
         <form id="cmpF" class="crow">
           <button type="button" class="cbtn2" id="cAttach" title="Anexar arquivos">${ic('plusCircle',22)}</button>
-          <textarea id="cmp" rows="1" maxlength="4000" placeholder="Conversar em ${esc(ph)}"></textarea>
+          <textarea id="cmp" rows="1" maxlength="4000" placeholder="Mensagem para ${esc(ph)} — digite / para comandos"></textarea>
           <button type="button" class="cbtn2" id="cEmoji" title="Emoji">${ic('smile',22)}</button>
           <button type="button" class="cbtn2" id="cVoice" title="Mensagem de voz">${ic('mic',22)}</button>
           <button class="cbtn2 send" id="cSend" title="Enviar">${ic('send',20)}</button>
@@ -977,8 +1101,8 @@ function delReact(mid, emoji, uid){
   mm.get(emoji).delete(uid); if(!mm.get(emoji).size) mm.delete(emoji);
 }
 function reactsHtml(mid){
-  const mm = M.reacts.get(mid); if(!mm || !mm.size) return '';
-  return `<div class="reacts">${[...mm].map(([e, set]) => {
+  const mm = M.reacts.get(mid); if(!mm || ![...mm.keys()].some(k => !k.startsWith('opt:'))) return '';
+  return `<div class="reacts">${[...mm].filter(([e]) => !e.startsWith('opt:')).map(([e, set]) => {
     const names = [...set].slice(0, 6).map(u => prof(u).display_name).join(', ') + (set.size > 6 ? ` e mais ${set.size-6}` : '');
     return `<button class="rx ${set.has(S.me.id)?'mine':''}" data-rx="${esc(e)}" data-mid="${mid}" data-tip="${esc(names)}" data-tipsub="reagiu com ${esc(e)}"><span>${esc(e)}</span><b>${set.size}</b></button>`;
   }).join('')}<button class="rx add" data-addrx="${mid}" title="Adicionar reação">${ic('smilePlus',16)}</button></div>`;
@@ -996,9 +1120,11 @@ async function toggleReact(mid, emoji){
   }
 }
 function patchReacts(mid){
+  const pl = M.el && M.el.querySelector(`[data-poll="${mid}"]`);
+  if(pl){ const m = M.list.find(x => x.id === mid), a = m && (m.attachments || []).find(x => x.type === 'poll'); if(a) pl.outerHTML = pollHtml(m, a); }
   const node = M.el && M.el.querySelector(`[data-m="${mid}"] .bd`); if(!node) return;
   const old = node.querySelector(':scope > .reacts'); const html = reactsHtml(mid);
-  if(old) old.outerHTML = html || ''; else if(html) node.insertAdjacentHTML('beforeend', html);
+  if(old){ if(html) old.outerHTML = html; else old.remove(); } else if(html) node.insertAdjacentHTML('beforeend', html);
 }
 App.onReaction = p => {
   const r = p.eventType === 'DELETE' ? p.old : p.new;
@@ -1010,8 +1136,8 @@ App.onReaction = p => {
 /* ---------- renderização ---------- */
 function attHtml(m){
   const at = m.attachments || []; if(!at.length) return '';
-  const imgs = at.filter(a => isImg(a) || isVid(a)), others = at.filter(a => !isImg(a) && !isVid(a));
-  let h = '';
+  const imgs = at.filter(a => isImg(a) || isVid(a)), others = at.filter(a => !isImg(a) && !isVid(a) && a.type !== 'poll');
+  let h = at.filter(a => a.type === 'poll').map(a => pollHtml(m, a)).join('');
   if(imgs.length){
     const n = Math.min(imgs.length, 4);
     h += `<div class="mgrid g${n}">` + imgs.map((a, i) => {
@@ -1049,31 +1175,34 @@ function replyHtml(m){
   return `<div class="rquote" data-jump="${r.id}"><span class="rline"></span>${avatar(p,'xs')}<b style="color:${roleColor(p.id) || 'var(--txt)'}">${esc(p.display_name)}</b><span class="rsnip">${snip}</span></div>`;
 }
 function roleColor(uid){ return App.roleColorOf ? App.roleColorOf(uid) : null; }
-function msgHtml(m, prev, canMod){
+function msgHtml(m, prev){
   const day = new Date(m.created_at).toDateString();
   let pre = '';
   if(!prev || new Date(prev.created_at).toDateString() !== day) pre += `<div class="daysep"><span>${fmtDay(m.created_at)}</span></div>`;
-  if(M.readAt && m.created_at > M.readAt && (!prev || prev.created_at <= M.readAt) && m.author_id !== S.me.id) pre += `<div class="newsep"><span>NOVAS</span></div>`;
+  if(M.readAt && m.created_at > M.readAt && (!prev || prev.created_at <= M.readAt) && m.author_id !== S.me.id) pre += `<div class="newsep"><span>novas mensagens</span></div>`;
   const grouped = !pre && prev && !m.reply_to && prev.author_id === m.author_id && (new Date(m.created_at) - new Date(prev.created_at)) < 7*60*1000;
   const p = prof(m.author_id), mine = m.author_id === S.me.id;
   const time = new Date(m.created_at).toLocaleTimeString('pt-BR',{hour:'2-digit',minute:'2-digit'});
-  const mentioned = S.me && m.content && (m.content.includes('@' + S.me.username) || /@(todos|everyone)\b/.test(m.content));
+  const mentioned = !mine && S.me && m.content && (m.content.includes('@' + S.me.username) || /@(todos|everyone)\b/.test(m.content));
+  const emo = onlyEmoji(m.content) && !(m.attachments || []).length;
+  const atts = attHtml(m), emb = embedsHtml(m);
+  const onlyMedia = !m.content && (m.attachments || []).some(a => isImg(a) || isVid(a)) && !(m.attachments || []).some(a => a.type === 'poll');
+  const meta = `<span class="mtime" title="${new Date(m.created_at).toLocaleString('pt-BR')}">${m.edited_at ? '<span class="edited">editado</span> · ' : ''}${m._sending ? ic('clock',11) : time}${m.pinned ? ' ' + ic('pin',11) : ''}</span>`;
   const content = M.editing === m.id
     ? `<textarea class="editbox" id="edBox" rows="2" maxlength="4000">${esc(m.content)}</textarea><div class="edithint">Esc para <a data-edcancel>cancelar</a> · Enter para <a data-edsave>salvar</a></div>`
-    : (m.content ? `<div class="ct ${onlyEmoji(m.content)?'jumbo':''}">${richText(m.content)}${m.edited_at?' <span class="edited">(editado)</span>':''}</div>` : '');
+    : (m.content ? `<div class="ct ${emo?'jumbo':''}">${richText(m.content)}</div>` : '');
+  const bub = `<div class="bub ${emo?'emo':''} ${onlyMedia?'media':''}">${content}${atts}${emb}${meta}</div>`;
   const tools = m._sending ? '' : `<div class="acts">
       ${EMOJI.QUICK.slice(0,3).map(e => `<button data-quick="${e}" data-mid="${m.id}" title="Reagir">${e}</button>`).join('')}
-      <button data-addrx="${m.id}" title="Adicionar reação">${ic('smilePlus',18)}</button>
-      <button data-reply="${m.id}" title="Responder">${ic('reply',18)}</button>
-      ${mine ? `<button data-edit="${m.id}" title="Editar">${ic('edit',18)}</button>` : ''}
-      <button data-more="${m.id}" title="Mais">${ic('dots',18)}</button></div>`;
-  const body = `${content}${attHtml(m)}${embedsHtml(m)}${reactsHtml(m.id)}`;
-  const cls = `msg ${grouped?'':'first'} ${mentioned?'mentioned':''} ${m.pinned?'pinned':''} ${m._sending?'sendingmsg':''}`;
-  const color = roleColor(m.author_id) || 'var(--txt)';
-  if(grouped) return `<div class="${cls}" data-m="${m.id}"><div class="gap">${time}</div><div class="bd">${body}</div>${tools}</div>`;
-  return `${pre}<div class="${cls}" data-m="${m.id}">${replyHtml(m)}<div class="mline">${avatar(p,'lg').replace('class="av lg"', `class="av lg" data-uprof="${p.id}"`)}<div class="bd">
-    <div class="hd"><b style="color:${color}" data-uprof="${p.id}">${esc(p.display_name)}</b>${hasPlus(p) ? badgeHtml(BADGES[2], p, 'sm') : ''}${m.pinned?`<span class="pinmark" title="Fixada">${ic('pin',13)}</span>`:''}<time title="${new Date(m.created_at).toLocaleString('pt-BR')}">${fmtTime(m.created_at)}</time></div>
-    ${body}</div></div>${tools}</div>`;
+      <button data-addrx="${m.id}" title="Adicionar reação">${ic('smilePlus',17)}</button>
+      <button data-reply="${m.id}" title="Responder">${ic('reply',17)}</button>
+      ${mine ? `<button data-edit="${m.id}" title="Editar">${ic('edit',17)}</button>` : ''}
+      <button data-more="${m.id}" title="Mais">${ic('dots',17)}</button></div>`;
+  const cls = `msg ${grouped?'':'first'} ${mine?'mine':''} ${mentioned?'mentioned':''} ${m.pinned?'pinned':''} ${m._sending?'sendingmsg':''}`;
+  const color = roleColor(m.author_id);
+  const head = mine ? '' : `<div class="hd"><b data-uprof="${p.id}" ${color ? `style="color:${color}"` : ''}>${nameHtml(p)}</b>${hasPlus(p) ? badgeHtml(BADGES[2], p, 'sm') : ''}</div>`;
+  const av = mine ? '' : grouped ? '<div class="avsp"></div>' : avatar(p,'lg').replace('class="av lg', `data-uprof="${p.id}" class="av lg`);
+  return `${pre}<div class="${cls}" data-m="${m.id}">${grouped ? '' : replyHtml(m)}<div class="mline">${av}<div class="bd">${grouped ? '' : head}${bub}${reactsHtml(m.id)}</div></div>${tools}</div>`;
 }
 function renderMsgList(stick){
   if(!M.el) return;
@@ -1111,13 +1240,14 @@ function addMessage(m){
     (old.attachments || []).forEach(a => a._local && URL.revokeObjectURL(a.url));
     M.list[pend] = m;
     const node = M.el.querySelector(`[data-m="${old.id}"]`);
-    if(node){ node.outerHTML = msgHtml(m, M.list[pend - 1]).replace(/^(<div class="(daysep|newsep)">.*?<\/div>)+/s, ''); }
+    if(node){ const tmp = document.createElement('div'); tmp.innerHTML = msgHtml(m, M.list[pend - 1]); const nn = tmp.querySelector(`[data-m="${m.id}"]`); if(nn) node.replaceWith(nn); }
     else renderMsgList(null);
   } else {
     M.list.push(m); M.list.sort((a,b) => a.created_at.localeCompare(b.created_at));
     if(M.list[M.list.length - 1] === m) appendMessage(m); else renderMsgList(null);
   }
   M.typing.has(m.author_id) && (clearTimeout(M.typing.get(m.author_id)), M.typing.delete(m.author_id), renderTyping());
+  const fx = msgEffectFor(m.content); if(fx && !M._fxDone?.has(m.id)){ (M._fxDone = M._fxDone || new Set()).add(m.id); burst(fx); }
   if(!document.hidden) markRead();
 }
 const sigOf = m => m.author_id + '|' + (m.content || '') + '|' + (m.attachments || []).length;
@@ -1151,6 +1281,7 @@ function onMsgClick(e){
   const cc = t.closest('[data-copycode]'); if(cc){ copy(cc.closest('pre').querySelector('code').textContent); return; }
   const up = t.closest('[data-uprof]'); if(up){ userMenu(up.dataset.uprof, e.clientX, e.clientY); return; }
   const q = t.closest('[data-quick]'); if(q){ toggleReact(q.dataset.mid, q.dataset.quick); return; }
+  const vt = t.closest('[data-vote]'); if(vt){ vote(vt.dataset.mid, +vt.dataset.vote); return; }
   const rx = t.closest('[data-rx]'); if(rx){ toggleReact(rx.dataset.mid, rx.dataset.rx); return; }
   const ar = t.closest('[data-addrx]'); if(ar){ const r = ar.getBoundingClientRect(); emojiPicker(r.left, r.top, em => toggleReact(ar.dataset.addrx, em)); return; }
   const rp = t.closest('[data-reply]'); if(rp){ startReply(rp.dataset.reply); return; }
@@ -1408,17 +1539,23 @@ async function uploadOne(f){
 async function sendMessage(extraFiles){
   const ta = $('#cmp'); if(!ta) return;
   let content = ta.value.trim().replace(/:([a-z0-9_]{2,30}):/g, (m, k) => EMOJI.BY[k] || m);
-  const files = extraFiles || M.files.splice(0);
-  if(!content && !files.length) return;
+  let cmdAtt = null;
+  if(!extraFiles && content.startsWith('/')){
+    const r = runCommand(content);
+    if(r && r.error){ App.toast(r.error, true); return; }
+    if(r){ content = r.content; cmdAtt = r.attachments || null; if(r.fx){ (M._fxDone = M._fxDone || new Set()); } }
+  }
+  const files = extraFiles || (cmdAtt ? [] : M.files.splice(0));
+  if(!content && !files.length && !cmdAtt) return;
   const reply_to = M.replyTo, ch = M.ch;
   if(!extraFiles){ ta.value = ''; ta.style.height = 'auto'; cancelReply(); drawFiles(); }
   // mensagem otimista: aparece na hora, com as imagens locais
   const tmpId = 'tmp-' + Math.random().toString(36).slice(2);
   const temp = { id: tmpId, _sending: true, channel_id: ch.id, author_id: S.me.id, content, reply_to, created_at: new Date().toISOString(), pinned: false,
-                 attachments: files.map(f => ({ url: f.preview || '', name: f.file.name, type: f.file.type, size: f.file.size, _local: !!f.preview, voice: f.voice, dur: f.dur, wave: f.wave })) };
+                 attachments: cmdAtt ? cmdAtt : files.map(f => ({ url: f.preview || '', name: f.file.name, type: f.file.type, size: f.file.size, _local: !!f.preview, voice: f.voice, dur: f.dur, wave: f.wave })) };
   M.list.push(temp); appendMessage(temp);
   try{
-    const attachments = await Promise.all(files.map(uploadOne));
+    const attachments = cmdAtt || await Promise.all(files.map(uploadOne));
     const { data, error } = await App.sb.from('messages').insert({ channel_id: ch.id, content, attachments, reply_to }).select().single();
     if(error) throw error;
     data._tmpOf = tmpId; addMessage(data);
@@ -1484,7 +1621,10 @@ function autocomplete(){
   const ta = $('#cmp'), pop = $('#acPop'); if(!ta || !pop) return;
   const before = ta.value.slice(0, ta.selectionStart);
   let m, items = [];
-  if((m = before.match(/(?:^|\s)@([a-z0-9_]{0,24})$/i))){
+  if((m = before.match(/^\/(\w*)$/))){
+    const q = m[1].toLowerCase();
+    items = CMDS.filter(c => c[0].startsWith(q)).map(c => ({ html: `<span class="acem">${c[3]}</span><b>/${c[0]}</b> <small>${esc(c[1])}</small><small class="acd">${esc(c[2])}</small>`, ins: '/' + c[0] + ' ', len: m[1].length + 1, cmd: true }));
+  } else if((m = before.match(/(?:^|\s)@([a-z0-9_]{0,24})$/i))){
     const q = m[1].toLowerCase();
     const pool = M.ch.kind === 'dm' ? [S.me.id, dmOther(M.ch)] : (S.members.get(M.ch.server_id) || []).map(x => x.user_id);
     items = pool.map(prof).filter(p => p.username.includes(q) || p.display_name.toLowerCase().includes(q)).slice(0, 8)
@@ -1501,7 +1641,7 @@ function autocomplete(){
 }
 function drawAC(){
   const pop = $('#acPop');
-  pop.innerHTML = `<div class="achead">${AC.items[0].ins.startsWith('@') ? 'Membros' : 'Emojis'}</div>` + AC.items.map((it, k) => `<div class="acit ${k===AC.i?'on':''}" data-k="${k}">${it.html}</div>`).join('');
+  pop.innerHTML = `<div class="achead">${AC.items[0].cmd ? 'Comandos' : AC.items[0].ins.startsWith('@') ? 'Membros' : 'Emojis'}</div>` + AC.items.map((it, k) => `<div class="acit ${k===AC.i?'on':''}" data-k="${k}">${it.html}</div>`).join('');
   pop.classList.remove('hidden');
   pop.querySelectorAll('[data-k]').forEach(el => el.onmousedown = e => { e.preventDefault(); AC.i = +el.dataset.k; pickAC(); });
 }
@@ -1606,7 +1746,8 @@ async function joinVoice(ch){
   await pch._ready;
   if(!navigator.mediaDevices){ App.toast('Seu navegador não suporta chamadas. Use Chrome, Edge ou Safari atualizado.', true); return; }
   await Voice.join(ch, pch, topic);
-  App.sfx('join');
+  Voice.joinedAt = Date.now();
+  App.sfx('selfjoin');
   if(ch.kind === 'dm'){
     const other = dmOther(ch);
     const there = voiceUsers(ch).some(m => m.user_id === other);
@@ -1706,7 +1847,7 @@ function renderStage(){
     return `<div class="tile ${cam?'hascam':''}" data-sess="${u.session}" data-vuser="${u.user_id}" style="--avc:${esc(p.avatar_color)}">
       ${cam ? `<div class="vslot" data-stream="${cam.stream.id}" data-mirror="${me?1:0}"></div>` : `<div class="tbg" ${p.banner_url && hasPlus(p) ? `style="background-image:url('${esc(p.banner_url)}')"` : ''}></div>${avatar(p)}`}
       <span class="nm">${u.deafened ? ic('headphonesOff',14) : u.muted ? ic('micOff',14) : ''}${esc(p.display_name)}${me?' (você)':''}</span>
-      ${u.sharing ? '<span class="live tl">AO VIVO</span>' : ''}</div>`;
+      ${u.sharing ? (me ? '<span class="live tl">AO VIVO</span>' : `<button class="watchbtn" data-focus="s:${u.session}">${ic('eye',15)} Assistir</button>`) : ''}</div>`;
   };
   const scrTile = s => `<div class="tile scr ${focused && focused.id === 's:' + s.session ? 'on' : ''}" data-focus="s:${s.session}"><div class="vslot" data-stream="${s.stream.id}"></div><span class="nm">${ic('monitor',14)} ${esc(s.mine ? 'Sua tela' : prof(s.user_id).display_name)}</span></div>`;
 
@@ -1716,10 +1857,12 @@ function renderStage(){
     const strip = focusables.filter(x => x !== f).map(x => x.id === 'wt' ? `<div class="tile scr wtt" data-focus="wt">${ic('tv',28)}<span class="nm">Assistir juntos</span></div>` : scrTile(x.s)).join('') + users.map(tileOf).join('');
     const main = f.id === 'wt'
       ? `<div class="focus wtfocus" id="focusBox"><div id="wtPlayer"></div><div class="wtbar"><span>${ic('tv',16)} Assistindo juntos · ${esc(WT.title || 'YouTube')}</span><span class="grow"></span><button id="wtChange">${ic('refresh',16)} Trocar vídeo</button><button id="wtStop">${ic('x',16)} Encerrar</button></div></div>`
-      : `<div class="focus" id="focusBox"><div class="vslot" data-stream="${f.s.stream.id}"></div>
+      : `<div class="focus" id="focusBox"><div class="vslot" data-stream="${f.s.stream.id}"></div><canvas class="drawlayer ${DRAW.on?'on':''}" id="drawCv"></canvas>
           <span class="stats" id="stStats"></span>
           <span class="lbl">${ic('monitor',14)} ${esc(f.s.mine ? 'Sua tela (prévia)' : 'Tela de ' + prof(f.s.user_id).display_name)} ${f.s.mine ? '' : (f.s.stream.getAudioTracks().length ? ic('volume',14) : `<span class="noaud">${ic('micOff',13)} sem áudio</span>`)}</span>
           <span class="tools">
+            <button id="stDraw" data-tip="Desenhar na tela (todos veem)" class="${DRAW.on?'on':''}">${ic('pen',18)}</button>
+            <button id="stCine" data-tip="Modo cinema">${ic('film',18)}</button>
             <button id="stShot" data-tip="Tirar print">${ic('camera',18)}</button>
             <button id="stRec" data-tip="${REC.on ? 'Parar gravação' : 'Gravar'}" class="${REC.on?'rec':''}">${ic(REC.on?'stop':'record',18)}${REC.on ? '<span id="recTime">0:00</span>' : ''}</button>
             ${document.pictureInPictureEnabled ? `<button id="stPip" data-tip="Janela flutuante">${ic('pip',18)}</button>` : ''}
@@ -1737,6 +1880,7 @@ function renderStage(){
       </div>
       <div class="sbg">
         <button class="cbtn ${Voice.camStream?'on':''}" id="sbCam" data-tip="${Voice.camStream?'Desligar câmera':'Ligar câmera'}">${ic(Voice.camStream?'video':'videoOff',22)}</button>
+        ${Voice.camStream ? `<button class="cbtn" id="sbCamFx" data-tip="Efeitos da câmera">${ic('wand',22)}</button>` : ''}
         <button class="cbtn ${Voice.screenStream?'on':''}" id="sbScr" data-tip="${Voice.screenStream?'Parar de transmitir':'Compartilhar tela'}">${ic('screenUp',22)}</button>
         <button class="cbtn" id="sbAct" data-tip="Atividades">${ic('sparkles',22)}</button>
         <button class="cbtn" id="sbFx" data-tip="Reagir">${ic('smile',22)}</button>
@@ -1762,7 +1906,8 @@ function renderStage(){
   const $w = q => wrap.querySelector(q);
   $w('#sbMic').onclick = () => { Voice.toggleMute(); ls.set('telao-muted', Voice.muted); };
   $w('#sbDeaf').onclick = () => Voice.toggleDeafen();
-  $w('#sbCam').onclick = () => Voice.camStream ? Voice.stopCamera() : Voice.startCamera();
+  $w('#sbCam').onclick = () => Voice.camStream ? Voice.stopCamera() : cameraSetup();
+  const fxb = $w('#sbCamFx'); if(fxb) fxb.onclick = e => camFxMenu(e.currentTarget);
   $w('#sbScr').onclick = () => Voice.screenStream ? Voice.stopScreen() : Voice.startScreen();
   $w('#sbAct').onclick = e => activitiesMenu(e.currentTarget);
   $w('#sbFx').onclick = e => { const r = e.currentTarget.getBoundingClientRect(); emojiPicker(r.left - 150, r.top, em => Voice.sendFx({ t:'react', e: em })); };
@@ -1773,6 +1918,9 @@ function renderStage(){
     $w('#stFs').onclick = () => { const el = $w('#focusBox'); (el.requestFullscreen || el.webkitRequestFullscreen || (()=>{})).call(el); };
     const pip = $w('#stPip'); if(pip) pip.onclick = () => { const v = vid(); if(!v) return; (document.pictureInPictureElement === v ? document.exitPictureInPicture() : v.requestPictureInPicture()).catch(e => App.toast('Não deu: ' + e.message, true)); };
     $w('#stShot').onclick = () => screenshot(vid(), focused.s);
+    $w('#stDraw').onclick = () => { DRAW.on = !DRAW.on; renderStage(); if(DRAW.on) App.toast('✏️ Desenhe na tela: todo mundo assistindo vê. Clique de novo para parar.'); };
+    $w('#stCine').onclick = toggleCinema;
+    mountDraw(focused.s.session);
     $w('#stRec').onclick = () => REC.on ? stopRec() : startRec(focused.s);
     let lastB = 0, lastT = 0;
     statTimer = setInterval(async () => {
@@ -1870,6 +2018,7 @@ Voice.onFx = (pl, mine) => {
   if(pl.t === 'sound'){ playSound(pl.id); const snd = SOUNDS.find(x => x[0] === pl.id); if(snd) floatReaction(snd[1], pl.uid); }
   else if(pl.t === 'react') floatReaction(pl.e, pl.uid);
   else if(pl.t && pl.t.startsWith('wt')) onWT(pl, mine);
+  else if(pl.t === 'draw') onDraw(pl);
 };
 let lastSound = 0;
 function activitiesMenu(anchor){
@@ -1981,6 +2130,104 @@ function userMenu(uid, x, y){
   items.push({ label:'Copiar usuário', icon: ic('copy',18), onClick: () => copy(p.username) });
   menu(x, y, items, 'pp');
 }
+
+
+/* ---------------- prévia da câmera com efeitos ---------------- */
+async function cameraSetup(){
+  if(!Voice.channel){ App.toast('Entre numa chamada primeiro', true); return; }
+  let fx;
+  try{ fx = await Voice.openCamFx(); }
+  catch(e){ App.toast('Não consegui abrir a câmera: ' + (e.name === 'NotAllowedError' ? 'permissão negada' : e.message), true); return; }
+  let started = false;
+  modal(`<div class="mh"><h2>${ic('video',22)} Sua câmera</h2><p>Escolha um efeito antes de aparecer. Dá para trocar durante a chamada também.</p></div>
+    <div class="mc"><div class="campv"><video id="camPv" autoplay playsinline muted></video><span class="camst" id="camSt"></span></div>
+      <div class="fxgrid" id="fxGrid">${CamFX.EFFECTS.map(e => `<button data-fx="${e.id}" class="${(P.camFx||'none')===e.id?'on':''}"><span>${e.ic}</span>${esc(e.nome)}${e.tag?`<i>${e.tag}</i>`:''}</button>`).join('')}</div></div>
+    <div class="mf"><button class="btn sec" id="camNo">Cancelar</button><button class="btn" id="camGo">${ic('video',16)} Ligar câmera</button></div>`, m => {
+    m.querySelector('.mbox').classList.add('wide');
+    const v = m.querySelector('#camPv'); v.srcObject = fx.stream; v.play().catch(()=>{});
+    fx.onStatus(t => { const el = m.querySelector('#camSt'); if(el){ el.textContent = t; el.classList.toggle('hidden', !t); } });
+    m.querySelectorAll('[data-fx]').forEach(b => b.onclick = () => {
+      P.camFx = b.dataset.fx; savePrefs(); fx.setEffect(P.camFx);
+      m.querySelectorAll('[data-fx]').forEach(x => x.classList.toggle('on', x === b));
+    });
+    m.querySelector('#camNo').onclick = () => { closeModal(); };
+    m.querySelector('#camGo').onclick = () => { started = true; closeModal(); Voice.startCamera(fx); };
+    const obs = new MutationObserver(() => { if($('#modal').classList.contains('hidden')){ obs.disconnect(); if(!started) fx.stop(); } });
+    obs.observe($('#modal'), { attributes:true, attributeFilter:['class'] });
+  });
+}
+function camFxMenu(anchor){
+  const r = anchor.getBoundingClientRect();
+  const el = $('#menu'); el.className = 'menu fxpop';
+  el.innerHTML = `<div class="pphead">${ic('wand',18)} Efeitos da câmera</div><div class="fxgrid sm">${CamFX.EFFECTS.map(e => `<button data-fx="${e.id}" class="${(P.camFx||'none')===e.id?'on':''}"><span>${e.ic}</span>${esc(e.nome)}${e.tag?`<i>${e.tag}</i>`:''}</button>`).join('')}</div><div class="fxst" id="fxSt"></div>`;
+  el.classList.remove('hidden');
+  el.style.left = Math.max(8, Math.min(r.left - 160, innerWidth - 400)) + 'px';
+  el.style.top = Math.max(8, r.top - el.offsetHeight - 10) + 'px';
+  if(Voice.camFx) Voice.camFx.onStatus(t => { const s = $('#fxSt'); if(s) s.textContent = t; });
+  el.querySelectorAll('[data-fx]').forEach(b => b.onclick = () => {
+    P.camFx = b.dataset.fx; savePrefs(); Voice.setCamEffect(P.camFx);
+    el.querySelectorAll('[data-fx]').forEach(x => x.classList.toggle('on', x === b));
+  });
+  setTimeout(() => document.addEventListener('mousedown', outside), 0);
+  function outside(e){ if(!el.contains(e.target)) closeMenu(); }
+  el._outside = outside;
+}
+
+/* ---------------- modo cinema ---------------- */
+function toggleCinema(){
+  document.body.classList.toggle('cinema');
+  if(document.body.classList.contains('cinema')) App.toast('🎬 Modo cinema — aperte Esc para sair');
+}
+window.addEventListener('keydown', e => { if(e.key === 'Escape' && document.body.classList.contains('cinema')) document.body.classList.remove('cinema'); });
+
+/* ---------------- desenhar na tela compartilhada ---------------- */
+const DRAW = { on:false, strokes:[], raf:0, cur:null, sess:null, lastSend:0 };
+function videoRect(cv){
+  const v = cv.parentElement.querySelector('video'); const W = cv.width, H = cv.height;
+  const vw = (v && v.videoWidth) || 16, vh = (v && v.videoHeight) || 9, s = Math.min(W / vw, H / vh);
+  return { x:(W - vw*s)/2, y:(H - vh*s)/2, w:vw*s, h:vh*s };
+}
+function mountDraw(sess){
+  const cv = $('#drawCv'); if(!cv) return;
+  DRAW.sess = sess;
+  const fit = () => { const r = cv.getBoundingClientRect(); cv.width = r.width * devicePixelRatio; cv.height = r.height * devicePixelRatio; };
+  fit();
+  const ctx = cv.getContext('2d');
+  cancelAnimationFrame(DRAW.raf);
+  const loop = () => {
+    if(!document.body.contains(cv)) return;
+    const r = cv.getBoundingClientRect(); if(Math.abs(r.width * devicePixelRatio - cv.width) > 2) fit();
+    ctx.clearRect(0, 0, cv.width, cv.height);
+    const vr = videoRect(cv), now = Date.now();
+    DRAW.strokes = DRAW.strokes.filter(s => now - s.t < 5000);
+    DRAW.strokes.filter(s => s.sess === DRAW.sess).forEach(s => {
+      const age = now - s.t; ctx.globalAlpha = age < 3500 ? 1 : 1 - (age - 3500) / 1500;
+      ctx.strokeStyle = s.c; ctx.lineWidth = 4 * devicePixelRatio; ctx.lineCap = ctx.lineJoin = 'round';
+      ctx.shadowColor = s.c; ctx.shadowBlur = 8;
+      ctx.beginPath(); s.pts.forEach(([x, y], i) => { const px = vr.x + x * vr.w, py = vr.y + y * vr.h; i ? ctx.lineTo(px, py) : ctx.moveTo(px, py); }); ctx.stroke();
+    });
+    ctx.globalAlpha = 1; ctx.shadowBlur = 0;
+    DRAW.raf = requestAnimationFrame(loop);
+  };
+  loop();
+  if(!DRAW.on) return;
+  const pt = e => { const r = cv.getBoundingClientRect(), vr = videoRect(cv); const x = ((e.clientX - r.left) * devicePixelRatio - vr.x) / vr.w, y = ((e.clientY - r.top) * devicePixelRatio - vr.y) / vr.h; return [Math.max(0, Math.min(1, x)), Math.max(0, Math.min(1, y))]; };
+  const color = S.me.avatar_color || '#ff6b4a';
+  const flush = (final) => {
+    const c = DRAW.cur; if(!c || c.pts.length < 2) return;
+    if(!final && Date.now() - DRAW.lastSend < 60) return;
+    DRAW.lastSend = Date.now();
+    Voice.sendFx({ t:'draw', s: sess, id: c.id, pts: c.pts.map(([x, y]) => [+x.toFixed(4), +y.toFixed(4)]), c: color });
+  };
+  cv.onpointerdown = e => { cv.setPointerCapture(e.pointerId); DRAW.cur = { id: Math.random().toString(36).slice(2), pts:[pt(e)] }; };
+  cv.onpointermove = e => { if(!DRAW.cur) return; DRAW.cur.pts.push(pt(e)); flush(false); };
+  cv.onpointerup = cv.onpointercancel = () => { flush(true); DRAW.cur = null; };
+}
+function onDraw(pl){
+  const ex = DRAW.strokes.find(s => s.id === pl.id);
+  if(ex){ ex.pts = pl.pts; ex.t = Date.now(); }
+  else DRAW.strokes.push({ id: pl.id, sess: pl.s, pts: pl.pts, c: pl.c, t: Date.now() });
+}
 /* ---------------- cargos e permissões ---------------- */
 const PERMS = [
   [32, 'Administrador', 'Pode tudo (menos excluir o servidor). Cuidado!'],
@@ -2060,18 +2307,19 @@ function renderMembers(){
     const top = rolesOf(s.id, m.user_id).find(r => r.hoist);
     if(top) groups.get(top.id).list.push(m); else online.push(m);
   });
-  const activity = uid => { for(const metas of S.vp.values()){ const m = metas.find(x => x.user_id === uid && x.voice); if(m) return m.sharing ? `${ic('screenUp',12)} Transmitindo` : `${ic('volume',12)} Em chamada`; } return ''; };
+  const activity = uid => { for(const metas of S.vp.values()){ const m = metas.find(x => x.user_id === uid && x.voice); if(m) return m.sharing ? `<span class="livetag" data-watch="${m.voice}" data-wsess="${m.session}">${ic('screenUp',12)} AO VIVO · Assistir</span>` : `${ic('volume',12)} Em chamada`; } return ''; };
   const row = m => {
     const color = App.roleColorOf(m.user_id);
     const sub = activity(m.user_id) || (m.p.custom_status ? statusText(m.p) : '');
-    return `<div class="mem ${S.online.has(m.user_id) || m.user_id === S.me.id ? '' : 'off'}" data-u="${m.user_id}">${avatar(m.p,'',true)}<div class="mt"><span class="nm" style="${color?`color:${color}`:''}">${esc(m.p.display_name)}${m.user_id===s.owner_id?`<span class="crown" data-tip="Dono do servidor">${ic('crown',14)}</span>`:''}</span>${sub ? `<small>${sub}</small>` : ''}</div></div>`;
+    return `<div class="mem ${S.online.has(m.user_id) || m.user_id === S.me.id ? '' : 'off'}" data-u="${m.user_id}">${avatar(m.p,'',true)}<div class="mt"><span class="nm" style="${color?`color:${color}`:''}">${nameHtml(m.p)}${m.user_id===s.owner_id?`<span class="crown" data-tip="Dono do servidor">${ic('crown',14)}</span>`:''}</span>${sub ? `<small>${sub}</small>` : ''}</div></div>`;
   };
   let h = '';
   groups.forEach(g => { if(g.list.length) h += `<h4>${esc(g.name)} — ${g.list.length}</h4>${g.list.map(row).join('')}`; });
   if(online.length) h += `<h4>Online — ${online.length}</h4>${online.map(row).join('')}`;
   if(off.length) h += `<h4>Offline — ${off.length}</h4>${off.map(row).join('')}`;
   el.innerHTML = h;
-  el.querySelectorAll('[data-u]').forEach(r => r.onclick = e => { const b = r.getBoundingClientRect(); userMenu(r.dataset.u, b.left - 330, b.top); });
+  el.querySelectorAll('[data-watch]').forEach(b => b.onclick = e => { e.stopPropagation(); watchLive(b.dataset.watch, b.dataset.wsess); });
+  el.querySelectorAll('[data-u]').forEach(r => r.onclick = e => { if(e.target.closest('[data-watch]')) return; const b = r.getBoundingClientRect(); userMenu(r.dataset.u, b.left - 330, b.top); });
 }
 
 /* ---------------- servidores: menus e modais ---------------- */
@@ -2260,7 +2508,7 @@ async function leaveServer(s){
    PREFERÊNCIAS, INSÍGNIAS, PERFIL, TELÃO+ E PAINÉIS DE CONFIGURAÇÕES
    ===================================================================== */
 const PRICE_TXT = 'R$ 9,90';
-const PDEF = { accent:'#7c5cff', theme:'dark', fontSize:15, compact:false, inputId:'', outputId:'', echo:true, noise:true, agc:true,
+const PDEF = { accent:'#ff6b4a', theme:'dark', fontSize:15, compact:false, inputId:'', outputId:'', echo:true, noise:true, agc:true,
   mode:'vad', sensitivity:4, pttKey:'Backquote', muteKey:'ctrl+shift+KeyM', deafKey:'ctrl+shift+KeyD', screenKey:'',
   notifDM:true, notifMention:true, notifCall:true, soundMsg:true, soundVoice:true, soundPtt:true };
 const P = App.prefs = Object.assign({}, PDEF, ls.get('telao-prefs', {}));
@@ -2270,7 +2518,7 @@ function applyPrefs(){
   document.body.classList.add('theme-' + P.theme);
   document.body.classList.toggle('compact', !!P.compact);
   document.documentElement.style.setProperty('--fs', P.fontSize + 'px');
-  const a = P.accent || '#7c5cff', rs = document.documentElement.style;
+  const a = P.accent || '#ff6b4a', rs = document.documentElement.style;
   const [r,g,b] = [1,3,5].map(i => parseInt(a.slice(i, i+2), 16));
   const lum = (0.299*r + 0.587*g + 0.114*b) / 255;
   rs.setProperty('--acc', a);
@@ -2335,13 +2583,19 @@ function badgeSvg(id, tier){
   }
   return '';
 }
-function badgesOf(p){
+function earnedBadges(p){
   if(!p) return [];
   const has = new Set(p.is_admin ? BADGES.map(b => b.id) : (p.badges || []));
   if(hasPlus(p)) has.add('plus');
   if(p.created_at && new Date(p.created_at) < new Date('2027-01-01')) has.add('pioneiro');
   if(p.house) has.add(p.house);
   return BADGES.filter(b => has.has(b.id));
+}
+/* insígnias que a pessoa escolheu mostrar (padrão: todas as conquistadas) */
+function badgesOf(p){
+  const all = earnedBadges(p);
+  if(!p || !Array.isArray(p.shown_badges)) return all;
+  return p.shown_badges.map(id => all.find(b => b.id === id)).filter(Boolean);
 }
 function badgeHtml(b, p, cls=''){
   const tier = b.id === 'plus' ? plusTier(p) : null;
@@ -2364,24 +2618,56 @@ document.addEventListener('mouseover', e => {
 });
 
 /* ---------- cartão de perfil ---------- */
+const LINKS = {
+  instagram:['Instagram', u => 'https://instagram.com/' + u, '#e1306c'], tiktok:['TikTok', u => 'https://tiktok.com/@' + u, '#25f4ee'],
+  youtube:['YouTube', u => 'https://youtube.com/@' + u, '#ff0000'], twitch:['Twitch', u => 'https://twitch.tv/' + u, '#9146ff'],
+  x:['X', u => 'https://x.com/' + u, '#e7e9ea'], steam:['Steam', u => 'https://steamcommunity.com/id/' + u, '#66c0f4'],
+  spotify:['Spotify', u => /^https?:/.test(u) ? u : 'https://open.spotify.com/user/' + u, '#1db954'], site:['Site', u => /^https?:/.test(u) ? u : 'https://' + u, '#9aa0aa'],
+};
+const PROFILE_FX = [['', 'Nenhum'], ['estrelas','✨ Estrelas'], ['coracoes','💗 Corações'], ['neve','❄️ Neve'], ['fogo','🔥 Brasas'], ['confete','🎉 Confete'], ['aurora','🌌 Aurora']];
+const RINGS = [['', 'Nenhum'], ['arco','🌈 Arco-íris'], ['ouro','🥇 Ouro'], ['neon','💜 Neon'], ['fogo','🔥 Fogo'], ['gelo','🧊 Gelo']];
+const NAME_STYLES = [['', 'Normal'], ['fogo','Fogo'], ['oceano','Oceano'], ['neon','Neon'], ['ouro','Ouro'], ['arco','Arco-íris']];
+function nameHtml(p){
+  const st = hasPlus(p) && p.name_style ? ` class="nst nst-${esc(p.name_style)}"` : '';
+  return `<span${st}>${esc(p.display_name)}</span>`;
+}
+function fxLayerHtml(fx){
+  if(!fx) return '';
+  const glyph = { estrelas:'✦', coracoes:'♥', neve:'❄', fogo:'•', confete:'■' }[fx];
+  if(fx === 'aurora') return '<div class="pfx aurora"></div>';
+  return `<div class="pfx ${esc(fx)}">${Array.from({ length: 14 }, (_, i) => `<i style="--x:${(i * 37) % 100}%;--d:${(3 + (i % 5) * 0.7).toFixed(1)}s;--dl:-${(i * 0.53).toFixed(2)}s;--s:${0.7 + (i % 4) * 0.25}">${glyph}</i>`).join('')}</div>`;
+}
 function profileCard(p, extra=''){
   const plus = hasPlus(p);
   const themed = plus && p.theme_a;
-  const banner = plus && p.banner_url ? `background-image:url('${esc(p.banner_url)}')` : `background:${esc(p.banner_color || p.avatar_color || '#5865f2')}`;
+  const banner = plus && p.banner_url ? `background-image:url('${esc(p.banner_url)}')` : `background:${esc(p.banner_color || p.avatar_color || '#ff6b4a')}`;
   const style = themed ? `background:linear-gradient(180deg,${esc(p.theme_a)},${esc(p.theme_b || p.theme_a)});--pc-bg:${esc(p.theme_a)}` : '';
   const bs = badgesOf(p);
+  const links = (Array.isArray(p.links) ? p.links : []).filter(l => LINKS[l.t] && l.u);
   return `<div class="pcard2 ${themed?'themed':''}" style="${style}">
+    ${plus ? fxLayerHtml(p.profile_fx) : ''}
     <div class="bn" style="${banner}"></div>
     <div class="avwrap">${avatar(p,'',true)}</div>
     <div class="bdg">${bs.length ? `<div class="badges">${bs.map(b => badgeHtml(b, p)).join('')}</div>` : ''}</div>
     <div class="inner">
-      <b class="dn">${esc(p.display_name)}${plus ? '<span class="plustag">TELÃO+</span>' : ''}</b>
-      <div class="un">@${esc(p.username)}</div>
+      <b class="dn">${nameHtml(p)}${plus ? '<span class="plustag">TELÃO+</span>' : ''}</b>
+      <div class="un">@${esc(p.username)}${p.pronouns ? ` · ${esc(p.pronouns)}` : ''}</div>
       ${p.custom_status ? `<div class="cst">${p.custom_emoji ? esc(p.custom_emoji) + ' ' : ''}${esc(p.custom_status)}</div>` : ''}
       ${p.bio ? `<h6>Sobre mim</h6><p>${esc(p.bio)}</p>` : ''}
+      ${links.length ? `<div class="plinks">${links.map(l => `<a href="${esc(LINKS[l.t][1](l.u))}" target="_blank" rel="noopener" style="--lc:${LINKS[l.t][2]}"><i></i>${esc(LINKS[l.t][0])}</a>`).join('')}</div>` : ''}
       ${p.created_at ? `<h6>Membro desde</h6><p>${new Date(p.created_at).toLocaleDateString('pt-BR',{day:'numeric',month:'short',year:'numeric'})}</p>` : ''}
       ${extra}
     </div></div>`;
+}
+/* cor média de uma imagem (para o fundo do avatar combinar com a foto) */
+async function avgColor(file){
+  try{
+    const bmp = await createImageBitmap(file); const c = document.createElement('canvas'); c.width = c.height = 8;
+    const x = c.getContext('2d'); x.drawImage(bmp, 0, 0, 8, 8); const d = x.getImageData(0, 0, 8, 8).data;
+    let r = 0, g = 0, b = 0; for(let i = 0; i < d.length; i += 4){ r += d[i]; g += d[i+1]; b += d[i+2]; }
+    const n = d.length / 4, h = v => Math.round(v / n * 0.8).toString(16).padStart(2, '0');
+    return '#' + h(r) + h(g) + h(b);
+  }catch(e){ return null; }
 }
 
 /* ---------- atalhos de teclado ---------- */
@@ -2463,7 +2749,7 @@ function renderSettings(){
   SET.el.innerHTML = `<nav class="snav"><div class="in">${nav.map(n =>
       n[0] === 'h' ? `<h5>${n[1]}</h5>` : n[0] === 'hr' ? '<hr>' :
       `<button class="si ${SET.sec===n[0]?'on':''} ${n[2]||''}" data-sec="${n[0]}">${n[1]}</button>`).join('')}
-      ${SET.kind==='user' ? '<hr><div class="ver">Telão · versão 2.0</div>' : ''}</div></nav>
+      ${SET.kind==='user' ? '<hr><div class="ver">Telão · versão 4.0</div>' : ''}</div></nav>
     <div class="scontent"><div class="sclose"><button id="sClose" title="Fechar (Esc)">✕</button><span>ESC</span></div><div class="in" id="sIn"></div></div>`;
   SET.el.querySelector('#sClose').onclick = () => { if(isMobile() && SET.mobileOpen){ SET.mobileOpen = false; renderSettings(); } else closeSettings(); };
   SET.el.querySelectorAll('[data-sec]').forEach(b => b.onclick = () => {
@@ -2562,59 +2848,120 @@ function secAccount(box, back){
 /* ---------- Perfis ---------- */
 function secProfile(box, back){
   const me = S.me, plus = hasPlus(me);
+  const earned = earnedBadges(me);
   const D = { display_name: me.display_name, bio: me.bio || '', avatar_url: me.avatar_url || null, banner_url: me.banner_url || null,
-              banner_color: me.banner_color || me.avatar_color, avatar_color: me.avatar_color, theme_a: me.theme_a || null, theme_b: me.theme_b || null, house: me.house || null };
-  const lockBox = what => `<div class="locked">🔒 ${what} <button class="btn sm" data-plus>Conhecer o Telão+</button></div>`;
-  box.innerHTML = `${back}<h2>Perfis</h2><div class="profgrid"><div>
-    <label class="field"><span>Nome de exibição</span><input class="inp" id="pfN" maxlength="32"></label>
-    <hr class="sdiv">
-    <h3>Avatar</h3>
-    <div style="display:flex;gap:8px;flex-wrap:wrap"><button class="btn sm" id="pfAv">Mudar avatar</button><button class="btn sec sm" id="pfAvRm">Remover</button></div>
-    <small style="color:var(--mut);display:block;margin-top:6px">PNG, JPG ou WEBP até ${plus?'8':'2'} MB. ${plus ? '<b style="color:#c9a6ff">GIF animado liberado ✨</b>' : 'GIF animado é do <a data-plus style="cursor:pointer">Telão+</a>.'}</small>
-    <h3>Cor do avatar</h3><div class="colors" id="pfAc">${COLORS.map(c => `<button type="button" data-c="${c}" style="background:${c}"></button>`).join('')}</div>
-    <hr class="sdiv">
-    <h3>Banner do perfil</h3>
-    ${plus ? `<div style="display:flex;gap:8px;flex-wrap:wrap"><button class="btn sm" id="pfBn">Mudar banner (imagem ou GIF)</button><button class="btn sec sm" id="pfBnRm">Remover</button></div>` : lockBox('Banner com imagem ou GIF é do Telão+.')}
-    <h3>Cor do banner</h3><div class="colorrow"><input type="color" id="pfBc"><small style="color:var(--mut)">Aparece quando não tem imagem.</small></div>
-    <hr class="sdiv">
-    <h3>Tema do perfil ${plus?'':'🔒'}</h3>
-    ${plus ? `<div class="colorrow"><label>Principal <input type="color" id="pfTa"></label><label>Destaque <input type="color" id="pfTb"></label><button class="btn sec sm" id="pfTrm">Sem tema</button></div>` : lockBox('Cores personalizadas no cartão de perfil são do Telão+.')}
-    <hr class="sdiv">
-    <h3>Casa (insígnia grátis)</h3>
-    <div class="chips" id="pfH">${[['', 'Nenhuma'], ['chama','Chama'], ['raio','Raio'], ['onda','Onda']].map(([v,l]) => `<button class="chip" data-h="${v}">${v ? `<span class="badge-i sm" style="margin:0">${badgeSvg(v)}</span>` : ''}${l}</button>`).join('')}</div>
-    <hr class="sdiv">
-    <label class="field"><span>Sobre mim</span><textarea class="inp" id="pfBio" maxlength="190" placeholder="Conte um pouco sobre você"></textarea><div class="counter" id="pfCnt"></div></label>
+              banner_color: me.banner_color || null, avatar_color: me.avatar_color, theme_a: me.theme_a || null, theme_b: me.theme_b || null,
+              house: me.house || null, pronouns: me.pronouns || '', links: (Array.isArray(me.links) ? me.links : []).map(l => ({ ...l })),
+              shown_badges: Array.isArray(me.shown_badges) ? [...me.shown_badges] : earned.map(b => b.id),
+              profile_fx: me.profile_fx || null, avatar_ring: me.avatar_ring || null, name_style: me.name_style || null };
+  const orig = JSON.stringify(D);
+  const lockBox = what => `<div class="locked">${ic('lock',18)} ${what} <button class="btn sm" data-plus>Conhecer o Telão+</button></div>`;
+  const chipRow = (id, list, cur) => `<div class="chips" id="${id}">${list.map(([v,l]) => `<button type="button" class="chip ${(cur||'')===v?'on':''}" data-v="${v}">${l}</button>`).join('')}</div>`;
+  box.innerHTML = `${back}<h2>Perfil</h2><div class="profgrid"><div>
+    <div class="ptabs"><button class="on" data-pt="basico">Básico</button><button data-pt="visual">Visual</button><button data-pt="insignias">Insígnias</button><button data-pt="links">Links</button></div>
+
+    <div data-pane="basico">
+      <label class="field"><span>Nome de exibição</span><input class="inp" id="pfN" maxlength="32"></label>
+      <label class="field"><span>Pronomes</span><input class="inp" id="pfPr" maxlength="30" placeholder="ex: ele/dele, ela/dela"></label>
+      <label class="field"><span>Sobre mim</span><textarea class="inp" id="pfBio" maxlength="190" placeholder="Conte um pouco sobre você"></textarea><div class="counter" id="pfCnt"></div></label>
+      <h3>Casa (insígnia grátis)</h3>
+      <div class="chips" id="pfH">${[['', 'Nenhuma'], ['chama','Chama'], ['raio','Raio'], ['onda','Onda']].map(([v,l]) => `<button class="chip" data-h="${v}">${v ? `<span class="badge-i sm" style="margin:0">${badgeSvg(v)}</span>` : ''}${l}</button>`).join('')}</div>
+    </div>
+
+    <div data-pane="visual" class="hidden">
+      <h3 style="margin-top:0">Avatar</h3>
+      <div class="avedit"><div id="pfAvPrev"></div><div>
+        <div style="display:flex;gap:8px;flex-wrap:wrap"><button class="btn sm" id="pfAv">${ic('image',16)} Enviar foto</button><button class="btn sec sm" id="pfAvRm">Remover foto</button></div>
+        <small class="mut" style="display:block;margin-top:6px">PNG, JPG ou WEBP até ${plus?'8':'2'} MB. ${plus ? '<b style="color:#ffb39c">GIF animado liberado ✨</b>' : 'GIF animado é do <a data-plus style="cursor:pointer">Telão+</a>.'}</small>
+      </div></div>
+      <div id="pfAcBox"><h3>Cor do avatar <small class="mut" style="text-transform:none;font-weight:500">(só aparece quando não tem foto)</small></h3><div class="colors" id="pfAc">${COLORS.map(c => `<button type="button" data-c="${c}" style="background:${c}"></button>`).join('')}</div></div>
+      <hr class="sdiv">
+      <h3>Banner</h3>
+      ${plus ? `<div style="display:flex;gap:8px;flex-wrap:wrap"><button class="btn sm" id="pfBn">${ic('image',16)} Imagem ou GIF</button><button class="btn sec sm" id="pfBnRm">Remover</button></div>` : lockBox('Banner com imagem ou GIF é do Telão+.')}
+      <h3>Cor do banner</h3><div class="colorrow"><input type="color" id="pfBc"><button class="btn sec sm" id="pfBcAuto">Automática</button></div>
+      <hr class="sdiv">
+      <h3>Tema do cartão ${plus?'':'🔒'}</h3>
+      ${plus ? `<div class="colorrow"><label>Principal <input type="color" id="pfTa"></label><label>Destaque <input type="color" id="pfTb"></label><button class="btn sec sm" id="pfTrm">Sem tema</button></div>` : lockBox('Cores no cartão de perfil são do Telão+.')}
+      <h3>Efeito no perfil ${plus?'':'🔒'}</h3>${plus ? chipRow('pfFx', PROFILE_FX, D.profile_fx) : lockBox('Partículas animadas no seu cartão.')}
+      <h3>Anel do avatar ${plus?'':'🔒'}</h3>${plus ? chipRow('pfRing', RINGS, D.avatar_ring) : lockBox('Um anel animado em volta do seu avatar.')}
+      <h3>Estilo do nome ${plus?'':'🔒'}</h3>${plus ? `<div class="chips" id="pfNs">${NAME_STYLES.map(([v,l]) => `<button type="button" class="chip ${(D.name_style||'')===v?'on':''}" data-v="${v}"><span class="${v?'nst nst-'+v:''}">${l}</span></button>`).join('')}</div>` : lockBox('Nome com gradiente colorido no chat.')}
+    </div>
+
+    <div data-pane="insignias" class="hidden">
+      <p class="mut small" style="margin-bottom:12px">Escolha quais das suas insígnias aparecem no seu perfil. Você conquistou <b>${earned.length}</b>.</p>
+      <div class="bpick" id="pfBp">${earned.map(b => `<label class="bpi"><input type="checkbox" data-b="${b.id}"><span class="badge-i">${badgeSvg(b.id, b.id==='plus'?plusTier(me):null)}</span><div><b>${esc(b.nome)}</b><small>${esc(b.id==='plus' ? (me.is_admin?'Vitalício':TIERS[plusTier(me)][2]) : b.desc)}</small></div></label>`).join('') || '<div class="empty">Você ainda não tem insígnias. Escolha uma Casa na aba Básico para ganhar a primeira!</div>'}</div>
+      ${earned.length ? '<div style="display:flex;gap:8px;margin-top:10px"><button class="btn sec sm" id="pfBAll">Mostrar todas</button><button class="btn sec sm" id="pfBNone">Esconder todas</button></div>' : ''}
+    </div>
+
+    <div data-pane="links" class="hidden">
+      <p class="mut small" style="margin-bottom:12px">Até 5 links que aparecem no seu cartão.</p>
+      <div id="pfLinks"></div>
+      <button class="btn sec sm" id="pfLAdd">${ic('plus',16)} Adicionar link</button>
+    </div>
+
     <input type="file" id="pfFile" accept="image/png,image/jpeg,image/webp,image/gif" class="hidden">
     <div id="pfSave"></div>
-  </div><div><h3 style="margin-top:0">Prévia</h3><div class="pcard" style="background:none;box-shadow:0 6px 24px rgba(0,0,0,.35)" id="pfPrev"></div></div></div>`;
-  const $b = s => box.querySelector(s);
-  const draft = () => ({ ...me, ...D });
+  </div><div><h3 style="margin-top:0">Prévia</h3><div class="pcard" id="pfPrev"></div></div></div>`;
+  const $b = q => box.querySelector(q);
+  box.querySelectorAll('[data-pt]').forEach(t => t.onclick = () => {
+    box.querySelectorAll('[data-pt]').forEach(x => x.classList.toggle('on', x === t));
+    box.querySelectorAll('[data-pane]').forEach(p => p.classList.toggle('hidden', p.dataset.pane !== t.dataset.pt));
+  });
+  const draft = () => ({ ...me, ...D, banner_color: D.banner_color || null });
   const setDirty = () => {
-    const changed = Object.keys(D).some(k => (D[k] || null) !== ((k === 'banner_color' ? (me.banner_color || me.avatar_color) : me[k]) || null) && !(k==='bio' && D.bio === (me.bio||'')));
+    const changed = JSON.stringify(D) !== orig;
     SET.dirty = changed;
-    $b('#pfSave').innerHTML = changed ? `<div class="savebar"><span>Cuidado — você tem alterações não salvas!</span><button class="btn sec sm" id="pfReset">Redefinir</button><button class="btn ok sm" id="pfOk">Salvar alterações</button></div>` : '';
+    $b('#pfSave').innerHTML = changed ? `<div class="savebar"><span>Você tem alterações não salvas</span><button class="btn sec sm" id="pfReset">Desfazer</button><button class="btn ok sm" id="pfOk">Salvar</button></div>` : '';
     if(changed){ $b('#pfReset').onclick = () => { SET.dirty = false; renderSettings(); }; $b('#pfOk').onclick = save; }
   };
-  const refresh = () => {
-    $b('#pfPrev').innerHTML = profileCard(draft());
+  const drawLinks = () => {
+    $b('#pfLinks').innerHTML = D.links.map((l, i) => `<div class="lrow"><select class="inp" data-lt="${i}">${Object.entries(LINKS).map(([k, v]) => `<option value="${k}" ${l.t===k?'selected':''}>${v[0]}</option>`).join('')}</select>
+      <input class="inp" data-lu="${i}" value="${esc(l.u||'')}" placeholder="${l.t==='site'?'seusite.com':'seu usuário'}" maxlength="100"><button class="ibtn" data-lx="${i}">${ic('trash',16)}</button></div>`).join('');
+    $b('#pfLAdd').disabled = D.links.length >= 5;
+    box.querySelectorAll('[data-lt]').forEach(x => x.onchange = () => { D.links[+x.dataset.lt].t = x.value; refresh(); });
+    box.querySelectorAll('[data-lu]').forEach(x => x.oninput = () => { D.links[+x.dataset.lu].u = x.value.trim().replace(/^@/, ''); refresh(true); });
+    box.querySelectorAll('[data-lx]').forEach(x => x.onclick = () => { D.links.splice(+x.dataset.lx, 1); drawLinks(); refresh(); });
+  };
+  const refresh = (noLinks) => {
+    const d = draft();
+    $b('#pfPrev').innerHTML = profileCard(d);
+    $b('#pfAvPrev').innerHTML = avatar(d, 'xl');
+    $b('#pfAcBox').classList.toggle('hidden', !!D.avatar_url);
     box.querySelectorAll('#pfAc [data-c]').forEach(x => x.classList.toggle('on', x.dataset.c === D.avatar_color));
     box.querySelectorAll('#pfH [data-h]').forEach(x => x.classList.toggle('on', (x.dataset.h || null) === (D.house || null)));
+    box.querySelectorAll('#pfBp [data-b]').forEach(x => x.checked = D.shown_badges.includes(x.dataset.b));
     $b('#pfCnt').textContent = (190 - D.bio.length) + ' restantes';
     setDirty();
   };
-  $b('#pfN').value = D.display_name; $b('#pfBio').value = D.bio; $b('#pfBc').value = D.banner_color;
+  $b('#pfN').value = D.display_name; $b('#pfBio').value = D.bio; $b('#pfPr').value = D.pronouns; $b('#pfBc').value = D.banner_color || D.avatar_color || '#ff6b4a';
   $b('#pfN').oninput = e => { D.display_name = e.target.value; refresh(); };
   $b('#pfBio').oninput = e => { D.bio = e.target.value; refresh(); };
+  $b('#pfPr').oninput = e => { D.pronouns = e.target.value; refresh(); };
   $b('#pfBc').oninput = e => { D.banner_color = e.target.value; refresh(); };
+  $b('#pfBcAuto').onclick = () => { D.banner_color = null; $b('#pfBc').value = D.avatar_color; refresh(); };
   box.querySelectorAll('#pfAc [data-c]').forEach(x => x.onclick = () => { D.avatar_color = x.dataset.c; refresh(); });
-  box.querySelectorAll('#pfH [data-h]').forEach(x => x.onclick = () => { D.house = x.dataset.h || null; refresh(); });
+  box.querySelectorAll('#pfH [data-h]').forEach(x => x.onclick = () => {
+    const old = D.house; D.house = x.dataset.h || null;
+    D.shown_badges = D.shown_badges.filter(b => b !== old); if(D.house && !D.shown_badges.includes(D.house)) D.shown_badges.push(D.house);
+    refresh();
+  });
+  box.querySelectorAll('#pfBp [data-b]').forEach(x => x.onchange = () => {
+    const id = x.dataset.b;
+    D.shown_badges = x.checked ? earned.map(b => b.id).filter(b => b === id || D.shown_badges.includes(b)) : D.shown_badges.filter(b => b !== id);
+    refresh();
+  });
+  if($b('#pfBAll')){ $b('#pfBAll').onclick = () => { D.shown_badges = earned.map(b => b.id); refresh(); }; $b('#pfBNone').onclick = () => { D.shown_badges = []; refresh(); }; }
+  $b('#pfLAdd').onclick = () => { if(D.links.length < 5){ D.links.push({ t:'instagram', u:'' }); drawLinks(); refresh(); } };
   box.querySelectorAll('[data-plus]').forEach(x => x.onclick = () => setSec('plus'));
   if(plus){
-    $b('#pfTa').value = D.theme_a || '#5b3fd6'; $b('#pfTb').value = D.theme_b || '#c43a9b';
+    $b('#pfTa').value = D.theme_a || '#3b1d6e'; $b('#pfTb').value = D.theme_b || '#ff6b4a';
     $b('#pfTa').oninput = e => { D.theme_a = e.target.value; D.theme_b = D.theme_b || $b('#pfTb').value; refresh(); };
     $b('#pfTb').oninput = e => { D.theme_b = e.target.value; D.theme_a = D.theme_a || $b('#pfTa').value; refresh(); };
     $b('#pfTrm').onclick = () => { D.theme_a = D.theme_b = null; refresh(); };
     $b('#pfBnRm').onclick = () => { D.banner_url = null; refresh(); };
+    [['#pfFx','profile_fx'],['#pfRing','avatar_ring'],['#pfNs','name_style']].forEach(([id, key]) => box.querySelectorAll(id + ' [data-v]').forEach(c => c.onclick = () => {
+      D[key] = c.dataset.v || null; box.querySelectorAll(id + ' [data-v]').forEach(x => x.classList.toggle('on', x === c)); refresh();
+    }));
   }
   let target = 'avatar';
   $b('#pfAv').onclick = () => { target = 'avatar'; $b('#pfFile').click(); };
@@ -2639,20 +2986,25 @@ function secProfile(box, back){
         url = App.sb.storage.from('media').getPublicUrl(path).data.publicUrl;
       }
     }catch(err){ App.toast('Não deu para enviar: ' + err.message, true); return; }
-    if(target === 'avatar') D.avatar_url = url; else D.banner_url = url;
-    App.toast('Imagem pronta! Clique em “Salvar alterações”.');
+    if(target === 'avatar'){ D.avatar_url = url; const c = await avgColor(f); if(c) D.avatar_color = c; }
+    else D.banner_url = url;
+    App.toast('Pronto! Clique em “Salvar”.');
     refresh();
   };
   async function save(){
-    const upd = { display_name: D.display_name.trim() || me.username, bio: D.bio.trim(), avatar_url: D.avatar_url, banner_url: D.banner_url,
-                  banner_color: D.banner_color, avatar_color: D.avatar_color, theme_a: D.theme_a, theme_b: D.theme_b, house: D.house };
+    const all = earned.map(b => b.id);
+    const shown = D.shown_badges.length === all.length && all.every(b => D.shown_badges.includes(b)) ? null : D.shown_badges;
+    const upd = { display_name: D.display_name.trim() || me.username, bio: D.bio.trim(), pronouns: D.pronouns.trim() || null,
+                  avatar_url: D.avatar_url, banner_url: D.banner_url, banner_color: D.banner_color, avatar_color: D.avatar_color,
+                  theme_a: D.theme_a, theme_b: D.theme_b, house: D.house, shown_badges: shown,
+                  links: D.links.filter(l => l.u).slice(0, 5), profile_fx: D.profile_fx, avatar_ring: D.avatar_ring, name_style: D.name_style };
     const { data, error } = await App.sb.from('profiles').update(upd).eq('id', me.id).select().single();
     if(error){ App.toast(error.message, true); return; }
     S.me = data; S.profiles.set(data.id, data);
     SET.dirty = false; App.toast('Perfil salvo! ✨');
     renderSettings(); renderUserPanel(); renderMembers(); if(M.el) renderMsgList(false);
   }
-  refresh();
+  drawLinks(); refresh();
 }
 function upsell(what){
   modal(`<div class="mh"><h2>✨ Isso é do Telão+</h2><p>${esc(what)} faz parte do <b>Telão+</b>, por ${PRICE_TXT}/mês.</p></div>
@@ -2722,7 +3074,7 @@ function secAppearance(box, back){
     <h3>Tema</h3>
     <div class="themes">${[['dark','Escuro','#313338'],['amoled','Preto (AMOLED)','#000'],['light','Claro','#fff']].map(([v,l,c]) => `<button data-t="${v}" class="${P.theme===v?'on':''}"><span class="sw2" style="background:${c}"></span>${l}</button>`).join('')}</div>
     <h3>Cor de destaque</h3>
-    <div class="accents">${['#7c5cff','#5865f2','#3b82f6','#06b6d4','#10b981','#22c55e','#eab308','#f97316','#ef4444','#ec4899','#d946ef','#a3a3a3'].map(c => `<button data-acc="${c}" class="${(P.accent||'#7c5cff')===c?'on':''}" style="background:${c}"></button>`).join('')}<input type="color" id="apAcc" value="${esc(P.accent||'#7c5cff')}" title="Escolher outra cor"></div>
+    <div class="accents">${['#ff6b4a','#ff3d7f','#ffb020','#2bd17e','#14b8a6','#38bdf8','#6366f1','#a855f7','#e879f9','#f43f5e','#84cc16','#a3a3a3'].map(c => `<button data-acc="${c}" class="${(P.accent||'#ff6b4a')===c?'on':''}" style="background:${c}"></button>`).join('')}<input type="color" id="apAcc" value="${esc(P.accent||'#ff6b4a')}" title="Escolher outra cor"></div>
     <hr class="sdiv"><h3>Tamanho da fonte das conversas · <span id="apFs">${P.fontSize}px</span></h3>
     <input type="range" class="range" id="apR" min="12" max="20" step="1" value="${P.fontSize}">
     <hr class="sdiv">
@@ -2892,7 +3244,7 @@ function secApp(box, back){
     ${row('Instalar o Telão', standalone ? '✅ Você está usando o app instalado.' : S.installEvt ? 'Instale como app: ícone próprio, janela separada e abre mais rápido.' : ios ? 'No iPhone: Compartilhar → <b>Adicionar à Tela de Início</b>.' : 'No Chrome/Edge: ícone de instalar na barra de endereço, ou menu ⋮ → <b>Instalar Telão</b>.',
           S.installEvt && !standalone ? '<button class="btn sm" id="apInst">📲 Instalar</button>' : '')}
     ${row('Limpar cache do app', 'Use se uma atualização não aparecer.', '<button class="btn sec sm" id="apClr">Limpar e recarregar</button>')}
-    <hr class="sdiv"><small style="color:var(--mut)">Telão · versão 2.0</small>`;
+    <hr class="sdiv"><small style="color:var(--mut)">Telão · versão 4.0</small>`;
   const i = box.querySelector('#apInst'); if(i) i.onclick = doInstall;
   box.querySelector('#apClr').onclick = async () => {
     try{ const regs = await navigator.serviceWorker.getRegistrations(); await Promise.all(regs.map(r => r.unregister())); const ks = await caches.keys(); await Promise.all(ks.map(k => caches.delete(k))); }catch(e){}

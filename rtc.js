@@ -436,20 +436,31 @@
     cams(){ return this.videos('camera'); },
 
     /* ---------- câmera ---------- */
-    async startCamera(){
-      if(!this.channel){ App.toast('Entre numa chamada primeiro', true); return; }
-      let s;
-      try{ s = await navigator.mediaDevices.getUserMedia({ video: { width:{ideal:1280}, height:{ideal:720}, frameRate:{ideal:30}, facingMode:'user', ...(this.prefs().camId ? { deviceId:{ exact:this.prefs().camId } } : {}) } }); }
-      catch(e){ App.toast('Não consegui abrir a câmera: ' + (e.name === 'NotAllowedError' ? 'permissão negada' : e.message), true); return; }
-      if(this.camStream) this.stopCamera(true);
-      this.camStream = s;
-      s.getVideoTracks()[0].addEventListener('ended', () => this.stopCamera());
-      this.peers.forEach(p => { p.camSenders = s.getTracks().map(t => p.pc.addTrack(t, s)); });
-      this.track(); this.onChange();
+    camFx: null,
+    async openCamFx(){
+      const cid = this.prefs().camId;
+      const raw = await navigator.mediaDevices.getUserMedia({ video: { width:{ideal:1280}, height:{ideal:720}, frameRate:{ideal:30}, facingMode:'user', ...(cid ? { deviceId:{ exact:cid } } : {}) } });
+      const fx = window.CamFX ? CamFX.create(raw) : { stream: raw, source: raw, setEffect(){}, stop(){ raw.getTracks().forEach(t => t.stop()); }, onStatus(){} };
+      await fx.setEffect(this.prefs().camFx || 'none');
+      return fx;
     },
+    async startCamera(pre){
+      if(!this.channel){ App.toast('Entre numa chamada primeiro', true); if(pre) pre.stop(); return; }
+      let fx = pre;
+      if(!fx){
+        try{ fx = await this.openCamFx(); }
+        catch(e){ App.toast('Não consegui abrir a câmera: ' + (e.name === 'NotAllowedError' ? 'permissão negada' : e.message), true); return; }
+      }
+      if(this.camStream) this.stopCamera(true);
+      this.camFx = fx; this.camStream = fx.stream;
+      fx.source.getVideoTracks()[0].addEventListener('ended', () => this.stopCamera());
+      this.peers.forEach(p => { p.camSenders = fx.stream.getVideoTracks().map(t => p.pc.addTrack(t, fx.stream)); });
+      App.sfx('cam'); this.track(); this.onChange();
+    },
+    setCamEffect(id){ if(this.camFx) this.camFx.setEffect(id); },
     stopCamera(silent){
       if(!this.camStream) return;
-      this.camStream.getTracks().forEach(t => t.stop());
+      if(this.camFx){ this.camFx.stop(); this.camFx = null; } else this.camStream.getTracks().forEach(t => t.stop());
       this.peers.forEach(p => { (p.camSenders || []).forEach(snd => { try{ p.pc.removeTrack(snd); }catch(e){} }); p.camSenders = []; });
       this.camStream = null;
       if(!silent) this.track();

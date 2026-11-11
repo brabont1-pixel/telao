@@ -308,6 +308,16 @@ alter table public.profiles add constraint profiles_status_ck check (status in (
 alter table public.profiles add column if not exists custom_status text check (char_length(custom_status) <= 80);
 alter table public.profiles add column if not exists custom_emoji text check (char_length(custom_emoji) <= 16);
 
+-- versão 4: perfil mais personalizável
+alter table public.profiles add column if not exists pronouns text check (char_length(pronouns) <= 30);
+alter table public.profiles add column if not exists links jsonb not null default '[]'::jsonb;
+alter table public.profiles drop constraint if exists profiles_links_ck;
+alter table public.profiles add constraint profiles_links_ck check (jsonb_typeof(links) = 'array' and jsonb_array_length(links) <= 5);
+alter table public.profiles add column if not exists shown_badges text[];
+alter table public.profiles add column if not exists profile_fx text;
+alter table public.profiles add column if not exists avatar_ring text;
+alter table public.profiles add column if not exists name_style text;
+
 alter table public.servers add column if not exists icon_url text;
 alter table public.servers add column if not exists description text check (char_length(description) <= 200);
 alter table public.channels add column if not exists topic text check (char_length(topic) <= 300);
@@ -509,6 +519,9 @@ begin
         if new.avatar_url is distinct from old.avatar_url and new.avatar_url ~* '\.gif($|\?)' then new.avatar_url := old.avatar_url; end if;
         if new.theme_a is distinct from old.theme_a and new.theme_a is not null then new.theme_a := old.theme_a; end if;
         if new.theme_b is distinct from old.theme_b and new.theme_b is not null then new.theme_b := old.theme_b; end if;
+        if new.profile_fx is distinct from old.profile_fx and new.profile_fx is not null then new.profile_fx := old.profile_fx; end if;
+        if new.avatar_ring is distinct from old.avatar_ring and new.avatar_ring is not null then new.avatar_ring := old.avatar_ring; end if;
+        if new.name_style is distinct from old.name_style and new.name_style is not null then new.name_style := old.name_style; end if;
       end if;
     end if;
   elsif tg_table_name = 'channels' then

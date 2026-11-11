@@ -1,6 +1,6 @@
 // Telão — service worker (deixa o app instalável e abrindo rápido)
-const CACHE = 'telao-v3';
-const SHELL = ['/', '/index.html', '/style.css', '/app.js', '/rtc.js', '/icons.js', '/emoji.js', '/config.js', '/manifest.webmanifest',
+const CACHE = 'telao-v4';
+const SHELL = ['/', '/index.html', '/style.css', '/app.js', '/rtc.js', '/icons.js', '/camfx.js', '/emoji.js', '/config.js', '/manifest.webmanifest',
                '/icons/icon-192.png', '/icons/icon-512.png', '/icons/icon.svg'];
 
 self.addEventListener('install', e => {
