@@ -116,7 +116,24 @@ function boot(){
     $('#setup').classList.remove('hidden'); return;
   }
   if(!window.supabase){ document.body.innerHTML = '<p style="padding:30px">Não foi possível carregar o Supabase. Verifique sua internet.</p>'; return; }
-  App.sb = supabase.createClient(CFG.SUPABASE_URL, CFG.SUPABASE_ANON_KEY, { auth:{ persistSession:true, autoRefreshToken:true } });
+  // corrige erros comuns na URL (espaços, barra no final, /rest/v1, sem https)
+  let url = CFG.SUPABASE_URL.trim().replace(/\/+$/, '').replace(/\/(rest|auth)\/v1.*$/, '');
+  if(!/^https?:\/\//.test(url)) url = 'https://' + url;
+  const dash = url.match(/supabase\.com\/dashboard\/project\/([a-z0-9]+)/);
+  if(dash) url = 'https://' + dash[1] + '.supabase.co';
+  if(!/^https:\/\/[a-z0-9-]+\.supabase\.(co|in)$/.test(url)){
+    $('#setup').classList.remove('hidden');
+    $('#setup .sub').innerHTML = 'A <b>Project URL</b> no <code>config.js</code> parece errada: <code>' + esc(CFG.SUPABASE_URL) + '</code><br>Ela deve ser assim: <code>https://abcdxyz.supabase.co</code>';
+    return;
+  }
+  if(/^sb_secret_|service_role/.test(CFG.SUPABASE_ANON_KEY) || /"role":"service_role"/.test((()=>{ try{ return atob(CFG.SUPABASE_ANON_KEY.split('.')[1]); }catch(e){ return ''; } })())){
+    $('#setup').classList.remove('hidden');
+    $('#setup h2').textContent = '⚠️ Chave secreta no site!';
+    $('#setup .sub').innerHTML = 'O <code>config.js</code> está com a chave <b>secreta</b>. Ela dá acesso total ao banco e não pode ficar no site.<br><br>1) No Supabase, apague/troque essa chave secreta.<br>2) Use a chave <b>publishable</b> (<code>sb_publishable_…</code>) ou <b>anon public</b>.';
+    return;
+  }
+  App.sb = supabase.createClient(url, CFG.SUPABASE_ANON_KEY.trim(), { auth:{ persistSession:true, autoRefreshToken:true } });
+  App.sbUrl = url;
   const m = location.hash.match(/convite=([a-z0-9]+)/i);
   if(m){ S.pendingInvite = m[1].toLowerCase(); history.replaceState(null, '', location.pathname); }
   App.sb.auth.onAuthStateChange((ev, session) => {
@@ -148,6 +165,11 @@ $('#toReg').onclick = () => setAuthMode('register');
 function authError(msg){
   const map = { 'Invalid login credentials':'E-mail ou senha incorretos.', 'Email not confirmed':'Confirme seu e-mail antes de entrar (veja sua caixa de entrada e o spam).',
     'User already registered':'Esse e-mail já tem uma conta.', 'Password should be at least 6 characters.':'A senha precisa de pelo menos 6 caracteres.' };
+  if(/failed to fetch|networkerror|load failed/i.test(msg)){
+    $('#authErr').innerHTML = 'Não consegui falar com o servidor (' + esc(App.sbUrl) + ').<br>Confira: a <b>Project URL</b> no config.js está certa? O projeto no Supabase está ativo (não pausado)? Algum bloqueador de anúncios (Brave, uBlock, AdGuard) está bloqueando o site?';
+    return;
+  }
+  if(/invalid api key|no api key/i.test(msg)){ $('#authErr').innerHTML = 'A chave do <code>config.js</code> está errada. Use a chave <b>anon public</b> (Project Settings → API).'; return; }
   $('#authErr').textContent = map[msg] || msg;
 }
 $('#authForm').onsubmit = async e => {
@@ -168,7 +190,8 @@ $('#authForm').onsubmit = async e => {
       const { error } = await App.sb.auth.signInWithPassword({ email, password });
       if(error){ authError(error.message); return; }
     }
-  } finally { btn.disabled = false; }
+  } catch(err){ authError(String(err && err.message || err)); }
+  finally { btn.disabled = false; }
 };
 
 /* ---------------- início ---------------- */
