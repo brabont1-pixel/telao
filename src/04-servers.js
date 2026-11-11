@@ -77,18 +77,19 @@ function renderMembers(){
     const top = rolesOf(s.id, m.user_id).find(r => r.hoist);
     if(top) groups.get(top.id).list.push(m); else online.push(m);
   });
-  const activity = uid => { for(const metas of S.vp.values()){ const m = metas.find(x => x.user_id === uid && x.voice); if(m) return m.sharing ? `${ic('screenUp',12)} Transmitindo` : `${ic('volume',12)} Em chamada`; } return ''; };
+  const activity = uid => { for(const metas of S.vp.values()){ const m = metas.find(x => x.user_id === uid && x.voice); if(m) return m.sharing ? `<span class="livetag" data-watch="${m.voice}" data-wsess="${m.session}">${ic('screenUp',12)} AO VIVO · Assistir</span>` : `${ic('volume',12)} Em chamada`; } return ''; };
   const row = m => {
     const color = App.roleColorOf(m.user_id);
     const sub = activity(m.user_id) || (m.p.custom_status ? statusText(m.p) : '');
-    return `<div class="mem ${S.online.has(m.user_id) || m.user_id === S.me.id ? '' : 'off'}" data-u="${m.user_id}">${avatar(m.p,'',true)}<div class="mt"><span class="nm" style="${color?`color:${color}`:''}">${esc(m.p.display_name)}${m.user_id===s.owner_id?`<span class="crown" data-tip="Dono do servidor">${ic('crown',14)}</span>`:''}</span>${sub ? `<small>${sub}</small>` : ''}</div></div>`;
+    return `<div class="mem ${S.online.has(m.user_id) || m.user_id === S.me.id ? '' : 'off'}" data-u="${m.user_id}">${avatar(m.p,'',true)}<div class="mt"><span class="nm" style="${color?`color:${color}`:''}">${nameHtml(m.p)}${m.user_id===s.owner_id?`<span class="crown" data-tip="Dono do servidor">${ic('crown',14)}</span>`:''}</span>${sub ? `<small>${sub}</small>` : ''}</div></div>`;
   };
   let h = '';
   groups.forEach(g => { if(g.list.length) h += `<h4>${esc(g.name)} — ${g.list.length}</h4>${g.list.map(row).join('')}`; });
   if(online.length) h += `<h4>Online — ${online.length}</h4>${online.map(row).join('')}`;
   if(off.length) h += `<h4>Offline — ${off.length}</h4>${off.map(row).join('')}`;
   el.innerHTML = h;
-  el.querySelectorAll('[data-u]').forEach(r => r.onclick = e => { const b = r.getBoundingClientRect(); userMenu(r.dataset.u, b.left - 330, b.top); });
+  el.querySelectorAll('[data-watch]').forEach(b => b.onclick = e => { e.stopPropagation(); watchLive(b.dataset.watch, b.dataset.wsess); });
+  el.querySelectorAll('[data-u]').forEach(r => r.onclick = e => { if(e.target.closest('[data-watch]')) return; const b = r.getBoundingClientRect(); userMenu(r.dataset.u, b.left - 330, b.top); });
 }
 
 /* ---------------- servidores: menus e modais ---------------- */

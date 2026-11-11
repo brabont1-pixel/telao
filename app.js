@@ -9,6 +9,7 @@ const esc = s => String(s ?? '').replace(/[&<>"']/g, c => ({'&':'&amp;','<':'&lt
 const COLORS = ['#5865f2','#eb459e','#3ba55c','#faa61a','#ed4245','#f47b67','#1abc9c','#9b59b6','#e67e22','#607d8b'];
 const ls = { get(k,d){ try{ const v=localStorage.getItem(k); return v==null?d:JSON.parse(v); }catch(e){ return d; } }, set(k,v){ try{ localStorage.setItem(k, JSON.stringify(v)); }catch(e){} } };
 
+const APP_VERSION = '4.1';
 const S = {
   me: null, profiles: new Map(), servers: [], channels: new Map(), members: new Map(),
   friends: [], dms: [], dmActivity: ls.get('telao-dmact', {}), online: new Set(),
@@ -244,6 +245,7 @@ async function start(session){
   await go(S.route, true);
   if(S.pendingInvite) inviteJoinPrompt(S.pendingInvite);
   if(S.plusReturn) handlePlusReturn(S.plusReturn);
+  checkVersion();
 }
 async function handlePlusReturn(kind){
   if(kind === 'erro'){ App.toast('O pagamento não foi concluído. Pode tentar de novo quando quiser.', true); return; }
@@ -334,6 +336,11 @@ function subscribeRealtime(){
     if(S.autoIdle){ S.autoIdle = false; S.myStatus = S.me.status || 'online'; trackOnline(); renderUserPanel(); }
   }, { passive:true }));
   setInterval(() => { if(!S.autoIdle && (S.me.status || 'online') === 'online' && Date.now() - lastAct > 10*60*1000 && !Voice.channel){ S.autoIdle = true; S.myStatus = 'idle'; trackOnline(); renderUserPanel(); } }, 30000);
+
+  // avisos globais do admin
+  S.avisoCh = sb.channel('telao-avisos', { config:{ broadcast:{ self:true } } })
+    .on('broadcast', { event:'aviso' }, ({ payload }) => showAviso(payload))
+    .subscribe();
 
   sb.channel('user:'+S.me.id)
     .on('broadcast', { event:'ring' }, ({payload}) => onRing(payload))
@@ -446,6 +453,39 @@ async function onMemberEvent(p){
   }
   if(S.members.has(row.server_id)){ await loadMembers(row.server_id); renderMembers(); }
 }
+
+/* ---------------- atualizações e avisos globais ---------------- */
+function updateBar(text, reload){
+  let bar = $('#updbar');
+  if(!bar){ bar = document.createElement('div'); bar.id = 'updbar'; bar.className = 'updbar'; document.body.appendChild(bar); }
+  bar.innerHTML = `<span>${ic('sparkles',18)} ${esc(text)}</span>${reload ? `<button class="btn sm" id="updGo">${ic('refresh',15)} Atualizar agora</button>` : ''}<button class="ibtn" id="updX" title="Fechar">${ic('x',16)}</button>`;
+  bar.classList.remove('hidden');
+  const go = $('#updGo'); if(go) go.onclick = hardReload;
+  $('#updX').onclick = () => bar.classList.add('hidden');
+}
+async function hardReload(){
+  try{ const regs = await navigator.serviceWorker.getRegistrations(); await Promise.all(regs.map(r => r.update().catch(()=>{}))); const ks = await caches.keys(); await Promise.all(ks.map(k => caches.delete(k))); }catch(e){}
+  if(Voice.channel) try{ await Voice.leave(); }catch(e){}
+  location.reload();
+}
+let updShown = false;
+async function checkVersion(){
+  try{
+    const r = await fetch('/version.json?t=' + Date.now(), { cache:'no-store' }); if(!r.ok) return;
+    const { v } = await r.json();
+    if(v && v !== APP_VERSION && !updShown){ updShown = true; updateBar('Nova atualização do Telão disponível!', true); App.sfx('screen'); }
+  }catch(e){}
+}
+setInterval(checkVersion, 60 * 1000);
+document.addEventListener('visibilitychange', () => { if(!document.hidden) checkVersion(); });
+function showAviso(pl){
+  if(!pl || !pl.text) return;
+  const from = pl.from ? prof(pl.from).display_name : 'Telão';
+  updateBar(`📢 ${from}: ${pl.text}`, !!pl.reload);
+  App.sfx('ring');
+  if(pl.from !== S.me?.id) notify('📢 Aviso do Telão', pl.text, null);
+}
+App.sendAviso = (text, reload) => S.avisoCh && S.avisoCh.send({ type:'broadcast', event:'aviso', payload:{ text, reload, from: S.me.id } });
 
 function trackOnline(){ if(S.onlineCh) S.onlineCh.track({ status: S.myStatus, at: Date.now() }).catch(()=>{}); }
 const isDnd = () => S.myStatus === 'dnd';
@@ -2749,7 +2789,7 @@ function renderSettings(){
   SET.el.innerHTML = `<nav class="snav"><div class="in">${nav.map(n =>
       n[0] === 'h' ? `<h5>${n[1]}</h5>` : n[0] === 'hr' ? '<hr>' :
       `<button class="si ${SET.sec===n[0]?'on':''} ${n[2]||''}" data-sec="${n[0]}">${n[1]}</button>`).join('')}
-      ${SET.kind==='user' ? '<hr><div class="ver">Telão · versão 4.0</div>' : ''}</div></nav>
+      ${SET.kind==='user' ? '<hr><div class="ver">Telão · versão 4.1</div>' : ''}</div></nav>
     <div class="scontent"><div class="sclose"><button id="sClose" title="Fechar (Esc)">✕</button><span>ESC</span></div><div class="in" id="sIn"></div></div>`;
   SET.el.querySelector('#sClose').onclick = () => { if(isMobile() && SET.mobileOpen){ SET.mobileOpen = false; renderSettings(); } else closeSettings(); };
   SET.el.querySelectorAll('[data-sec]').forEach(b => b.onclick = () => {
@@ -3244,7 +3284,7 @@ function secApp(box, back){
     ${row('Instalar o Telão', standalone ? '✅ Você está usando o app instalado.' : S.installEvt ? 'Instale como app: ícone próprio, janela separada e abre mais rápido.' : ios ? 'No iPhone: Compartilhar → <b>Adicionar à Tela de Início</b>.' : 'No Chrome/Edge: ícone de instalar na barra de endereço, ou menu ⋮ → <b>Instalar Telão</b>.',
           S.installEvt && !standalone ? '<button class="btn sm" id="apInst">📲 Instalar</button>' : '')}
     ${row('Limpar cache do app', 'Use se uma atualização não aparecer.', '<button class="btn sec sm" id="apClr">Limpar e recarregar</button>')}
-    <hr class="sdiv"><small style="color:var(--mut)">Telão · versão 4.0</small>`;
+    <hr class="sdiv"><small style="color:var(--mut)">Telão · versão 4.1</small>`;
   const i = box.querySelector('#apInst'); if(i) i.onclick = doInstall;
   box.querySelector('#apClr').onclick = async () => {
     try{ const regs = await navigator.serviceWorker.getRegistrations(); await Promise.all(regs.map(r => r.unregister())); const ks = await caches.keys(); await Promise.all(ks.map(k => caches.delete(k))); }catch(e){}
@@ -3257,12 +3297,23 @@ function secAdmin(box, back){
   if(!S.me.is_admin){ box.innerHTML = 'Sem acesso.'; return; }
   box.innerHTML = `${back}<h2>👑 Painel do admin</h2>
     <p style="color:var(--txt2);font-size:14px">Dê o Telão+ (ex: quem pagou por Pix) e insígnias para qualquer pessoa.</p>
+    <h3>📢 Aviso para todos</h3>
+    <p class="mut small" style="margin-bottom:8px">Aparece na hora para todo mundo que está com o Telão aberto (no topo da tela, com som).</p>
+    <textarea class="inp" id="avT" maxlength="200" rows="2">Saiu uma atualização nova do Telão! Clique em "Atualizar agora" para ver as novidades 🎉</textarea>
+    <div style="display:flex;gap:10px;align-items:center;margin-top:8px;flex-wrap:wrap"><label style="display:flex;gap:8px;align-items:center;font-size:14px">${toggle('avR', true)} Mostrar botão “Atualizar agora”</label><span class="grow"></span><button class="btn" id="avGo">${ic('send',16)} Enviar para todos</button></div>
+    <hr class="sdiv">
     <h3>Procurar usuário</h3>
     <input class="inp" id="adQ" placeholder="nome de usuário ou nome" autocomplete="off">
     <div class="slist adminres" id="adRes" style="margin-top:10px"></div>
     <div id="adUser"></div>
     <hr class="sdiv"><h3>Últimos pagamentos</h3><div id="adPays" style="font-size:14px;color:var(--mut)">Carregando…</div>`;
   const $b = s => box.querySelector(s);
+  $b('#avGo').onclick = async () => {
+    const t = $b('#avT').value.trim(); if(!t){ App.toast('Escreva o aviso.', true); return; }
+    if(!(await confirmBox('Enviar aviso', `Mandar para todo mundo que está online agora?<br><br><i>“${esc(t)}”</i>`, 'Enviar', false))) return;
+    await App.sendAviso(t, $b('#avR').checked);
+    App.toast('📢 Aviso enviado para todos que estão online!');
+  };
   let tmr;
   $b('#adQ').oninput = e => { clearTimeout(tmr); const q = e.target.value.trim().replace(/[%,()]/g,''); tmr = setTimeout(async () => {
     if(q.length < 2){ $b('#adRes').innerHTML = ''; return; }

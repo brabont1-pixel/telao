@@ -859,3 +859,9 @@ body.compact .msg .bd{max-width:100%}
   #fRows{grid-template-columns:1fr}
   .composer{padding:0 8px 10px}
 }
+
+/* barra de atualização / aviso global */
+.updbar{position:fixed;top:14px;left:50%;transform:translateX(-50%);z-index:95;display:flex;align-items:center;gap:12px;background:var(--grad);color:#fff;padding:8px 8px 8px 18px;border-radius:18px;box-shadow:0 14px 40px rgba(0,0,0,.45);font-weight:600;font-size:14px;max-width:min(94vw,720px);animation:pop .3s var(--ease)}
+.updbar span{display:flex;align-items:center;gap:8px}
+.updbar .btn{background:#fff;color:#e2365c;box-shadow:none}
+.updbar .ibtn{color:#fff}.updbar .ibtn:hover{background:rgba(255,255,255,.15)}

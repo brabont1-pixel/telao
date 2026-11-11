@@ -6,7 +6,8 @@ async function joinVoice(ch){
   await pch._ready;
   if(!navigator.mediaDevices){ App.toast('Seu navegador não suporta chamadas. Use Chrome, Edge ou Safari atualizado.', true); return; }
   await Voice.join(ch, pch, topic);
-  App.sfx('join');
+  Voice.joinedAt = Date.now();
+  App.sfx('selfjoin');
   if(ch.kind === 'dm'){
     const other = dmOther(ch);
     const there = voiceUsers(ch).some(m => m.user_id === other);
@@ -106,7 +107,7 @@ function renderStage(){
     return `<div class="tile ${cam?'hascam':''}" data-sess="${u.session}" data-vuser="${u.user_id}" style="--avc:${esc(p.avatar_color)}">
       ${cam ? `<div class="vslot" data-stream="${cam.stream.id}" data-mirror="${me?1:0}"></div>` : `<div class="tbg" ${p.banner_url && hasPlus(p) ? `style="background-image:url('${esc(p.banner_url)}')"` : ''}></div>${avatar(p)}`}
       <span class="nm">${u.deafened ? ic('headphonesOff',14) : u.muted ? ic('micOff',14) : ''}${esc(p.display_name)}${me?' (você)':''}</span>
-      ${u.sharing ? '<span class="live tl">AO VIVO</span>' : ''}</div>`;
+      ${u.sharing ? (me ? '<span class="live tl">AO VIVO</span>' : `<button class="watchbtn" data-focus="s:${u.session}">${ic('eye',15)} Assistir</button>`) : ''}</div>`;
   };
   const scrTile = s => `<div class="tile scr ${focused && focused.id === 's:' + s.session ? 'on' : ''}" data-focus="s:${s.session}"><div class="vslot" data-stream="${s.stream.id}"></div><span class="nm">${ic('monitor',14)} ${esc(s.mine ? 'Sua tela' : prof(s.user_id).display_name)}</span></div>`;
 
@@ -116,10 +117,12 @@ function renderStage(){
     const strip = focusables.filter(x => x !== f).map(x => x.id === 'wt' ? `<div class="tile scr wtt" data-focus="wt">${ic('tv',28)}<span class="nm">Assistir juntos</span></div>` : scrTile(x.s)).join('') + users.map(tileOf).join('');
     const main = f.id === 'wt'
       ? `<div class="focus wtfocus" id="focusBox"><div id="wtPlayer"></div><div class="wtbar"><span>${ic('tv',16)} Assistindo juntos · ${esc(WT.title || 'YouTube')}</span><span class="grow"></span><button id="wtChange">${ic('refresh',16)} Trocar vídeo</button><button id="wtStop">${ic('x',16)} Encerrar</button></div></div>`
-      : `<div class="focus" id="focusBox"><div class="vslot" data-stream="${f.s.stream.id}"></div>
+      : `<div class="focus" id="focusBox"><div class="vslot" data-stream="${f.s.stream.id}"></div><canvas class="drawlayer ${DRAW.on?'on':''}" id="drawCv"></canvas>
           <span class="stats" id="stStats"></span>
           <span class="lbl">${ic('monitor',14)} ${esc(f.s.mine ? 'Sua tela (prévia)' : 'Tela de ' + prof(f.s.user_id).display_name)} ${f.s.mine ? '' : (f.s.stream.getAudioTracks().length ? ic('volume',14) : `<span class="noaud">${ic('micOff',13)} sem áudio</span>`)}</span>
           <span class="tools">
+            <button id="stDraw" data-tip="Desenhar na tela (todos veem)" class="${DRAW.on?'on':''}">${ic('pen',18)}</button>
+            <button id="stCine" data-tip="Modo cinema">${ic('film',18)}</button>
             <button id="stShot" data-tip="Tirar print">${ic('camera',18)}</button>
             <button id="stRec" data-tip="${REC.on ? 'Parar gravação' : 'Gravar'}" class="${REC.on?'rec':''}">${ic(REC.on?'stop':'record',18)}${REC.on ? '<span id="recTime">0:00</span>' : ''}</button>
             ${document.pictureInPictureEnabled ? `<button id="stPip" data-tip="Janela flutuante">${ic('pip',18)}</button>` : ''}
@@ -137,6 +140,7 @@ function renderStage(){
       </div>
       <div class="sbg">
         <button class="cbtn ${Voice.camStream?'on':''}" id="sbCam" data-tip="${Voice.camStream?'Desligar câmera':'Ligar câmera'}">${ic(Voice.camStream?'video':'videoOff',22)}</button>
+        ${Voice.camStream ? `<button class="cbtn" id="sbCamFx" data-tip="Efeitos da câmera">${ic('wand',22)}</button>` : ''}
         <button class="cbtn ${Voice.screenStream?'on':''}" id="sbScr" data-tip="${Voice.screenStream?'Parar de transmitir':'Compartilhar tela'}">${ic('screenUp',22)}</button>
         <button class="cbtn" id="sbAct" data-tip="Atividades">${ic('sparkles',22)}</button>
         <button class="cbtn" id="sbFx" data-tip="Reagir">${ic('smile',22)}</button>
@@ -162,7 +166,8 @@ function renderStage(){
   const $w = q => wrap.querySelector(q);
   $w('#sbMic').onclick = () => { Voice.toggleMute(); ls.set('telao-muted', Voice.muted); };
   $w('#sbDeaf').onclick = () => Voice.toggleDeafen();
-  $w('#sbCam').onclick = () => Voice.camStream ? Voice.stopCamera() : Voice.startCamera();
+  $w('#sbCam').onclick = () => Voice.camStream ? Voice.stopCamera() : cameraSetup();
+  const fxb = $w('#sbCamFx'); if(fxb) fxb.onclick = e => camFxMenu(e.currentTarget);
   $w('#sbScr').onclick = () => Voice.screenStream ? Voice.stopScreen() : Voice.startScreen();
   $w('#sbAct').onclick = e => activitiesMenu(e.currentTarget);
   $w('#sbFx').onclick = e => { const r = e.currentTarget.getBoundingClientRect(); emojiPicker(r.left - 150, r.top, em => Voice.sendFx({ t:'react', e: em })); };
@@ -173,6 +178,9 @@ function renderStage(){
     $w('#stFs').onclick = () => { const el = $w('#focusBox'); (el.requestFullscreen || el.webkitRequestFullscreen || (()=>{})).call(el); };
     const pip = $w('#stPip'); if(pip) pip.onclick = () => { const v = vid(); if(!v) return; (document.pictureInPictureElement === v ? document.exitPictureInPicture() : v.requestPictureInPicture()).catch(e => App.toast('Não deu: ' + e.message, true)); };
     $w('#stShot').onclick = () => screenshot(vid(), focused.s);
+    $w('#stDraw').onclick = () => { DRAW.on = !DRAW.on; renderStage(); if(DRAW.on) App.toast('✏️ Desenhe na tela: todo mundo assistindo vê. Clique de novo para parar.'); };
+    $w('#stCine').onclick = toggleCinema;
+    mountDraw(focused.s.session);
     $w('#stRec').onclick = () => REC.on ? stopRec() : startRec(focused.s);
     let lastB = 0, lastT = 0;
     statTimer = setInterval(async () => {
@@ -270,6 +278,7 @@ Voice.onFx = (pl, mine) => {
   if(pl.t === 'sound'){ playSound(pl.id); const snd = SOUNDS.find(x => x[0] === pl.id); if(snd) floatReaction(snd[1], pl.uid); }
   else if(pl.t === 'react') floatReaction(pl.e, pl.uid);
   else if(pl.t && pl.t.startsWith('wt')) onWT(pl, mine);
+  else if(pl.t === 'draw') onDraw(pl);
 };
 let lastSound = 0;
 function activitiesMenu(anchor){
@@ -380,4 +389,102 @@ function userMenu(uid, x, y){
   if(uid === S.me.id) items.push({ label:'Editar perfil', icon: ic('edit',18), onClick: () => openSettings('user','profile') });
   items.push({ label:'Copiar usuário', icon: ic('copy',18), onClick: () => copy(p.username) });
   menu(x, y, items, 'pp');
+}
+
+
+/* ---------------- prévia da câmera com efeitos ---------------- */
+async function cameraSetup(){
+  if(!Voice.channel){ App.toast('Entre numa chamada primeiro', true); return; }
+  let fx;
+  try{ fx = await Voice.openCamFx(); }
+  catch(e){ App.toast('Não consegui abrir a câmera: ' + (e.name === 'NotAllowedError' ? 'permissão negada' : e.message), true); return; }
+  let started = false;
+  modal(`<div class="mh"><h2>${ic('video',22)} Sua câmera</h2><p>Escolha um efeito antes de aparecer. Dá para trocar durante a chamada também.</p></div>
+    <div class="mc"><div class="campv"><video id="camPv" autoplay playsinline muted></video><span class="camst" id="camSt"></span></div>
+      <div class="fxgrid" id="fxGrid">${CamFX.EFFECTS.map(e => `<button data-fx="${e.id}" class="${(P.camFx||'none')===e.id?'on':''}"><span>${e.ic}</span>${esc(e.nome)}${e.tag?`<i>${e.tag}</i>`:''}</button>`).join('')}</div></div>
+    <div class="mf"><button class="btn sec" id="camNo">Cancelar</button><button class="btn" id="camGo">${ic('video',16)} Ligar câmera</button></div>`, m => {
+    m.querySelector('.mbox').classList.add('wide');
+    const v = m.querySelector('#camPv'); v.srcObject = fx.stream; v.play().catch(()=>{});
+    fx.onStatus(t => { const el = m.querySelector('#camSt'); if(el){ el.textContent = t; el.classList.toggle('hidden', !t); } });
+    m.querySelectorAll('[data-fx]').forEach(b => b.onclick = () => {
+      P.camFx = b.dataset.fx; savePrefs(); fx.setEffect(P.camFx);
+      m.querySelectorAll('[data-fx]').forEach(x => x.classList.toggle('on', x === b));
+    });
+    m.querySelector('#camNo').onclick = () => { closeModal(); };
+    m.querySelector('#camGo').onclick = () => { started = true; closeModal(); Voice.startCamera(fx); };
+    const obs = new MutationObserver(() => { if($('#modal').classList.contains('hidden')){ obs.disconnect(); if(!started) fx.stop(); } });
+    obs.observe($('#modal'), { attributes:true, attributeFilter:['class'] });
+  });
+}
+function camFxMenu(anchor){
+  const r = anchor.getBoundingClientRect();
+  const el = $('#menu'); el.className = 'menu fxpop';
+  el.innerHTML = `<div class="pphead">${ic('wand',18)} Efeitos da câmera</div><div class="fxgrid sm">${CamFX.EFFECTS.map(e => `<button data-fx="${e.id}" class="${(P.camFx||'none')===e.id?'on':''}"><span>${e.ic}</span>${esc(e.nome)}${e.tag?`<i>${e.tag}</i>`:''}</button>`).join('')}</div><div class="fxst" id="fxSt"></div>`;
+  el.classList.remove('hidden');
+  el.style.left = Math.max(8, Math.min(r.left - 160, innerWidth - 400)) + 'px';
+  el.style.top = Math.max(8, r.top - el.offsetHeight - 10) + 'px';
+  if(Voice.camFx) Voice.camFx.onStatus(t => { const s = $('#fxSt'); if(s) s.textContent = t; });
+  el.querySelectorAll('[data-fx]').forEach(b => b.onclick = () => {
+    P.camFx = b.dataset.fx; savePrefs(); Voice.setCamEffect(P.camFx);
+    el.querySelectorAll('[data-fx]').forEach(x => x.classList.toggle('on', x === b));
+  });
+  setTimeout(() => document.addEventListener('mousedown', outside), 0);
+  function outside(e){ if(!el.contains(e.target)) closeMenu(); }
+  el._outside = outside;
+}
+
+/* ---------------- modo cinema ---------------- */
+function toggleCinema(){
+  document.body.classList.toggle('cinema');
+  if(document.body.classList.contains('cinema')) App.toast('🎬 Modo cinema — aperte Esc para sair');
+}
+window.addEventListener('keydown', e => { if(e.key === 'Escape' && document.body.classList.contains('cinema')) document.body.classList.remove('cinema'); });
+
+/* ---------------- desenhar na tela compartilhada ---------------- */
+const DRAW = { on:false, strokes:[], raf:0, cur:null, sess:null, lastSend:0 };
+function videoRect(cv){
+  const v = cv.parentElement.querySelector('video'); const W = cv.width, H = cv.height;
+  const vw = (v && v.videoWidth) || 16, vh = (v && v.videoHeight) || 9, s = Math.min(W / vw, H / vh);
+  return { x:(W - vw*s)/2, y:(H - vh*s)/2, w:vw*s, h:vh*s };
+}
+function mountDraw(sess){
+  const cv = $('#drawCv'); if(!cv) return;
+  DRAW.sess = sess;
+  const fit = () => { const r = cv.getBoundingClientRect(); cv.width = r.width * devicePixelRatio; cv.height = r.height * devicePixelRatio; };
+  fit();
+  const ctx = cv.getContext('2d');
+  cancelAnimationFrame(DRAW.raf);
+  const loop = () => {
+    if(!document.body.contains(cv)) return;
+    const r = cv.getBoundingClientRect(); if(Math.abs(r.width * devicePixelRatio - cv.width) > 2) fit();
+    ctx.clearRect(0, 0, cv.width, cv.height);
+    const vr = videoRect(cv), now = Date.now();
+    DRAW.strokes = DRAW.strokes.filter(s => now - s.t < 5000);
+    DRAW.strokes.filter(s => s.sess === DRAW.sess).forEach(s => {
+      const age = now - s.t; ctx.globalAlpha = age < 3500 ? 1 : 1 - (age - 3500) / 1500;
+      ctx.strokeStyle = s.c; ctx.lineWidth = 4 * devicePixelRatio; ctx.lineCap = ctx.lineJoin = 'round';
+      ctx.shadowColor = s.c; ctx.shadowBlur = 8;
+      ctx.beginPath(); s.pts.forEach(([x, y], i) => { const px = vr.x + x * vr.w, py = vr.y + y * vr.h; i ? ctx.lineTo(px, py) : ctx.moveTo(px, py); }); ctx.stroke();
+    });
+    ctx.globalAlpha = 1; ctx.shadowBlur = 0;
+    DRAW.raf = requestAnimationFrame(loop);
+  };
+  loop();
+  if(!DRAW.on) return;
+  const pt = e => { const r = cv.getBoundingClientRect(), vr = videoRect(cv); const x = ((e.clientX - r.left) * devicePixelRatio - vr.x) / vr.w, y = ((e.clientY - r.top) * devicePixelRatio - vr.y) / vr.h; return [Math.max(0, Math.min(1, x)), Math.max(0, Math.min(1, y))]; };
+  const color = S.me.avatar_color || '#ff6b4a';
+  const flush = (final) => {
+    const c = DRAW.cur; if(!c || c.pts.length < 2) return;
+    if(!final && Date.now() - DRAW.lastSend < 60) return;
+    DRAW.lastSend = Date.now();
+    Voice.sendFx({ t:'draw', s: sess, id: c.id, pts: c.pts.map(([x, y]) => [+x.toFixed(4), +y.toFixed(4)]), c: color });
+  };
+  cv.onpointerdown = e => { cv.setPointerCapture(e.pointerId); DRAW.cur = { id: Math.random().toString(36).slice(2), pts:[pt(e)] }; };
+  cv.onpointermove = e => { if(!DRAW.cur) return; DRAW.cur.pts.push(pt(e)); flush(false); };
+  cv.onpointerup = cv.onpointercancel = () => { flush(true); DRAW.cur = null; };
+}
+function onDraw(pl){
+  const ex = DRAW.strokes.find(s => s.id === pl.id);
+  if(ex){ ex.pts = pl.pts; ex.t = Date.now(); }
+  else DRAW.strokes.push({ id: pl.id, sess: pl.s, pts: pl.pts, c: pl.c, t: Date.now() });
 }

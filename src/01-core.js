@@ -9,6 +9,7 @@ const esc = s => String(s ?? '').replace(/[&<>"']/g, c => ({'&':'&amp;','<':'&lt
 const COLORS = ['#5865f2','#eb459e','#3ba55c','#faa61a','#ed4245','#f47b67','#1abc9c','#9b59b6','#e67e22','#607d8b'];
 const ls = { get(k,d){ try{ const v=localStorage.getItem(k); return v==null?d:JSON.parse(v); }catch(e){ return d; } }, set(k,v){ try{ localStorage.setItem(k, JSON.stringify(v)); }catch(e){} } };
 
+const APP_VERSION = '4.1';
 const S = {
   me: null, profiles: new Map(), servers: [], channels: new Map(), members: new Map(),
   friends: [], dms: [], dmActivity: ls.get('telao-dmact', {}), online: new Set(),
@@ -21,9 +22,11 @@ const S = {
 const App = window.App = { sb: null, get me(){ return S.me; }, S };
 
 /* ---------------- utilidades ---------------- */
-App.toast = (t, err) => {
-  const el = $('#toast'); el.textContent = t; el.className = 'toast' + (err ? ' err' : '');
-  clearTimeout(el._t); el._t = setTimeout(() => el.classList.add('hidden'), err ? 6000 : 3200);
+App.toast = (t, err, action) => {
+  const el = $('#toast'); el.className = 'toast' + (err ? ' err' : '') + (action ? ' act' : '');
+  el.innerHTML = `<span>${esc(t)}</span>` + (action ? `<button class="btn sm" id="toastAct">${esc(action.label)}</button>` : '');
+  if(action) $('#toastAct').onclick = () => { el.classList.add('hidden'); action.fn(); };
+  clearTimeout(el._t); el._t = setTimeout(() => el.classList.add('hidden'), action ? 9000 : err ? 6000 : 3200);
 };
 App.needAudioUnlock = () => $('#unlock').classList.remove('hidden');
 $('#unlock').onclick = () => { Voice.unlockAudio(); $('#unlock').classList.add('hidden'); };
@@ -31,17 +34,20 @@ $('#unlock').onclick = () => { Voice.unlockAudio(); $('#unlock').classList.add('
 let sfxCtx = null;
 App.sfx = (type) => {
   const PR = App.prefs || {};
-  if(['join','leave','mute','unmute'].includes(type) && PR.soundVoice === false) return;
+  if(['join','leave','mute','unmute','selfjoin','screen','screenoff','cam'].includes(type) && PR.soundVoice === false) return;
   if(type === 'msg' && PR.soundMsg === false) return;
   try{
     if(!sfxCtx) sfxCtx = new (window.AudioContext || window.webkitAudioContext)();
-    const seq = { join:[[523,.08],[784,.12]], leave:[[784,.08],[523,.12]], mute:[[392,.08]], unmute:[[587,.08]],
-                  msg:[[880,.06],[1175,.08]], ring:[[660,.18],[0,.06],[880,.18],[0,.06],[660,.18]] }[type];
+    const seq = {
+      selfjoin:[[523,.07],[659,.07],[784,.07],[1047,.16]], join:[[587,.08],[880,.16]], leave:[[880,.08],[523,.2]],
+      mute:[[440,.07]], unmute:[[660,.07]], msg:[[880,.05],[1320,.09]], cam:[[700,.05],[1050,.1]],
+      screen:[[784,.06],[988,.06],[1319,.16]], screenoff:[[1319,.06],[988,.06],[659,.16]],
+      ring:[[660,.18],[0,.06],[880,.18],[0,.06],[660,.18]] }[type];
     if(!seq) return;
     let t = sfxCtx.currentTime;
     seq.forEach(([f,d]) => {
       if(f){ const o = sfxCtx.createOscillator(), g = sfxCtx.createGain();
-        o.type = 'sine'; o.frequency.value = f; g.gain.setValueAtTime(.0001, t); g.gain.exponentialRampToValueAtTime(.12, t+.01); g.gain.exponentialRampToValueAtTime(.0001, t+d);
+        o.type = type === 'ring' ? 'sine' : 'triangle'; o.frequency.value = f; g.gain.setValueAtTime(.0001, t); g.gain.exponentialRampToValueAtTime(.12, t+.01); g.gain.exponentialRampToValueAtTime(.0001, t+d);
         o.connect(g).connect(sfxCtx.destination); o.start(t); o.stop(t+d+.02); }
       t += d;
     });
@@ -52,7 +58,8 @@ const prof = id => S.profiles.get(id) || { id, display_name:'…', username:'…
 const initials = p => (p.display_name || p.username || '?').trim().split(/\s+/).map(w=>w[0]).slice(0,2).join('').toUpperCase();
 function avatar(p, cls='', status=false){
   const img = p.avatar_url && (!/\.gif($|\?)/i.test(p.avatar_url) || hasPlus(p)) ? `<img src="${esc(p.avatar_url)}" alt="" loading="lazy" decoding="async">` : `<span class="ini">${esc(initials(p))}</span>`;
-  return `<div class="av ${cls}" style="--avc:${esc(p.avatar_color||'#5865f2')}">${img}${status?`<span class="st s-${statusOf(p.id)}"></span>`:''}</div>`;
+  const ring = p.avatar_ring && hasPlus(p) ? ` avring avring-${esc(p.avatar_ring)}` : '';
+  return `<div class="av ${cls}${ring}" style="--avc:${esc(p.avatar_color||'#ff6b4a')}">${img}${status?`<span class="st s-${statusOf(p.id)}"></span>`:''}</div>`;
 }
 function serverInitials(n){ return n.trim().split(/\s+/).map(w=>w[0]).slice(0,2).join('').toUpperCase() || '?'; }
 function fmtTime(d){
@@ -238,6 +245,7 @@ async function start(session){
   await go(S.route, true);
   if(S.pendingInvite) inviteJoinPrompt(S.pendingInvite);
   if(S.plusReturn) handlePlusReturn(S.plusReturn);
+  checkVersion();
 }
 async function handlePlusReturn(kind){
   if(kind === 'erro'){ App.toast('O pagamento não foi concluído. Pode tentar de novo quando quiser.', true); return; }
@@ -329,6 +337,11 @@ function subscribeRealtime(){
   }, { passive:true }));
   setInterval(() => { if(!S.autoIdle && (S.me.status || 'online') === 'online' && Date.now() - lastAct > 10*60*1000 && !Voice.channel){ S.autoIdle = true; S.myStatus = 'idle'; trackOnline(); renderUserPanel(); } }, 30000);
 
+  // avisos globais do admin
+  S.avisoCh = sb.channel('telao-avisos', { config:{ broadcast:{ self:true } } })
+    .on('broadcast', { event:'aviso' }, ({ payload }) => showAviso(payload))
+    .subscribe();
+
   sb.channel('user:'+S.me.id)
     .on('broadcast', { event:'ring' }, ({payload}) => onRing(payload))
     .on('broadcast', { event:'ring-cancel' }, ({payload}) => { if(S.ringing && S.ringing.channel_id === payload.channel_id) stopRing(); })
@@ -336,6 +349,36 @@ function subscribeRealtime(){
     .subscribe();
 }
 
+S.liveSeen = new Set();
+function liveWatch(topic, prev, metas){
+  const others = l => new Map(l.filter(m => m.voice && m.session !== Voice.SESSION).map(m => [m.session, m]));
+  const a = others(prev), b = others(metas);
+  const mine = Voice.channel && Voice.topic === topic ? Voice.channel.id : null;
+  b.forEach((m, sess) => {
+    const was = a.get(sess);
+    if(mine && m.voice === mine){
+      if(!was || was.voice !== mine) App.sfx('join');
+      else if(m.sharing && !was.sharing) App.sfx('screen');
+      else if(!m.sharing && was.sharing) App.sfx('screenoff');
+    }
+    const key = m.voice + ':' + sess + ':' + (m.screen || '');
+    if(m.sharing && (!was || !was.sharing) && !S.liveSeen.has(key) && m.user_id !== S.me.id){
+      S.liveSeen.add(key);
+      if(mine === m.voice || isDnd()) return;
+      const ch = findChannel(m.voice); if(!ch) return;
+      const where = ch.kind === 'dm' ? 'numa chamada com você' : 'em ' + ch.name;
+      App.toast(`🔴 ${prof(m.user_id).display_name} está transmitindo ${where}`, false, { label: 'Assistir', fn: () => watchLive(m.voice, sess) });
+    }
+  });
+  if(mine) a.forEach((m, sess) => { if(m.voice === mine && (!b.has(sess) || b.get(sess).voice !== mine)) App.sfx('leave'); });
+}
+async function watchLive(cid, sess){
+  const ch = findChannel(cid); if(!ch) return;
+  if(typeof SET !== 'undefined' && SET) closeSettings();
+  openChannel(ch);
+  if(!(Voice.channel && Voice.channel.id === cid)) await joinVoice(ch);
+  S.focus = 's:' + sess; renderStage();
+}
 function vpChannel(topic){
   if(S.vpCh.has(topic)) return S.vpCh.get(topic);
   const ch = App.sb.channel(topic, { config:{ presence:{ key: Voice.SESSION } } });
@@ -345,13 +388,8 @@ function vpChannel(topic){
       const metas = Object.values(st).map(a => a[a.length-1]).filter(Boolean);
       const prev = S.vp.get(topic) || [];
       S.vp.set(topic, metas);
-      // sons de entrar/sair no meu canal
-      if(Voice.channel && Voice.topic === topic){
-        const mine = l => new Set(l.filter(m => m.voice === Voice.channel.id && m.session !== Voice.SESSION).map(m => m.session));
-        const a = mine(prev), b = mine(metas);
-        if([...b].some(x => !a.has(x))) App.sfx('join');
-        else if([...a].some(x => !b.has(x))) App.sfx('leave');
-      }
+      // sons de entrar/sair/transmitir no meu canal + aviso de transmissão em outros canais
+      ensureProfiles(metas.map(m => m.user_id)).then(() => liveWatch(topic, prev, metas));
       ensureProfiles(metas.map(m => m.user_id)).then(() => {
         Voice.onPresence(topic, metas);
         renderSidebar(); renderStage();
@@ -416,6 +454,39 @@ async function onMemberEvent(p){
   if(S.members.has(row.server_id)){ await loadMembers(row.server_id); renderMembers(); }
 }
 
+/* ---------------- atualizações e avisos globais ---------------- */
+function updateBar(text, reload){
+  let bar = $('#updbar');
+  if(!bar){ bar = document.createElement('div'); bar.id = 'updbar'; bar.className = 'updbar'; document.body.appendChild(bar); }
+  bar.innerHTML = `<span>${ic('sparkles',18)} ${esc(text)}</span>${reload ? `<button class="btn sm" id="updGo">${ic('refresh',15)} Atualizar agora</button>` : ''}<button class="ibtn" id="updX" title="Fechar">${ic('x',16)}</button>`;
+  bar.classList.remove('hidden');
+  const go = $('#updGo'); if(go) go.onclick = hardReload;
+  $('#updX').onclick = () => bar.classList.add('hidden');
+}
+async function hardReload(){
+  try{ const regs = await navigator.serviceWorker.getRegistrations(); await Promise.all(regs.map(r => r.update().catch(()=>{}))); const ks = await caches.keys(); await Promise.all(ks.map(k => caches.delete(k))); }catch(e){}
+  if(Voice.channel) try{ await Voice.leave(); }catch(e){}
+  location.reload();
+}
+let updShown = false;
+async function checkVersion(){
+  try{
+    const r = await fetch('/version.json?t=' + Date.now(), { cache:'no-store' }); if(!r.ok) return;
+    const { v } = await r.json();
+    if(v && v !== APP_VERSION && !updShown){ updShown = true; updateBar('Nova atualização do Telão disponível!', true); App.sfx('screen'); }
+  }catch(e){}
+}
+setInterval(checkVersion, 60 * 1000);
+document.addEventListener('visibilitychange', () => { if(!document.hidden) checkVersion(); });
+function showAviso(pl){
+  if(!pl || !pl.text) return;
+  const from = pl.from ? prof(pl.from).display_name : 'Telão';
+  updateBar(`📢 ${from}: ${pl.text}`, !!pl.reload);
+  App.sfx('ring');
+  if(pl.from !== S.me?.id) notify('📢 Aviso do Telão', pl.text, null);
+}
+App.sendAviso = (text, reload) => S.avisoCh && S.avisoCh.send({ type:'broadcast', event:'aviso', payload:{ text, reload, from: S.me.id } });
+
 function trackOnline(){ if(S.onlineCh) S.onlineCh.track({ status: S.myStatus, at: Date.now() }).catch(()=>{}); }
 const isDnd = () => S.myStatus === 'dnd';
 
@@ -442,7 +513,7 @@ async function go(route, first){
       route.cid = (list.find(c => c.id === last) || list.find(c => c.kind === 'text') || list[0] || {}).id || null;
     }
     if(route.cid){ S.lastChannel[route.sid] = route.cid; ls.set('telao-last', S.lastChannel); }
-    if(!S.members.has(route.sid)) loadMembers(route.sid).then(renderMembers);
+    if(!S.members.has(route.sid)) loadMembers(route.sid).then(() => { renderMembers(); renderSidebar(); });
   }
   const cid = route.kind === 'server' ? route.cid : route.dm;
   if(cid && S.unread.delete(cid)) saveUnread();
@@ -458,6 +529,7 @@ function renderAll(){ renderRail(); renderSidebar(); renderUserPanel(); renderVo
 function renderLight(){ renderRail(); renderSidebar(); renderUserPanel(); renderMembers(); refreshFriends(); }
 function refreshFriends(){ if(S.route.kind==='home' && !S.route.dm && S.friendTab !== 'add') renderMain(); }
 
+const LOGO = `<svg viewBox="0 0 32 32" width="26" height="26"><defs><linearGradient id="lg1" x1="0" y1="0" x2="1" y2="1"><stop offset="0" stop-color="#ff8a4c"/><stop offset="1" stop-color="#ff3d7f"/></linearGradient></defs><rect x="2" y="5" width="28" height="19" rx="6" fill="url(#lg1)"/><path d="M13 10.5v8l7-4z" fill="#fff"/><rect x="10" y="26" width="12" height="2.6" rx="1.3" fill="url(#lg1)"/></svg>`;
 /* ---------------- barra de servidores ---------------- */
 function serverIcon(s, size){
   return s.icon_url ? `<img src="${esc(s.icon_url)}" alt="" loading="lazy" decoding="async">` : esc(serverInitials(s.name));
@@ -466,7 +538,7 @@ function renderRail(){
   const pend = S.friends.filter(f => f.status === 'pending' && f.incoming).length;
   const dmUnread = S.dms.filter(d => S.unread.has(d.id)).length;
   const homeBadge = pend + dmUnread;
-  let h = `<button class="ricon home ${S.route.kind==='home'?'on':''}" id="rHome" data-tip="Mensagens diretas" data-tipside="r">${ic('chat',24)}
+  let h = `<button class="ricon home ${S.route.kind==='home'?'on':''}" id="rHome" data-tip="Início · amigos e conversas" data-tipside="r">${ic('chat',22)}
       ${homeBadge ? `<span class="badge">${homeBadge > 99 ? '99+' : homeBadge}</span>` : ''}</button>`;
   // DMs com mensagem nova aparecem na barra, como no Discord
   S.dms.filter(d => S.unread.has(d.id)).slice(0, 4).forEach(d => {
@@ -505,8 +577,8 @@ function renderSidebar(){
   if(!S.me) return;
   const head = $('#sbHead'), body = $('#sbBody');
   if(S.route.kind === 'home'){
-    head.className = 'sbhead search';
-    head.innerHTML = `<button class="findbtn" id="sbFind">Encontrar ou começar uma conversa <kbd>Ctrl K</kbd></button>`; head.onclick = null;
+    head.className = 'sbhead home'; head.style.removeProperty('--sc');
+    head.innerHTML = `<div class="brandrow"><span class="logo">${LOGO}</span><b>telão</b></div><button class="findbtn" id="sbFind">${ic('search',15)}<span>Buscar ou ir para…</span><kbd>Ctrl K</kbd></button>`; head.onclick = null;
     $('#sbFind').onclick = quickSwitcher;
     const pend = S.friends.filter(f => f.status === 'pending' && f.incoming).length;
     const dms = [...S.dms].sort((a,b) => (S.dmActivity[b.id] || b.created_at).localeCompare(S.dmActivity[a.id] || a.created_at));
@@ -528,8 +600,11 @@ function renderSidebar(){
   }
   const s = curServer(); if(!s){ go({kind:'home', dm:null}); return; }
   const canCh = App.hasPerm(s.id, 1);
-  head.className = 'sbhead';
-  head.innerHTML = `<span class="nm">${esc(s.name)}</span>${ic('chevDown',18)}`;
+  head.className = 'sbhead hero';
+  head.style.setProperty('--sc', s.icon_color);
+  const memList = S.members.get(s.id) || [];
+  const onl = memList.filter(m => S.online.has(m.user_id) || m.user_id === S.me.id).length;
+  head.innerHTML = `<div class="hero-in"><span class="hero-ic">${serverIcon(s)}</span><div class="hero-t"><b>${esc(s.name)}</b><small>${memList.length ? `<i class="odot"></i>${onl} online · ${memList.length} membro${memList.length>1?'s':''}` : '&nbsp;'}</small></div><span class="hero-ch">${ic('chevDown',18)}</span></div>`;
   head.onclick = e => serverMenu(s, e);
   const list = (S.channels.get(s.id) || []).slice().sort((a,b) => a.position - b.position);
   // agrupa por categoria (ou Texto/Voz)
@@ -566,8 +641,9 @@ function renderSidebar(){
   });
   body.querySelectorAll('[data-new]').forEach(b => b.onclick = () => createChannelModal(s, b.dataset.new, b.dataset.newcat));
   body.querySelectorAll('[data-edch]').forEach(b => b.onclick = e => { e.stopPropagation(); editChannelModal(list.find(c => c.id === b.dataset.edch)); });
+  body.querySelectorAll('[data-watch]').forEach(b => b.onclick = e => { e.stopPropagation(); watchLive(b.dataset.watch, b.dataset.wsess); });
   body.querySelectorAll('[data-vuser]').forEach(el => {
-    el.onclick = e => userMenu(el.dataset.vuser, e.clientX, e.clientY);
+    el.onclick = e => { if(e.target.closest('[data-watch]')) return; userMenu(el.dataset.vuser, e.clientX, e.clientY); };
     el.oncontextmenu = e => { e.preventDefault(); userMenu(el.dataset.vuser, e.clientX, e.clientY); };
   });
   onSpeaking();
@@ -575,7 +651,7 @@ function renderSidebar(){
 function vuRow(u){
   const p = prof(u.user_id);
   return `<div class="vu" data-vuser="${u.user_id}">${avatar(p,'sm').replace('class="av ', `data-sess="${u.session}" class="av `)}<span class="nm" style="${App.roleColorOf(u.user_id) ? 'color:' + App.roleColorOf(u.user_id) : ''}">${esc(p.display_name)}</span>
-    <span class="icons">${u.camera ? `<span class="vi">${ic('video',14)}</span>` : ''}${u.sharing ? '<span class="live">AO VIVO</span>' : ''}${u.deafened ? `<span class="vi off">${ic('headphonesOff',14)}</span>` : u.muted ? `<span class="vi off">${ic('micOff',14)}</span>` : ''}</span></div>`;
+    <span class="icons">${u.camera ? `<span class="vi">${ic('video',14)}</span>` : ''}${u.sharing ? `<button class="live" data-watch="${u.voice}" data-wsess="${u.session}" data-tip="Clique para assistir">AO VIVO</button>` : ''}${u.deafened ? `<span class="vi off">${ic('headphonesOff',14)}</span>` : u.muted ? `<span class="vi off">${ic('micOff',14)}</span>` : ''}</span></div>`;
 }
 
 /* ---------------- painel do usuário e de voz ---------------- */
@@ -632,7 +708,7 @@ function renderVoicePanel(){
   const where = c.kind === 'dm' ? 'Chamada com ' + esc(prof(dmOther(c)).display_name) : esc(c.name) + ' / ' + esc((S.servers.find(s => s.id === c.server_id) || {}).name || '');
   const ping = Voice.quality || 'good';
   el.classList.remove('hidden');
-  el.innerHTML = `<div class="vst"><div class="vwhere" id="vpGo"><b class="q-${ping}">${ic('signal',16)} Voz conectada</b><small>${where}</small></div>
+  el.innerHTML = `<div class="vst"><div class="vwhere" id="vpGo"><b class="q-${ping}">${ic('signal',16)} Voz conectada <span class="ctimer" id="cTimer"></span></b><small>${where}</small></div>
       <button class="ibtn hang" id="vpLeave" data-tip="Desconectar">${ic('phoneOff',20)}</button></div>
     <div class="vbtns">
       <button class="vb ${Voice.camStream?'on':''}" id="vpCam" data-tip="${Voice.camStream?'Desligar câmera':'Ligar câmera'}">${ic(Voice.camStream?'video':'videoOff',18)}</button>
@@ -641,8 +717,11 @@ function renderVoicePanel(){
       <button class="vb" id="vpQual" data-tip="Qualidade e áudio">${ic('sliders',18)}</button>
     </div>`;
   $('#vpGo').onclick = () => openChannel(c);
+  clearInterval(S.callTimer);
+  const tick = () => { const t = $('#cTimer'); if(!t || !Voice.channel){ clearInterval(S.callTimer); return; } const sec = (Date.now() - (Voice.joinedAt || Date.now())) / 1000; t.textContent = (sec >= 3600 ? Math.floor(sec/3600) + ':' : '') + String(Math.floor(sec/60) % 60).padStart(sec >= 3600 ? 2 : 1, '0') + ':' + String(Math.floor(sec % 60)).padStart(2,'0'); };
+  tick(); S.callTimer = setInterval(tick, 1000);
   $('#vpLeave').onclick = leaveVoice;
-  $('#vpCam').onclick = () => Voice.camStream ? Voice.stopCamera() : Voice.startCamera();
+  $('#vpCam').onclick = () => Voice.camStream ? Voice.stopCamera() : cameraSetup();
   $('#vpScreen').onclick = () => Voice.screenStream ? Voice.stopScreen() : Voice.startScreen();
   $('#vpAct').onclick = e => activitiesMenu(e.currentTarget);
   $('#vpQual').onclick = () => openSettings('user','voice');
@@ -666,7 +745,7 @@ function renderMain(keepMessages){
       ${headBtns([['hPins','pin','Mensagens fixadas'],['hSearch','search','Buscar']])}`;
     $('#hProf').onclick = e => userMenu(p.id, e.clientX, e.clientY + 20);
     const callBtn = $('#dmCall'); if(callBtn) callBtn.onclick = () => joinVoice(d);
-    const vBtn = $('#dmVideo'); if(vBtn) vBtn.onclick = async () => { await joinVoice(d); Voice.startCamera(); };
+    const vBtn = $('#dmVideo'); if(vBtn) vBtn.onclick = async () => { await joinVoice(d); cameraSetup(); };
     $('#hPins').onclick = e => showPins(e.currentTarget); $('#hSearch').onclick = e => showSearch(e.currentTarget);
     bindBack();
     if(keepMessages && M.cid === d.id && body.querySelector('.msgs')){ renderStage(); return; }
@@ -775,7 +854,7 @@ function renderFriends(head, body, back){
   else { rows = pend; title = 'Pendentes — ' + rows.length; }
   rows.sort((a,b) => prof(a.uid).display_name.localeCompare(prof(b.uid).display_name));
   const activity = uid => {
-    for(const [topic, metas] of S.vp) { const m = metas.find(x => x.user_id === uid && x.voice); if(m){ const ch = findChannel(m.voice); if(ch) return m.sharing ? `${ic('screenUp',13)} Transmitindo em ${ch.kind==='dm'?'uma chamada':esc(ch.name)}` : `${ic('volume',13)} Em ${ch.kind==='dm'?'uma chamada':esc(ch.name)}`; } }
+    for(const [topic, metas] of S.vp) { const m = metas.find(x => x.user_id === uid && x.voice); if(m){ const ch = findChannel(m.voice); if(ch) return m.sharing ? `<span class="livetag" data-watch="${m.voice}" data-wsess="${m.session}">${ic('screenUp',13)} AO VIVO em ${ch.kind==='dm'?'uma chamada':esc(ch.name)} · Assistir</span>` : `${ic('volume',13)} Em ${ch.kind==='dm'?'uma chamada':esc(ch.name)}`; } }
     return '';
   };
   body.innerHTML = `<div class="flist"><div class="fsearch">${ic('search',16)}<input id="fQ" placeholder="Buscar" autocomplete="off"></div><h4>${title}</h4><div id="fRows">${rows.length ? rows.map(f => {
@@ -788,7 +867,8 @@ function renderFriends(head, body, back){
   }).join('') : `<div class="empty big">${ic(tab==='pending'?'inbox':'users',56)}<p>${tab==='online'?'Nenhum amigo online agora. Que tal chamar alguém?':tab==='pending'?'Nenhum pedido pendente.':'Você ainda não tem amigos aqui.'}</p><button class="btn" id="goAdd">Adicionar amigo</button></div>`}</div></div>`;
   const fq = $('#fQ'); if(fq) fq.oninput = () => { const v = fq.value.toLowerCase(); body.querySelectorAll('.frow').forEach(r => r.style.display = r.dataset.n.includes(v) ? '' : 'none'); };
   const ga = $('#goAdd'); if(ga) ga.onclick = () => { S.friendTab = 'add'; renderMain(); };
-  body.querySelectorAll('.frow').forEach(r => r.onclick = e => { if(e.target.closest('button')) return; const f = S.friends.find(x => x.uid === r.dataset.fu); if(f && f.status === 'accepted') openDM(f.uid); });
+  body.querySelectorAll('[data-watch]').forEach(b => b.onclick = e => { e.stopPropagation(); watchLive(b.dataset.watch, b.dataset.wsess); });
+  body.querySelectorAll('.frow').forEach(r => r.onclick = e => { if(e.target.closest('button,[data-watch]')) return; const f = S.friends.find(x => x.uid === r.dataset.fu); if(f && f.status === 'accepted') openDM(f.uid); });
   body.querySelectorAll('[data-acc]').forEach(b => b.onclick = async () => {
     const { error } = await App.sb.from('friendships').update({ status:'accepted' }).eq('requester', b.dataset.acc).eq('addressee', S.me.id);
     if(error) App.toast(error.message, true); else { await loadFriends(); renderLight(); renderMain(); App.sfx('join'); }
@@ -803,7 +883,7 @@ function renderFriends(head, body, back){
   body.querySelectorAll('[data-rm]').forEach(b => b.onclick = () => removeFriend(b.dataset.rm));
   body.querySelectorAll('[data-fmore]').forEach(b => b.onclick = e => { const r = b.getBoundingClientRect(); menu(r.left - 160, r.bottom + 4, [
     { label:'Ver perfil', icon: ic('user',18), onClick: () => userMenu(b.dataset.fmore, r.left - 200, r.bottom) },
-    { label:'Chamada de vídeo', icon: ic('video',18), onClick: async () => { const d = await openDM(b.dataset.fmore); if(d){ await joinVoice(d); Voice.startCamera(); } } },
+    { label:'Chamada de vídeo', icon: ic('video',18), onClick: async () => { const d = await openDM(b.dataset.fmore); if(d){ await joinVoice(d); cameraSetup(); } } },
     '-', { label:'Desfazer amizade', icon: ic('x',18), danger:true, onClick: () => removeFriend(b.dataset.fmore) } ]); });
   body.querySelectorAll('[data-dm]').forEach(b => b.onclick = () => openDM(b.dataset.dm));
   body.querySelectorAll('[data-call]').forEach(b => b.onclick = async () => { const d = await openDM(b.dataset.call); if(d) joinVoice(d); });

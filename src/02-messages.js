@@ -8,6 +8,90 @@ const isVid = a => /^video\//.test(a.type || '');
 const isAud = a => /^audio\//.test(a.type || '');
 const ytId = u => { const m = u.match(/(?:youtube\.com\/(?:watch\?v=|shorts\/|embed\/)|youtu\.be\/)([\w-]{11})/); return m ? m[1] : null; };
 
+/* ---------- comandos com / ---------- */
+const CMDS = [
+  ['dado', '[lados]', 'Rola um dado (padrão: 6 lados)', '🎲'],
+  ['moeda', '', 'Cara ou coroa', '🪙'],
+  ['sorteio', 'a, b, c', 'Sorteia uma das opções', '🎯'],
+  ['enquete', 'Pergunta | opção 1 | opção 2', 'Cria uma enquete com votação', '📊'],
+  ['confete', '[mensagem]', 'Solta confete na tela de todo mundo', '🎉'],
+  ['eu', 'ação', 'Fala na terceira pessoa', '💬'],
+  ['spoiler', 'texto', 'Esconde o texto até clicarem', '🙈'],
+  ['shrug', '[texto]', 'Adiciona ¯\\_(ツ)_/¯', '🤷'],
+  ['tableflip', '[texto]', 'Vira a mesa (╯°□°)╯︵ ┻━┻', '😤'],
+  ['unflip', '[texto]', 'Desvira a mesa ┬─┬ノ( º _ ºノ)', '😌'],
+  ['lenny', '[texto]', '( ͡° ͜ʖ ͡°)', '😏'],
+];
+function runCommand(text){
+  const m = text.match(/^\/(\w+)\s*([\s\S]*)$/); if(!m) return null;
+  const [, cmd, arg] = m, a = arg.trim(), me = S.me.display_name;
+  const rnd = n => Math.floor(Math.random() * n);
+  switch(cmd.toLowerCase()){
+    case 'dado': { const n = Math.max(2, Math.min(1000, parseInt(a) || 6)); return { content: `🎲 **${me}** rolou um d${n} e tirou **${1 + rnd(n)}**` }; }
+    case 'moeda': return { content: `🪙 **${me}** jogou a moeda: deu **${rnd(2) ? 'Cara' : 'Coroa'}**!` };
+    case 'sorteio': { const ops = a.split(/[,;|]/).map(x => x.trim()).filter(Boolean); if(ops.length < 2) return { error: 'Use: /sorteio opção 1, opção 2, opção 3' }; return { content: `🎯 Sorteio entre ${ops.map(x => '`' + x + '`').join(', ')}…\nO escolhido foi: **${ops[rnd(ops.length)]}**! 🎉` }; }
+    case 'enquete': { const parts = a.split('|').map(x => x.trim()).filter(Boolean); if(parts.length < 3) return { error: 'Use: /enquete Pergunta | opção 1 | opção 2' }; return { content: '', attachments: [{ type:'poll', q: parts[0].slice(0, 200), opts: parts.slice(1, 11).map(x => x.slice(0, 80)) }] }; }
+    case 'confete': return { content: (a || '🎉🎉🎉') + ' ', fx: 'confete' };
+    case 'eu': return a ? { content: `*${me} ${a}*` } : { error: 'Use: /eu está jogando' };
+    case 'spoiler': return a ? { content: `||${a}||` } : { error: 'Use: /spoiler texto' };
+    case 'shrug': return { content: (a ? a + ' ' : '') + '¯\\_(ツ)_/¯' };
+    case 'tableflip': return { content: (a ? a + ' ' : '') + '(╯°□°)╯︵ ┻━┻' };
+    case 'unflip': return { content: (a ? a + ' ' : '') + '┬─┬ノ( º _ ºノ)' };
+    case 'lenny': return { content: (a ? a + ' ' : '') + '( ͡° ͜ʖ ͡°)' };
+  }
+  return null;
+}
+
+/* ---------- efeitos de mensagem (confete, corações) ---------- */
+function msgEffectFor(text){
+  if(!text) return null;
+  if(/parab[eé]ns|feliz anivers[aá]rio|🎉{2,}|^🎉\s*$/i.test(text)) return 'confete';
+  if(/\bte amo\b|❤️{2,}|^❤️\s*$|💖|😍{2,}/i.test(text)) return 'coracoes';
+  if(/\bgg\b|ganhamos|vit[oó]ria|🏆/i.test(text)) return 'trofeu';
+  return null;
+}
+function burst(kind){
+  const host = $('#msgWrapIn') || $('#mainBody'); if(!host) return;
+  const cv = document.createElement('canvas'); cv.className = 'burst'; host.appendChild(cv);
+  const r = host.getBoundingClientRect(); cv.width = r.width; cv.height = r.height;
+  const ctx = cv.getContext('2d'), N = kind === 'confete' ? 140 : 40;
+  const colors = ['#ff6b4a','#ffd166','#06d6a0','#4cc9f0','#b388ff','#ff4d8d'];
+  const glyph = kind === 'coracoes' ? ['❤️','💖','💗','💕'] : kind === 'trofeu' ? ['🏆','⭐','✨','🥇'] : null;
+  const ps = Array.from({ length: N }, () => ({ x: r.width * (0.2 + Math.random() * 0.6), y: glyph ? r.height + 20 : r.height * 0.3, vx: (Math.random() - .5) * (glyph ? 2 : 11), vy: glyph ? -(3 + Math.random() * 4) : -(4 + Math.random() * 9),
+    rot: Math.random() * 6, vr: (Math.random() - .5) * .3, c: colors[Math.floor(Math.random() * colors.length)], s: 6 + Math.random() * 7, g: glyph ? glyph[Math.floor(Math.random() * glyph.length)] : null }));
+  const t0 = performance.now();
+  const loop = now => {
+    const t = now - t0; ctx.clearRect(0, 0, cv.width, cv.height);
+    ps.forEach(p => {
+      p.x += p.vx; p.y += p.vy; p.vy += glyph ? -0.02 : 0.25; p.vx *= .99; p.rot += p.vr;
+      ctx.save(); ctx.globalAlpha = Math.max(0, 1 - t / 2800); ctx.translate(p.x, p.y); ctx.rotate(p.rot);
+      if(p.g){ ctx.font = (p.s * 3) + 'px serif'; ctx.fillText(p.g, 0, 0); } else { ctx.fillStyle = p.c; ctx.fillRect(-p.s/2, -p.s/4, p.s, p.s/2); }
+      ctx.restore();
+    });
+    if(t < 2800) requestAnimationFrame(loop); else cv.remove();
+  };
+  requestAnimationFrame(loop);
+}
+
+/* ---------- enquetes (votos usam as reações "opt:N") ---------- */
+function pollHtml(m, a){
+  const mm = M.reacts.get(m.id) || new Map();
+  const counts = a.opts.map((_, i) => (mm.get('opt:' + i) || new Set()).size);
+  const total = counts.reduce((x, y) => x + y, 0);
+  const mine = a.opts.findIndex((_, i) => (mm.get('opt:' + i) || new Set()).has(S.me.id));
+  return `<div class="poll" data-poll="${m.id}"><div class="pq">${ic('poll',18)} ${esc(a.q)}</div>
+    ${a.opts.map((o, i) => { const pct = total ? Math.round(counts[i] / total * 100) : 0;
+      return `<button class="popt ${mine===i?'mine':''}" data-vote="${i}" data-mid="${m.id}"><span class="pbar" style="width:${pct}%"></span><span class="ptx">${mine===i?ic('check',15):''}${esc(o)}</span><b>${counts[i] ? pct + '%' : ''}</b></button>`; }).join('')}
+    <div class="pfoot">${total} voto${total===1?'':'s'}${mine >= 0 ? ' · clique de novo para tirar seu voto' : ' · clique para votar'}</div></div>`;
+}
+async function vote(mid, i){
+  const mm = M.reacts.get(mid) || new Map();
+  const cur = [...mm.keys()].filter(k => k.startsWith('opt:') && mm.get(k).has(S.me.id));
+  for(const k of cur){ delReact(mid, k, S.me.id); await App.sb.from('message_reactions').delete().eq('message_id', mid).eq('user_id', S.me.id).eq('emoji', k); }
+  if(!cur.includes('opt:' + i)){ addReact(mid, 'opt:' + i, S.me.id); await App.sb.from('message_reactions').insert({ message_id: mid, emoji: 'opt:' + i }); }
+  patchReacts(mid);
+}
+
 /* ---------- markdown ---------- */
 function richText(t){
   if(!t) return '';
@@ -66,7 +150,7 @@ async function mountMessages(ch, container, welcome){
         <div class="recbar hidden" id="recBar"></div>
         <form id="cmpF" class="crow">
           <button type="button" class="cbtn2" id="cAttach" title="Anexar arquivos">${ic('plusCircle',22)}</button>
-          <textarea id="cmp" rows="1" maxlength="4000" placeholder="Conversar em ${esc(ph)}"></textarea>
+          <textarea id="cmp" rows="1" maxlength="4000" placeholder="Mensagem para ${esc(ph)} — digite / para comandos"></textarea>
           <button type="button" class="cbtn2" id="cEmoji" title="Emoji">${ic('smile',22)}</button>
           <button type="button" class="cbtn2" id="cVoice" title="Mensagem de voz">${ic('mic',22)}</button>
           <button class="cbtn2 send" id="cSend" title="Enviar">${ic('send',20)}</button>
@@ -157,8 +241,8 @@ function delReact(mid, emoji, uid){
   mm.get(emoji).delete(uid); if(!mm.get(emoji).size) mm.delete(emoji);
 }
 function reactsHtml(mid){
-  const mm = M.reacts.get(mid); if(!mm || !mm.size) return '';
-  return `<div class="reacts">${[...mm].map(([e, set]) => {
+  const mm = M.reacts.get(mid); if(!mm || ![...mm.keys()].some(k => !k.startsWith('opt:'))) return '';
+  return `<div class="reacts">${[...mm].filter(([e]) => !e.startsWith('opt:')).map(([e, set]) => {
     const names = [...set].slice(0, 6).map(u => prof(u).display_name).join(', ') + (set.size > 6 ? ` e mais ${set.size-6}` : '');
     return `<button class="rx ${set.has(S.me.id)?'mine':''}" data-rx="${esc(e)}" data-mid="${mid}" data-tip="${esc(names)}" data-tipsub="reagiu com ${esc(e)}"><span>${esc(e)}</span><b>${set.size}</b></button>`;
   }).join('')}<button class="rx add" data-addrx="${mid}" title="Adicionar reação">${ic('smilePlus',16)}</button></div>`;
@@ -176,9 +260,11 @@ async function toggleReact(mid, emoji){
   }
 }
 function patchReacts(mid){
+  const pl = M.el && M.el.querySelector(`[data-poll="${mid}"]`);
+  if(pl){ const m = M.list.find(x => x.id === mid), a = m && (m.attachments || []).find(x => x.type === 'poll'); if(a) pl.outerHTML = pollHtml(m, a); }
   const node = M.el && M.el.querySelector(`[data-m="${mid}"] .bd`); if(!node) return;
   const old = node.querySelector(':scope > .reacts'); const html = reactsHtml(mid);
-  if(old) old.outerHTML = html || ''; else if(html) node.insertAdjacentHTML('beforeend', html);
+  if(old){ if(html) old.outerHTML = html; else old.remove(); } else if(html) node.insertAdjacentHTML('beforeend', html);
 }
 App.onReaction = p => {
   const r = p.eventType === 'DELETE' ? p.old : p.new;
@@ -190,8 +276,8 @@ App.onReaction = p => {
 /* ---------- renderização ---------- */
 function attHtml(m){
   const at = m.attachments || []; if(!at.length) return '';
-  const imgs = at.filter(a => isImg(a) || isVid(a)), others = at.filter(a => !isImg(a) && !isVid(a));
-  let h = '';
+  const imgs = at.filter(a => isImg(a) || isVid(a)), others = at.filter(a => !isImg(a) && !isVid(a) && a.type !== 'poll');
+  let h = at.filter(a => a.type === 'poll').map(a => pollHtml(m, a)).join('');
   if(imgs.length){
     const n = Math.min(imgs.length, 4);
     h += `<div class="mgrid g${n}">` + imgs.map((a, i) => {
@@ -229,31 +315,34 @@ function replyHtml(m){
   return `<div class="rquote" data-jump="${r.id}"><span class="rline"></span>${avatar(p,'xs')}<b style="color:${roleColor(p.id) || 'var(--txt)'}">${esc(p.display_name)}</b><span class="rsnip">${snip}</span></div>`;
 }
 function roleColor(uid){ return App.roleColorOf ? App.roleColorOf(uid) : null; }
-function msgHtml(m, prev, canMod){
+function msgHtml(m, prev){
   const day = new Date(m.created_at).toDateString();
   let pre = '';
   if(!prev || new Date(prev.created_at).toDateString() !== day) pre += `<div class="daysep"><span>${fmtDay(m.created_at)}</span></div>`;
-  if(M.readAt && m.created_at > M.readAt && (!prev || prev.created_at <= M.readAt) && m.author_id !== S.me.id) pre += `<div class="newsep"><span>NOVAS</span></div>`;
+  if(M.readAt && m.created_at > M.readAt && (!prev || prev.created_at <= M.readAt) && m.author_id !== S.me.id) pre += `<div class="newsep"><span>novas mensagens</span></div>`;
   const grouped = !pre && prev && !m.reply_to && prev.author_id === m.author_id && (new Date(m.created_at) - new Date(prev.created_at)) < 7*60*1000;
   const p = prof(m.author_id), mine = m.author_id === S.me.id;
   const time = new Date(m.created_at).toLocaleTimeString('pt-BR',{hour:'2-digit',minute:'2-digit'});
-  const mentioned = S.me && m.content && (m.content.includes('@' + S.me.username) || /@(todos|everyone)\b/.test(m.content));
+  const mentioned = !mine && S.me && m.content && (m.content.includes('@' + S.me.username) || /@(todos|everyone)\b/.test(m.content));
+  const emo = onlyEmoji(m.content) && !(m.attachments || []).length;
+  const atts = attHtml(m), emb = embedsHtml(m);
+  const onlyMedia = !m.content && (m.attachments || []).some(a => isImg(a) || isVid(a)) && !(m.attachments || []).some(a => a.type === 'poll');
+  const meta = `<span class="mtime" title="${new Date(m.created_at).toLocaleString('pt-BR')}">${m.edited_at ? '<span class="edited">editado</span> · ' : ''}${m._sending ? ic('clock',11) : time}${m.pinned ? ' ' + ic('pin',11) : ''}</span>`;
   const content = M.editing === m.id
     ? `<textarea class="editbox" id="edBox" rows="2" maxlength="4000">${esc(m.content)}</textarea><div class="edithint">Esc para <a data-edcancel>cancelar</a> · Enter para <a data-edsave>salvar</a></div>`
-    : (m.content ? `<div class="ct ${onlyEmoji(m.content)?'jumbo':''}">${richText(m.content)}${m.edited_at?' <span class="edited">(editado)</span>':''}</div>` : '');
+    : (m.content ? `<div class="ct ${emo?'jumbo':''}">${richText(m.content)}</div>` : '');
+  const bub = `<div class="bub ${emo?'emo':''} ${onlyMedia?'media':''}">${content}${atts}${emb}${meta}</div>`;
   const tools = m._sending ? '' : `<div class="acts">
       ${EMOJI.QUICK.slice(0,3).map(e => `<button data-quick="${e}" data-mid="${m.id}" title="Reagir">${e}</button>`).join('')}
-      <button data-addrx="${m.id}" title="Adicionar reação">${ic('smilePlus',18)}</button>
-      <button data-reply="${m.id}" title="Responder">${ic('reply',18)}</button>
-      ${mine ? `<button data-edit="${m.id}" title="Editar">${ic('edit',18)}</button>` : ''}
-      <button data-more="${m.id}" title="Mais">${ic('dots',18)}</button></div>`;
-  const body = `${content}${attHtml(m)}${embedsHtml(m)}${reactsHtml(m.id)}`;
-  const cls = `msg ${grouped?'':'first'} ${mentioned?'mentioned':''} ${m.pinned?'pinned':''} ${m._sending?'sendingmsg':''}`;
-  const color = roleColor(m.author_id) || 'var(--txt)';
-  if(grouped) return `<div class="${cls}" data-m="${m.id}"><div class="gap">${time}</div><div class="bd">${body}</div>${tools}</div>`;
-  return `${pre}<div class="${cls}" data-m="${m.id}">${replyHtml(m)}<div class="mline">${avatar(p,'lg').replace('class="av lg"', `class="av lg" data-uprof="${p.id}"`)}<div class="bd">
-    <div class="hd"><b style="color:${color}" data-uprof="${p.id}">${esc(p.display_name)}</b>${hasPlus(p) ? badgeHtml(BADGES[2], p, 'sm') : ''}${m.pinned?`<span class="pinmark" title="Fixada">${ic('pin',13)}</span>`:''}<time title="${new Date(m.created_at).toLocaleString('pt-BR')}">${fmtTime(m.created_at)}</time></div>
-    ${body}</div></div>${tools}</div>`;
+      <button data-addrx="${m.id}" title="Adicionar reação">${ic('smilePlus',17)}</button>
+      <button data-reply="${m.id}" title="Responder">${ic('reply',17)}</button>
+      ${mine ? `<button data-edit="${m.id}" title="Editar">${ic('edit',17)}</button>` : ''}
+      <button data-more="${m.id}" title="Mais">${ic('dots',17)}</button></div>`;
+  const cls = `msg ${grouped?'':'first'} ${mine?'mine':''} ${mentioned?'mentioned':''} ${m.pinned?'pinned':''} ${m._sending?'sendingmsg':''}`;
+  const color = roleColor(m.author_id);
+  const head = mine ? '' : `<div class="hd"><b data-uprof="${p.id}" ${color ? `style="color:${color}"` : ''}>${nameHtml(p)}</b>${hasPlus(p) ? badgeHtml(BADGES[2], p, 'sm') : ''}</div>`;
+  const av = mine ? '' : grouped ? '<div class="avsp"></div>' : avatar(p,'lg').replace('class="av lg', `data-uprof="${p.id}" class="av lg`);
+  return `${pre}<div class="${cls}" data-m="${m.id}">${grouped ? '' : replyHtml(m)}<div class="mline">${av}<div class="bd">${grouped ? '' : head}${bub}${reactsHtml(m.id)}</div></div>${tools}</div>`;
 }
 function renderMsgList(stick){
   if(!M.el) return;
@@ -291,13 +380,14 @@ function addMessage(m){
     (old.attachments || []).forEach(a => a._local && URL.revokeObjectURL(a.url));
     M.list[pend] = m;
     const node = M.el.querySelector(`[data-m="${old.id}"]`);
-    if(node){ node.outerHTML = msgHtml(m, M.list[pend - 1]).replace(/^(<div class="(daysep|newsep)">.*?<\/div>)+/s, ''); }
+    if(node){ const tmp = document.createElement('div'); tmp.innerHTML = msgHtml(m, M.list[pend - 1]); const nn = tmp.querySelector(`[data-m="${m.id}"]`); if(nn) node.replaceWith(nn); }
     else renderMsgList(null);
   } else {
     M.list.push(m); M.list.sort((a,b) => a.created_at.localeCompare(b.created_at));
     if(M.list[M.list.length - 1] === m) appendMessage(m); else renderMsgList(null);
   }
   M.typing.has(m.author_id) && (clearTimeout(M.typing.get(m.author_id)), M.typing.delete(m.author_id), renderTyping());
+  const fx = msgEffectFor(m.content); if(fx && !M._fxDone?.has(m.id)){ (M._fxDone = M._fxDone || new Set()).add(m.id); burst(fx); }
   if(!document.hidden) markRead();
 }
 const sigOf = m => m.author_id + '|' + (m.content || '') + '|' + (m.attachments || []).length;
@@ -331,6 +421,7 @@ function onMsgClick(e){
   const cc = t.closest('[data-copycode]'); if(cc){ copy(cc.closest('pre').querySelector('code').textContent); return; }
   const up = t.closest('[data-uprof]'); if(up){ userMenu(up.dataset.uprof, e.clientX, e.clientY); return; }
   const q = t.closest('[data-quick]'); if(q){ toggleReact(q.dataset.mid, q.dataset.quick); return; }
+  const vt = t.closest('[data-vote]'); if(vt){ vote(vt.dataset.mid, +vt.dataset.vote); return; }
   const rx = t.closest('[data-rx]'); if(rx){ toggleReact(rx.dataset.mid, rx.dataset.rx); return; }
   const ar = t.closest('[data-addrx]'); if(ar){ const r = ar.getBoundingClientRect(); emojiPicker(r.left, r.top, em => toggleReact(ar.dataset.addrx, em)); return; }
   const rp = t.closest('[data-reply]'); if(rp){ startReply(rp.dataset.reply); return; }
@@ -588,17 +679,23 @@ async function uploadOne(f){
 async function sendMessage(extraFiles){
   const ta = $('#cmp'); if(!ta) return;
   let content = ta.value.trim().replace(/:([a-z0-9_]{2,30}):/g, (m, k) => EMOJI.BY[k] || m);
-  const files = extraFiles || M.files.splice(0);
-  if(!content && !files.length) return;
+  let cmdAtt = null;
+  if(!extraFiles && content.startsWith('/')){
+    const r = runCommand(content);
+    if(r && r.error){ App.toast(r.error, true); return; }
+    if(r){ content = r.content; cmdAtt = r.attachments || null; if(r.fx){ (M._fxDone = M._fxDone || new Set()); } }
+  }
+  const files = extraFiles || (cmdAtt ? [] : M.files.splice(0));
+  if(!content && !files.length && !cmdAtt) return;
   const reply_to = M.replyTo, ch = M.ch;
   if(!extraFiles){ ta.value = ''; ta.style.height = 'auto'; cancelReply(); drawFiles(); }
   // mensagem otimista: aparece na hora, com as imagens locais
   const tmpId = 'tmp-' + Math.random().toString(36).slice(2);
   const temp = { id: tmpId, _sending: true, channel_id: ch.id, author_id: S.me.id, content, reply_to, created_at: new Date().toISOString(), pinned: false,
-                 attachments: files.map(f => ({ url: f.preview || '', name: f.file.name, type: f.file.type, size: f.file.size, _local: !!f.preview, voice: f.voice, dur: f.dur, wave: f.wave })) };
+                 attachments: cmdAtt ? cmdAtt : files.map(f => ({ url: f.preview || '', name: f.file.name, type: f.file.type, size: f.file.size, _local: !!f.preview, voice: f.voice, dur: f.dur, wave: f.wave })) };
   M.list.push(temp); appendMessage(temp);
   try{
-    const attachments = await Promise.all(files.map(uploadOne));
+    const attachments = cmdAtt || await Promise.all(files.map(uploadOne));
     const { data, error } = await App.sb.from('messages').insert({ channel_id: ch.id, content, attachments, reply_to }).select().single();
     if(error) throw error;
     data._tmpOf = tmpId; addMessage(data);
@@ -664,7 +761,10 @@ function autocomplete(){
   const ta = $('#cmp'), pop = $('#acPop'); if(!ta || !pop) return;
   const before = ta.value.slice(0, ta.selectionStart);
   let m, items = [];
-  if((m = before.match(/(?:^|\s)@([a-z0-9_]{0,24})$/i))){
+  if((m = before.match(/^\/(\w*)$/))){
+    const q = m[1].toLowerCase();
+    items = CMDS.filter(c => c[0].startsWith(q)).map(c => ({ html: `<span class="acem">${c[3]}</span><b>/${c[0]}</b> <small>${esc(c[1])}</small><small class="acd">${esc(c[2])}</small>`, ins: '/' + c[0] + ' ', len: m[1].length + 1, cmd: true }));
+  } else if((m = before.match(/(?:^|\s)@([a-z0-9_]{0,24})$/i))){
     const q = m[1].toLowerCase();
     const pool = M.ch.kind === 'dm' ? [S.me.id, dmOther(M.ch)] : (S.members.get(M.ch.server_id) || []).map(x => x.user_id);
     items = pool.map(prof).filter(p => p.username.includes(q) || p.display_name.toLowerCase().includes(q)).slice(0, 8)
@@ -681,7 +781,7 @@ function autocomplete(){
 }
 function drawAC(){
   const pop = $('#acPop');
-  pop.innerHTML = `<div class="achead">${AC.items[0].ins.startsWith('@') ? 'Membros' : 'Emojis'}</div>` + AC.items.map((it, k) => `<div class="acit ${k===AC.i?'on':''}" data-k="${k}">${it.html}</div>`).join('');
+  pop.innerHTML = `<div class="achead">${AC.items[0].cmd ? 'Comandos' : AC.items[0].ins.startsWith('@') ? 'Membros' : 'Emojis'}</div>` + AC.items.map((it, k) => `<div class="acit ${k===AC.i?'on':''}" data-k="${k}">${it.html}</div>`).join('');
   pop.classList.remove('hidden');
   pop.querySelectorAll('[data-k]').forEach(el => el.onmousedown = e => { e.preventDefault(); AC.i = +el.dataset.k; pickAC(); });
 }

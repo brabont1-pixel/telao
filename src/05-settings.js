@@ -2,7 +2,7 @@
    PREFERÊNCIAS, INSÍGNIAS, PERFIL, TELÃO+ E PAINÉIS DE CONFIGURAÇÕES
    ===================================================================== */
 const PRICE_TXT = 'R$ 9,90';
-const PDEF = { accent:'#7c5cff', theme:'dark', fontSize:15, compact:false, inputId:'', outputId:'', echo:true, noise:true, agc:true,
+const PDEF = { accent:'#ff6b4a', theme:'dark', fontSize:15, compact:false, inputId:'', outputId:'', echo:true, noise:true, agc:true,
   mode:'vad', sensitivity:4, pttKey:'Backquote', muteKey:'ctrl+shift+KeyM', deafKey:'ctrl+shift+KeyD', screenKey:'',
   notifDM:true, notifMention:true, notifCall:true, soundMsg:true, soundVoice:true, soundPtt:true };
 const P = App.prefs = Object.assign({}, PDEF, ls.get('telao-prefs', {}));
@@ -12,7 +12,7 @@ function applyPrefs(){
   document.body.classList.add('theme-' + P.theme);
   document.body.classList.toggle('compact', !!P.compact);
   document.documentElement.style.setProperty('--fs', P.fontSize + 'px');
-  const a = P.accent || '#7c5cff', rs = document.documentElement.style;
+  const a = P.accent || '#ff6b4a', rs = document.documentElement.style;
   const [r,g,b] = [1,3,5].map(i => parseInt(a.slice(i, i+2), 16));
   const lum = (0.299*r + 0.587*g + 0.114*b) / 255;
   rs.setProperty('--acc', a);
@@ -77,13 +77,19 @@ function badgeSvg(id, tier){
   }
   return '';
 }
-function badgesOf(p){
+function earnedBadges(p){
   if(!p) return [];
   const has = new Set(p.is_admin ? BADGES.map(b => b.id) : (p.badges || []));
   if(hasPlus(p)) has.add('plus');
   if(p.created_at && new Date(p.created_at) < new Date('2027-01-01')) has.add('pioneiro');
   if(p.house) has.add(p.house);
   return BADGES.filter(b => has.has(b.id));
+}
+/* insígnias que a pessoa escolheu mostrar (padrão: todas as conquistadas) */
+function badgesOf(p){
+  const all = earnedBadges(p);
+  if(!p || !Array.isArray(p.shown_badges)) return all;
+  return p.shown_badges.map(id => all.find(b => b.id === id)).filter(Boolean);
 }
 function badgeHtml(b, p, cls=''){
   const tier = b.id === 'plus' ? plusTier(p) : null;
@@ -106,24 +112,56 @@ document.addEventListener('mouseover', e => {
 });
 
 /* ---------- cartão de perfil ---------- */
+const LINKS = {
+  instagram:['Instagram', u => 'https://instagram.com/' + u, '#e1306c'], tiktok:['TikTok', u => 'https://tiktok.com/@' + u, '#25f4ee'],
+  youtube:['YouTube', u => 'https://youtube.com/@' + u, '#ff0000'], twitch:['Twitch', u => 'https://twitch.tv/' + u, '#9146ff'],
+  x:['X', u => 'https://x.com/' + u, '#e7e9ea'], steam:['Steam', u => 'https://steamcommunity.com/id/' + u, '#66c0f4'],
+  spotify:['Spotify', u => /^https?:/.test(u) ? u : 'https://open.spotify.com/user/' + u, '#1db954'], site:['Site', u => /^https?:/.test(u) ? u : 'https://' + u, '#9aa0aa'],
+};
+const PROFILE_FX = [['', 'Nenhum'], ['estrelas','✨ Estrelas'], ['coracoes','💗 Corações'], ['neve','❄️ Neve'], ['fogo','🔥 Brasas'], ['confete','🎉 Confete'], ['aurora','🌌 Aurora']];
+const RINGS = [['', 'Nenhum'], ['arco','🌈 Arco-íris'], ['ouro','🥇 Ouro'], ['neon','💜 Neon'], ['fogo','🔥 Fogo'], ['gelo','🧊 Gelo']];
+const NAME_STYLES = [['', 'Normal'], ['fogo','Fogo'], ['oceano','Oceano'], ['neon','Neon'], ['ouro','Ouro'], ['arco','Arco-íris']];
+function nameHtml(p){
+  const st = hasPlus(p) && p.name_style ? ` class="nst nst-${esc(p.name_style)}"` : '';
+  return `<span${st}>${esc(p.display_name)}</span>`;
+}
+function fxLayerHtml(fx){
+  if(!fx) return '';
+  const glyph = { estrelas:'✦', coracoes:'♥', neve:'❄', fogo:'•', confete:'■' }[fx];
+  if(fx === 'aurora') return '<div class="pfx aurora"></div>';
+  return `<div class="pfx ${esc(fx)}">${Array.from({ length: 14 }, (_, i) => `<i style="--x:${(i * 37) % 100}%;--d:${(3 + (i % 5) * 0.7).toFixed(1)}s;--dl:-${(i * 0.53).toFixed(2)}s;--s:${0.7 + (i % 4) * 0.25}">${glyph}</i>`).join('')}</div>`;
+}
 function profileCard(p, extra=''){
   const plus = hasPlus(p);
   const themed = plus && p.theme_a;
-  const banner = plus && p.banner_url ? `background-image:url('${esc(p.banner_url)}')` : `background:${esc(p.banner_color || p.avatar_color || '#5865f2')}`;
+  const banner = plus && p.banner_url ? `background-image:url('${esc(p.banner_url)}')` : `background:${esc(p.banner_color || p.avatar_color || '#ff6b4a')}`;
   const style = themed ? `background:linear-gradient(180deg,${esc(p.theme_a)},${esc(p.theme_b || p.theme_a)});--pc-bg:${esc(p.theme_a)}` : '';
   const bs = badgesOf(p);
+  const links = (Array.isArray(p.links) ? p.links : []).filter(l => LINKS[l.t] && l.u);
   return `<div class="pcard2 ${themed?'themed':''}" style="${style}">
+    ${plus ? fxLayerHtml(p.profile_fx) : ''}
     <div class="bn" style="${banner}"></div>
     <div class="avwrap">${avatar(p,'',true)}</div>
     <div class="bdg">${bs.length ? `<div class="badges">${bs.map(b => badgeHtml(b, p)).join('')}</div>` : ''}</div>
     <div class="inner">
-      <b class="dn">${esc(p.display_name)}${plus ? '<span class="plustag">TELÃO+</span>' : ''}</b>
-      <div class="un">@${esc(p.username)}</div>
+      <b class="dn">${nameHtml(p)}${plus ? '<span class="plustag">TELÃO+</span>' : ''}</b>
+      <div class="un">@${esc(p.username)}${p.pronouns ? ` · ${esc(p.pronouns)}` : ''}</div>
       ${p.custom_status ? `<div class="cst">${p.custom_emoji ? esc(p.custom_emoji) + ' ' : ''}${esc(p.custom_status)}</div>` : ''}
       ${p.bio ? `<h6>Sobre mim</h6><p>${esc(p.bio)}</p>` : ''}
+      ${links.length ? `<div class="plinks">${links.map(l => `<a href="${esc(LINKS[l.t][1](l.u))}" target="_blank" rel="noopener" style="--lc:${LINKS[l.t][2]}"><i></i>${esc(LINKS[l.t][0])}</a>`).join('')}</div>` : ''}
       ${p.created_at ? `<h6>Membro desde</h6><p>${new Date(p.created_at).toLocaleDateString('pt-BR',{day:'numeric',month:'short',year:'numeric'})}</p>` : ''}
       ${extra}
     </div></div>`;
+}
+/* cor média de uma imagem (para o fundo do avatar combinar com a foto) */
+async function avgColor(file){
+  try{
+    const bmp = await createImageBitmap(file); const c = document.createElement('canvas'); c.width = c.height = 8;
+    const x = c.getContext('2d'); x.drawImage(bmp, 0, 0, 8, 8); const d = x.getImageData(0, 0, 8, 8).data;
+    let r = 0, g = 0, b = 0; for(let i = 0; i < d.length; i += 4){ r += d[i]; g += d[i+1]; b += d[i+2]; }
+    const n = d.length / 4, h = v => Math.round(v / n * 0.8).toString(16).padStart(2, '0');
+    return '#' + h(r) + h(g) + h(b);
+  }catch(e){ return null; }
 }
 
 /* ---------- atalhos de teclado ---------- */
@@ -205,7 +243,7 @@ function renderSettings(){
   SET.el.innerHTML = `<nav class="snav"><div class="in">${nav.map(n =>
       n[0] === 'h' ? `<h5>${n[1]}</h5>` : n[0] === 'hr' ? '<hr>' :
       `<button class="si ${SET.sec===n[0]?'on':''} ${n[2]||''}" data-sec="${n[0]}">${n[1]}</button>`).join('')}
-      ${SET.kind==='user' ? '<hr><div class="ver">Telão · versão 2.0</div>' : ''}</div></nav>
+      ${SET.kind==='user' ? '<hr><div class="ver">Telão · versão 4.1</div>' : ''}</div></nav>
     <div class="scontent"><div class="sclose"><button id="sClose" title="Fechar (Esc)">✕</button><span>ESC</span></div><div class="in" id="sIn"></div></div>`;
   SET.el.querySelector('#sClose').onclick = () => { if(isMobile() && SET.mobileOpen){ SET.mobileOpen = false; renderSettings(); } else closeSettings(); };
   SET.el.querySelectorAll('[data-sec]').forEach(b => b.onclick = () => {
@@ -304,59 +342,120 @@ function secAccount(box, back){
 /* ---------- Perfis ---------- */
 function secProfile(box, back){
   const me = S.me, plus = hasPlus(me);
+  const earned = earnedBadges(me);
   const D = { display_name: me.display_name, bio: me.bio || '', avatar_url: me.avatar_url || null, banner_url: me.banner_url || null,
-              banner_color: me.banner_color || me.avatar_color, avatar_color: me.avatar_color, theme_a: me.theme_a || null, theme_b: me.theme_b || null, house: me.house || null };
-  const lockBox = what => `<div class="locked">🔒 ${what} <button class="btn sm" data-plus>Conhecer o Telão+</button></div>`;
-  box.innerHTML = `${back}<h2>Perfis</h2><div class="profgrid"><div>
-    <label class="field"><span>Nome de exibição</span><input class="inp" id="pfN" maxlength="32"></label>
-    <hr class="sdiv">
-    <h3>Avatar</h3>
-    <div style="display:flex;gap:8px;flex-wrap:wrap"><button class="btn sm" id="pfAv">Mudar avatar</button><button class="btn sec sm" id="pfAvRm">Remover</button></div>
-    <small style="color:var(--mut);display:block;margin-top:6px">PNG, JPG ou WEBP até ${plus?'8':'2'} MB. ${plus ? '<b style="color:#c9a6ff">GIF animado liberado ✨</b>' : 'GIF animado é do <a data-plus style="cursor:pointer">Telão+</a>.'}</small>
-    <h3>Cor do avatar</h3><div class="colors" id="pfAc">${COLORS.map(c => `<button type="button" data-c="${c}" style="background:${c}"></button>`).join('')}</div>
-    <hr class="sdiv">
-    <h3>Banner do perfil</h3>
-    ${plus ? `<div style="display:flex;gap:8px;flex-wrap:wrap"><button class="btn sm" id="pfBn">Mudar banner (imagem ou GIF)</button><button class="btn sec sm" id="pfBnRm">Remover</button></div>` : lockBox('Banner com imagem ou GIF é do Telão+.')}
-    <h3>Cor do banner</h3><div class="colorrow"><input type="color" id="pfBc"><small style="color:var(--mut)">Aparece quando não tem imagem.</small></div>
-    <hr class="sdiv">
-    <h3>Tema do perfil ${plus?'':'🔒'}</h3>
-    ${plus ? `<div class="colorrow"><label>Principal <input type="color" id="pfTa"></label><label>Destaque <input type="color" id="pfTb"></label><button class="btn sec sm" id="pfTrm">Sem tema</button></div>` : lockBox('Cores personalizadas no cartão de perfil são do Telão+.')}
-    <hr class="sdiv">
-    <h3>Casa (insígnia grátis)</h3>
-    <div class="chips" id="pfH">${[['', 'Nenhuma'], ['chama','Chama'], ['raio','Raio'], ['onda','Onda']].map(([v,l]) => `<button class="chip" data-h="${v}">${v ? `<span class="badge-i sm" style="margin:0">${badgeSvg(v)}</span>` : ''}${l}</button>`).join('')}</div>
-    <hr class="sdiv">
-    <label class="field"><span>Sobre mim</span><textarea class="inp" id="pfBio" maxlength="190" placeholder="Conte um pouco sobre você"></textarea><div class="counter" id="pfCnt"></div></label>
+              banner_color: me.banner_color || null, avatar_color: me.avatar_color, theme_a: me.theme_a || null, theme_b: me.theme_b || null,
+              house: me.house || null, pronouns: me.pronouns || '', links: (Array.isArray(me.links) ? me.links : []).map(l => ({ ...l })),
+              shown_badges: Array.isArray(me.shown_badges) ? [...me.shown_badges] : earned.map(b => b.id),
+              profile_fx: me.profile_fx || null, avatar_ring: me.avatar_ring || null, name_style: me.name_style || null };
+  const orig = JSON.stringify(D);
+  const lockBox = what => `<div class="locked">${ic('lock',18)} ${what} <button class="btn sm" data-plus>Conhecer o Telão+</button></div>`;
+  const chipRow = (id, list, cur) => `<div class="chips" id="${id}">${list.map(([v,l]) => `<button type="button" class="chip ${(cur||'')===v?'on':''}" data-v="${v}">${l}</button>`).join('')}</div>`;
+  box.innerHTML = `${back}<h2>Perfil</h2><div class="profgrid"><div>
+    <div class="ptabs"><button class="on" data-pt="basico">Básico</button><button data-pt="visual">Visual</button><button data-pt="insignias">Insígnias</button><button data-pt="links">Links</button></div>
+
+    <div data-pane="basico">
+      <label class="field"><span>Nome de exibição</span><input class="inp" id="pfN" maxlength="32"></label>
+      <label class="field"><span>Pronomes</span><input class="inp" id="pfPr" maxlength="30" placeholder="ex: ele/dele, ela/dela"></label>
+      <label class="field"><span>Sobre mim</span><textarea class="inp" id="pfBio" maxlength="190" placeholder="Conte um pouco sobre você"></textarea><div class="counter" id="pfCnt"></div></label>
+      <h3>Casa (insígnia grátis)</h3>
+      <div class="chips" id="pfH">${[['', 'Nenhuma'], ['chama','Chama'], ['raio','Raio'], ['onda','Onda']].map(([v,l]) => `<button class="chip" data-h="${v}">${v ? `<span class="badge-i sm" style="margin:0">${badgeSvg(v)}</span>` : ''}${l}</button>`).join('')}</div>
+    </div>
+
+    <div data-pane="visual" class="hidden">
+      <h3 style="margin-top:0">Avatar</h3>
+      <div class="avedit"><div id="pfAvPrev"></div><div>
+        <div style="display:flex;gap:8px;flex-wrap:wrap"><button class="btn sm" id="pfAv">${ic('image',16)} Enviar foto</button><button class="btn sec sm" id="pfAvRm">Remover foto</button></div>
+        <small class="mut" style="display:block;margin-top:6px">PNG, JPG ou WEBP até ${plus?'8':'2'} MB. ${plus ? '<b style="color:#ffb39c">GIF animado liberado ✨</b>' : 'GIF animado é do <a data-plus style="cursor:pointer">Telão+</a>.'}</small>
+      </div></div>
+      <div id="pfAcBox"><h3>Cor do avatar <small class="mut" style="text-transform:none;font-weight:500">(só aparece quando não tem foto)</small></h3><div class="colors" id="pfAc">${COLORS.map(c => `<button type="button" data-c="${c}" style="background:${c}"></button>`).join('')}</div></div>
+      <hr class="sdiv">
+      <h3>Banner</h3>
+      ${plus ? `<div style="display:flex;gap:8px;flex-wrap:wrap"><button class="btn sm" id="pfBn">${ic('image',16)} Imagem ou GIF</button><button class="btn sec sm" id="pfBnRm">Remover</button></div>` : lockBox('Banner com imagem ou GIF é do Telão+.')}
+      <h3>Cor do banner</h3><div class="colorrow"><input type="color" id="pfBc"><button class="btn sec sm" id="pfBcAuto">Automática</button></div>
+      <hr class="sdiv">
+      <h3>Tema do cartão ${plus?'':'🔒'}</h3>
+      ${plus ? `<div class="colorrow"><label>Principal <input type="color" id="pfTa"></label><label>Destaque <input type="color" id="pfTb"></label><button class="btn sec sm" id="pfTrm">Sem tema</button></div>` : lockBox('Cores no cartão de perfil são do Telão+.')}
+      <h3>Efeito no perfil ${plus?'':'🔒'}</h3>${plus ? chipRow('pfFx', PROFILE_FX, D.profile_fx) : lockBox('Partículas animadas no seu cartão.')}
+      <h3>Anel do avatar ${plus?'':'🔒'}</h3>${plus ? chipRow('pfRing', RINGS, D.avatar_ring) : lockBox('Um anel animado em volta do seu avatar.')}
+      <h3>Estilo do nome ${plus?'':'🔒'}</h3>${plus ? `<div class="chips" id="pfNs">${NAME_STYLES.map(([v,l]) => `<button type="button" class="chip ${(D.name_style||'')===v?'on':''}" data-v="${v}"><span class="${v?'nst nst-'+v:''}">${l}</span></button>`).join('')}</div>` : lockBox('Nome com gradiente colorido no chat.')}
+    </div>
+
+    <div data-pane="insignias" class="hidden">
+      <p class="mut small" style="margin-bottom:12px">Escolha quais das suas insígnias aparecem no seu perfil. Você conquistou <b>${earned.length}</b>.</p>
+      <div class="bpick" id="pfBp">${earned.map(b => `<label class="bpi"><input type="checkbox" data-b="${b.id}"><span class="badge-i">${badgeSvg(b.id, b.id==='plus'?plusTier(me):null)}</span><div><b>${esc(b.nome)}</b><small>${esc(b.id==='plus' ? (me.is_admin?'Vitalício':TIERS[plusTier(me)][2]) : b.desc)}</small></div></label>`).join('') || '<div class="empty">Você ainda não tem insígnias. Escolha uma Casa na aba Básico para ganhar a primeira!</div>'}</div>
+      ${earned.length ? '<div style="display:flex;gap:8px;margin-top:10px"><button class="btn sec sm" id="pfBAll">Mostrar todas</button><button class="btn sec sm" id="pfBNone">Esconder todas</button></div>' : ''}
+    </div>
+
+    <div data-pane="links" class="hidden">
+      <p class="mut small" style="margin-bottom:12px">Até 5 links que aparecem no seu cartão.</p>
+      <div id="pfLinks"></div>
+      <button class="btn sec sm" id="pfLAdd">${ic('plus',16)} Adicionar link</button>
+    </div>
+
     <input type="file" id="pfFile" accept="image/png,image/jpeg,image/webp,image/gif" class="hidden">
     <div id="pfSave"></div>
-  </div><div><h3 style="margin-top:0">Prévia</h3><div class="pcard" style="background:none;box-shadow:0 6px 24px rgba(0,0,0,.35)" id="pfPrev"></div></div></div>`;
-  const $b = s => box.querySelector(s);
-  const draft = () => ({ ...me, ...D });
+  </div><div><h3 style="margin-top:0">Prévia</h3><div class="pcard" id="pfPrev"></div></div></div>`;
+  const $b = q => box.querySelector(q);
+  box.querySelectorAll('[data-pt]').forEach(t => t.onclick = () => {
+    box.querySelectorAll('[data-pt]').forEach(x => x.classList.toggle('on', x === t));
+    box.querySelectorAll('[data-pane]').forEach(p => p.classList.toggle('hidden', p.dataset.pane !== t.dataset.pt));
+  });
+  const draft = () => ({ ...me, ...D, banner_color: D.banner_color || null });
   const setDirty = () => {
-    const changed = Object.keys(D).some(k => (D[k] || null) !== ((k === 'banner_color' ? (me.banner_color || me.avatar_color) : me[k]) || null) && !(k==='bio' && D.bio === (me.bio||'')));
+    const changed = JSON.stringify(D) !== orig;
     SET.dirty = changed;
-    $b('#pfSave').innerHTML = changed ? `<div class="savebar"><span>Cuidado — você tem alterações não salvas!</span><button class="btn sec sm" id="pfReset">Redefinir</button><button class="btn ok sm" id="pfOk">Salvar alterações</button></div>` : '';
+    $b('#pfSave').innerHTML = changed ? `<div class="savebar"><span>Você tem alterações não salvas</span><button class="btn sec sm" id="pfReset">Desfazer</button><button class="btn ok sm" id="pfOk">Salvar</button></div>` : '';
     if(changed){ $b('#pfReset').onclick = () => { SET.dirty = false; renderSettings(); }; $b('#pfOk').onclick = save; }
   };
-  const refresh = () => {
-    $b('#pfPrev').innerHTML = profileCard(draft());
+  const drawLinks = () => {
+    $b('#pfLinks').innerHTML = D.links.map((l, i) => `<div class="lrow"><select class="inp" data-lt="${i}">${Object.entries(LINKS).map(([k, v]) => `<option value="${k}" ${l.t===k?'selected':''}>${v[0]}</option>`).join('')}</select>
+      <input class="inp" data-lu="${i}" value="${esc(l.u||'')}" placeholder="${l.t==='site'?'seusite.com':'seu usuário'}" maxlength="100"><button class="ibtn" data-lx="${i}">${ic('trash',16)}</button></div>`).join('');
+    $b('#pfLAdd').disabled = D.links.length >= 5;
+    box.querySelectorAll('[data-lt]').forEach(x => x.onchange = () => { D.links[+x.dataset.lt].t = x.value; refresh(); });
+    box.querySelectorAll('[data-lu]').forEach(x => x.oninput = () => { D.links[+x.dataset.lu].u = x.value.trim().replace(/^@/, ''); refresh(true); });
+    box.querySelectorAll('[data-lx]').forEach(x => x.onclick = () => { D.links.splice(+x.dataset.lx, 1); drawLinks(); refresh(); });
+  };
+  const refresh = (noLinks) => {
+    const d = draft();
+    $b('#pfPrev').innerHTML = profileCard(d);
+    $b('#pfAvPrev').innerHTML = avatar(d, 'xl');
+    $b('#pfAcBox').classList.toggle('hidden', !!D.avatar_url);
     box.querySelectorAll('#pfAc [data-c]').forEach(x => x.classList.toggle('on', x.dataset.c === D.avatar_color));
     box.querySelectorAll('#pfH [data-h]').forEach(x => x.classList.toggle('on', (x.dataset.h || null) === (D.house || null)));
+    box.querySelectorAll('#pfBp [data-b]').forEach(x => x.checked = D.shown_badges.includes(x.dataset.b));
     $b('#pfCnt').textContent = (190 - D.bio.length) + ' restantes';
     setDirty();
   };
-  $b('#pfN').value = D.display_name; $b('#pfBio').value = D.bio; $b('#pfBc').value = D.banner_color;
+  $b('#pfN').value = D.display_name; $b('#pfBio').value = D.bio; $b('#pfPr').value = D.pronouns; $b('#pfBc').value = D.banner_color || D.avatar_color || '#ff6b4a';
   $b('#pfN').oninput = e => { D.display_name = e.target.value; refresh(); };
   $b('#pfBio').oninput = e => { D.bio = e.target.value; refresh(); };
+  $b('#pfPr').oninput = e => { D.pronouns = e.target.value; refresh(); };
   $b('#pfBc').oninput = e => { D.banner_color = e.target.value; refresh(); };
+  $b('#pfBcAuto').onclick = () => { D.banner_color = null; $b('#pfBc').value = D.avatar_color; refresh(); };
   box.querySelectorAll('#pfAc [data-c]').forEach(x => x.onclick = () => { D.avatar_color = x.dataset.c; refresh(); });
-  box.querySelectorAll('#pfH [data-h]').forEach(x => x.onclick = () => { D.house = x.dataset.h || null; refresh(); });
+  box.querySelectorAll('#pfH [data-h]').forEach(x => x.onclick = () => {
+    const old = D.house; D.house = x.dataset.h || null;
+    D.shown_badges = D.shown_badges.filter(b => b !== old); if(D.house && !D.shown_badges.includes(D.house)) D.shown_badges.push(D.house);
+    refresh();
+  });
+  box.querySelectorAll('#pfBp [data-b]').forEach(x => x.onchange = () => {
+    const id = x.dataset.b;
+    D.shown_badges = x.checked ? earned.map(b => b.id).filter(b => b === id || D.shown_badges.includes(b)) : D.shown_badges.filter(b => b !== id);
+    refresh();
+  });
+  if($b('#pfBAll')){ $b('#pfBAll').onclick = () => { D.shown_badges = earned.map(b => b.id); refresh(); }; $b('#pfBNone').onclick = () => { D.shown_badges = []; refresh(); }; }
+  $b('#pfLAdd').onclick = () => { if(D.links.length < 5){ D.links.push({ t:'instagram', u:'' }); drawLinks(); refresh(); } };
   box.querySelectorAll('[data-plus]').forEach(x => x.onclick = () => setSec('plus'));
   if(plus){
-    $b('#pfTa').value = D.theme_a || '#5b3fd6'; $b('#pfTb').value = D.theme_b || '#c43a9b';
+    $b('#pfTa').value = D.theme_a || '#3b1d6e'; $b('#pfTb').value = D.theme_b || '#ff6b4a';
     $b('#pfTa').oninput = e => { D.theme_a = e.target.value; D.theme_b = D.theme_b || $b('#pfTb').value; refresh(); };
     $b('#pfTb').oninput = e => { D.theme_b = e.target.value; D.theme_a = D.theme_a || $b('#pfTa').value; refresh(); };
     $b('#pfTrm').onclick = () => { D.theme_a = D.theme_b = null; refresh(); };
     $b('#pfBnRm').onclick = () => { D.banner_url = null; refresh(); };
+    [['#pfFx','profile_fx'],['#pfRing','avatar_ring'],['#pfNs','name_style']].forEach(([id, key]) => box.querySelectorAll(id + ' [data-v]').forEach(c => c.onclick = () => {
+      D[key] = c.dataset.v || null; box.querySelectorAll(id + ' [data-v]').forEach(x => x.classList.toggle('on', x === c)); refresh();
+    }));
   }
   let target = 'avatar';
   $b('#pfAv').onclick = () => { target = 'avatar'; $b('#pfFile').click(); };
@@ -381,20 +480,25 @@ function secProfile(box, back){
         url = App.sb.storage.from('media').getPublicUrl(path).data.publicUrl;
       }
     }catch(err){ App.toast('Não deu para enviar: ' + err.message, true); return; }
-    if(target === 'avatar') D.avatar_url = url; else D.banner_url = url;
-    App.toast('Imagem pronta! Clique em “Salvar alterações”.');
+    if(target === 'avatar'){ D.avatar_url = url; const c = await avgColor(f); if(c) D.avatar_color = c; }
+    else D.banner_url = url;
+    App.toast('Pronto! Clique em “Salvar”.');
     refresh();
   };
   async function save(){
-    const upd = { display_name: D.display_name.trim() || me.username, bio: D.bio.trim(), avatar_url: D.avatar_url, banner_url: D.banner_url,
-                  banner_color: D.banner_color, avatar_color: D.avatar_color, theme_a: D.theme_a, theme_b: D.theme_b, house: D.house };
+    const all = earned.map(b => b.id);
+    const shown = D.shown_badges.length === all.length && all.every(b => D.shown_badges.includes(b)) ? null : D.shown_badges;
+    const upd = { display_name: D.display_name.trim() || me.username, bio: D.bio.trim(), pronouns: D.pronouns.trim() || null,
+                  avatar_url: D.avatar_url, banner_url: D.banner_url, banner_color: D.banner_color, avatar_color: D.avatar_color,
+                  theme_a: D.theme_a, theme_b: D.theme_b, house: D.house, shown_badges: shown,
+                  links: D.links.filter(l => l.u).slice(0, 5), profile_fx: D.profile_fx, avatar_ring: D.avatar_ring, name_style: D.name_style };
     const { data, error } = await App.sb.from('profiles').update(upd).eq('id', me.id).select().single();
     if(error){ App.toast(error.message, true); return; }
     S.me = data; S.profiles.set(data.id, data);
     SET.dirty = false; App.toast('Perfil salvo! ✨');
     renderSettings(); renderUserPanel(); renderMembers(); if(M.el) renderMsgList(false);
   }
-  refresh();
+  drawLinks(); refresh();
 }
 function upsell(what){
   modal(`<div class="mh"><h2>✨ Isso é do Telão+</h2><p>${esc(what)} faz parte do <b>Telão+</b>, por ${PRICE_TXT}/mês.</p></div>
@@ -464,7 +568,7 @@ function secAppearance(box, back){
     <h3>Tema</h3>
     <div class="themes">${[['dark','Escuro','#313338'],['amoled','Preto (AMOLED)','#000'],['light','Claro','#fff']].map(([v,l,c]) => `<button data-t="${v}" class="${P.theme===v?'on':''}"><span class="sw2" style="background:${c}"></span>${l}</button>`).join('')}</div>
     <h3>Cor de destaque</h3>
-    <div class="accents">${['#7c5cff','#5865f2','#3b82f6','#06b6d4','#10b981','#22c55e','#eab308','#f97316','#ef4444','#ec4899','#d946ef','#a3a3a3'].map(c => `<button data-acc="${c}" class="${(P.accent||'#7c5cff')===c?'on':''}" style="background:${c}"></button>`).join('')}<input type="color" id="apAcc" value="${esc(P.accent||'#7c5cff')}" title="Escolher outra cor"></div>
+    <div class="accents">${['#ff6b4a','#ff3d7f','#ffb020','#2bd17e','#14b8a6','#38bdf8','#6366f1','#a855f7','#e879f9','#f43f5e','#84cc16','#a3a3a3'].map(c => `<button data-acc="${c}" class="${(P.accent||'#ff6b4a')===c?'on':''}" style="background:${c}"></button>`).join('')}<input type="color" id="apAcc" value="${esc(P.accent||'#ff6b4a')}" title="Escolher outra cor"></div>
     <hr class="sdiv"><h3>Tamanho da fonte das conversas · <span id="apFs">${P.fontSize}px</span></h3>
     <input type="range" class="range" id="apR" min="12" max="20" step="1" value="${P.fontSize}">
     <hr class="sdiv">
@@ -634,7 +738,7 @@ function secApp(box, back){
     ${row('Instalar o Telão', standalone ? '✅ Você está usando o app instalado.' : S.installEvt ? 'Instale como app: ícone próprio, janela separada e abre mais rápido.' : ios ? 'No iPhone: Compartilhar → <b>Adicionar à Tela de Início</b>.' : 'No Chrome/Edge: ícone de instalar na barra de endereço, ou menu ⋮ → <b>Instalar Telão</b>.',
           S.installEvt && !standalone ? '<button class="btn sm" id="apInst">📲 Instalar</button>' : '')}
     ${row('Limpar cache do app', 'Use se uma atualização não aparecer.', '<button class="btn sec sm" id="apClr">Limpar e recarregar</button>')}
-    <hr class="sdiv"><small style="color:var(--mut)">Telão · versão 2.0</small>`;
+    <hr class="sdiv"><small style="color:var(--mut)">Telão · versão 4.1</small>`;
   const i = box.querySelector('#apInst'); if(i) i.onclick = doInstall;
   box.querySelector('#apClr').onclick = async () => {
     try{ const regs = await navigator.serviceWorker.getRegistrations(); await Promise.all(regs.map(r => r.unregister())); const ks = await caches.keys(); await Promise.all(ks.map(k => caches.delete(k))); }catch(e){}
@@ -647,12 +751,23 @@ function secAdmin(box, back){
   if(!S.me.is_admin){ box.innerHTML = 'Sem acesso.'; return; }
   box.innerHTML = `${back}<h2>👑 Painel do admin</h2>
     <p style="color:var(--txt2);font-size:14px">Dê o Telão+ (ex: quem pagou por Pix) e insígnias para qualquer pessoa.</p>
+    <h3>📢 Aviso para todos</h3>
+    <p class="mut small" style="margin-bottom:8px">Aparece na hora para todo mundo que está com o Telão aberto (no topo da tela, com som).</p>
+    <textarea class="inp" id="avT" maxlength="200" rows="2">Saiu uma atualização nova do Telão! Clique em "Atualizar agora" para ver as novidades 🎉</textarea>
+    <div style="display:flex;gap:10px;align-items:center;margin-top:8px;flex-wrap:wrap"><label style="display:flex;gap:8px;align-items:center;font-size:14px">${toggle('avR', true)} Mostrar botão “Atualizar agora”</label><span class="grow"></span><button class="btn" id="avGo">${ic('send',16)} Enviar para todos</button></div>
+    <hr class="sdiv">
     <h3>Procurar usuário</h3>
     <input class="inp" id="adQ" placeholder="nome de usuário ou nome" autocomplete="off">
     <div class="slist adminres" id="adRes" style="margin-top:10px"></div>
     <div id="adUser"></div>
     <hr class="sdiv"><h3>Últimos pagamentos</h3><div id="adPays" style="font-size:14px;color:var(--mut)">Carregando…</div>`;
   const $b = s => box.querySelector(s);
+  $b('#avGo').onclick = async () => {
+    const t = $b('#avT').value.trim(); if(!t){ App.toast('Escreva o aviso.', true); return; }
+    if(!(await confirmBox('Enviar aviso', `Mandar para todo mundo que está online agora?<br><br><i>“${esc(t)}”</i>`, 'Enviar', false))) return;
+    await App.sendAviso(t, $b('#avR').checked);
+    App.toast('📢 Aviso enviado para todos que estão online!');
+  };
   let tmr;
   $b('#adQ').oninput = e => { clearTimeout(tmr); const q = e.target.value.trim().replace(/[%,()]/g,''); tmr = setTimeout(async () => {
     if(q.length < 2){ $b('#adRes').innerHTML = ''; return; }
