@@ -6,7 +6,7 @@
   --bg0:#0c0c11; --bg1:#14141b; --bg2:#191921; --bg3:#22222c; --bg4:#2c2c38; --bg5:#383845;
   --panel:#15151d; --panel2:#1b1b24;
   --txt:#f3f2f7; --txt2:#b9b8c6; --mut:#82819a; --line:rgba(255,255,255,.065); --line2:rgba(255,255,255,.11);
-  --acc:#ff6b4a; --acc2:#ff8f6f; --accs:rgba(255,107,74,.16); --acct:#fff;
+  --acc:#ff2e9a; --acc2:#ff62b4; --accs:rgba(255,46,154,.16); --acct:#fff;
   --grad:linear-gradient(135deg,var(--acc),#ff3d7f);
   --ok:#2bd17e; --bad:#ff4d5e; --warn:#ffbe3b; --link:#7cc4ff;
   --r:16px; --fs:15px; --shadow:0 18px 50px rgba(0,0,0,.5);
@@ -21,7 +21,7 @@ body.theme-light{ --bg0:#ebe7e4; --bg1:#f6f3f1; --bg2:#ffffff; --bg3:#f0ece9; --
 *{box-sizing:border-box;margin:0;padding:0}
 html,body{height:100%}
 body{font-family:Inter,system-ui,-apple-system,"Segoe UI",sans-serif;background:var(--bg0);color:var(--txt);font-size:var(--fs);overflow:hidden;-webkit-font-smoothing:antialiased;-webkit-tap-highlight-color:transparent}
-body::before{content:"";position:fixed;inset:0;pointer-events:none;background:radial-gradient(900px 500px at 0% 0%,color-mix(in srgb,var(--acc) 14%,transparent),transparent 60%),radial-gradient(700px 500px at 100% 100%,rgba(255,61,127,.08),transparent 60%)}
+body::before{content:"";position:fixed;inset:0;pointer-events:none;background:radial-gradient(900px 500px at 0% 0%,color-mix(in srgb,var(--acc) 14%,transparent),transparent 60%),radial-gradient(700px 500px at 100% 100%,rgba(182,255,46,.08),transparent 60%)}
 button,input,select,textarea{font:inherit;color:inherit}
 button{cursor:pointer;background:none;border:0}
 a{color:var(--link);text-decoration:none}a:hover{text-decoration:underline}
@@ -147,7 +147,7 @@ button.live{cursor:pointer;animation:livepulse 2s infinite}
 .incall{color:var(--ok)}
 
 /* ---------- avatar ---------- */
-.av{position:relative;width:32px;height:32px;border-radius:50%;display:flex;align-items:center;justify-content:center;font-family:var(--hf);font-weight:700;color:#fff;font-size:13px;flex:none;user-select:none;background:var(--avc,#ff6b4a)}
+.av{position:relative;width:32px;height:32px;border-radius:50%;display:flex;align-items:center;justify-content:center;font-family:var(--hf);font-weight:700;color:#fff;font-size:13px;flex:none;user-select:none;background:var(--avc,#ff2e9a)}
 .av img{width:100%;height:100%;border-radius:50%;object-fit:cover;display:block;position:relative;z-index:1}
 .av .ini{line-height:1;position:relative;z-index:1}
 .av.xs{width:18px;height:18px;font-size:8px}
@@ -688,7 +688,7 @@ body.cinema .stage .area{padding:8px 8px 80px}
 .pfx.coracoes i{color:#ff6b9d}.pfx.fogo i{color:#ffa94d;animation-name:prise;top:auto;bottom:-10%;text-shadow:0 0 6px #ff6b00}
 .pfx.estrelas i{color:#ffe08a;text-shadow:0 0 8px #ffd166;animation-name:ptwinkle;top:auto}
 .pfx.estrelas i:nth-child(odd){top:20%}.pfx.estrelas i:nth-child(even){top:60%}
-.pfx.confete i:nth-child(3n){color:#ff6b4a}.pfx.confete i:nth-child(3n+1){color:#4cc9f0}.pfx.confete i:nth-child(3n+2){color:#ffd166}
+.pfx.confete i:nth-child(3n){color:#ff2e9a}.pfx.confete i:nth-child(3n+1){color:#4cc9f0}.pfx.confete i:nth-child(3n+2){color:#ffd166}
 .pfx.aurora{background:linear-gradient(120deg,rgba(43,209,126,.25),rgba(76,201,240,.2),rgba(176,107,255,.25),rgba(43,209,126,.25));background-size:300% 300%;animation:aurora 8s ease infinite}
 @keyframes pfall{to{transform:translateY(560px) rotate(240deg)}}
 @keyframes prise{to{transform:translateY(-560px);opacity:0}}
@@ -798,7 +798,7 @@ body.cinema .stage .area{padding:8px 8px 80px}
 .ritem:hover{background:var(--hover)}.ritem.on{background:var(--accs);color:var(--txt)}
 .rolelist .btn{margin-top:8px}
 .rolefoot{display:flex;gap:10px;align-items:center;margin-top:20px}
-.plushero{border-radius:12px;padding:32px;background:radial-gradient(600px 240px at 10% 0%,#ffb347aa,transparent),linear-gradient(135deg,#ff6b4a,#ff3d7f 55%,#7a3cff);color:#fff;position:relative;overflow:hidden}
+.plushero{border-radius:12px;padding:32px;background:radial-gradient(600px 240px at 10% 0%,#ffb347aa,transparent),linear-gradient(135deg,#ff2e9a,#ff3d7f 55%,#7a3cff);color:#fff;position:relative;overflow:hidden}
 .plushero h1{font-size:42px;font-weight:800;letter-spacing:-1.4px;display:flex;align-items:center;gap:10px}
 .plushero p{opacity:.92;margin:6px 0 18px;font-size:16px}
 .plushero .price{font-size:15px;opacity:.95;margin-bottom:16px}.plushero .price b{font-family:var(--hf);font-size:30px}
@@ -928,7 +928,7 @@ body.theme-algodao{ --bg0:#ece3fb; --bg1:#f6f0ff; --bg2:#ffffff; --bg3:#f1e7ff; 
 
 /* ---------- loja ---------- */
 .shophero{display:flex;gap:18px;align-items:center;justify-content:space-between;flex-wrap:wrap;padding:22px;border-radius:12px;margin-bottom:16px;
-  background:radial-gradient(400px 200px at 0% 0%,rgba(255,190,59,.25),transparent 70%),radial-gradient(400px 220px at 100% 100%,rgba(255,61,127,.22),transparent 70%),var(--bg2);border:1px solid var(--line)}
+  background:radial-gradient(400px 200px at 0% 0%,rgba(255,190,59,.25),transparent 70%),radial-gradient(400px 220px at 100% 100%,rgba(182,255,46,.22),transparent 70%),var(--bg2);border:1px solid var(--line)}
 .shophero h1{font-family:var(--hf);font-size:28px;margin-bottom:6px}.shophero p{color:var(--txt2);max-width:440px;font-size:14px;line-height:1.5}
 .wallet{display:flex;flex-direction:column;align-items:center;gap:6px;padding:14px 18px;border-radius:12px;background:rgba(0,0,0,.2);min-width:190px}
 .wallet .fichas{font-size:26px}.wallet small{color:var(--txt2);font-size:12px}
@@ -962,7 +962,7 @@ body.theme-algodao{ --bg0:#ece3fb; --bg1:#f6f0ff; --bg2:#ffffff; --bg3:#f1e7ff; 
 .av .deco{position:absolute;inset:-14%;pointer-events:none;z-index:3;border-radius:50%}
 .deco.deco_neon{border:2.5px solid #4df3ff;box-shadow:0 0 10px #4df3ff,inset 0 0 8px #4df3ff;animation:decoPulse 2s ease-in-out infinite}
 @keyframes decoPulse{50%{box-shadow:0 0 20px #ff4df0,inset 0 0 12px #ff4df0;border-color:#ff4df0}}
-.deco.deco_gato::before,.deco.deco_gato::after{content:"";position:absolute;top:-6%;width:34%;height:34%;background:var(--avc,#ff6b4a);border:2px solid #fff;clip-path:polygon(50% 0,100% 100%,0 100%)}
+.deco.deco_gato::before,.deco.deco_gato::after{content:"";position:absolute;top:-6%;width:34%;height:34%;background:var(--avc,#ff2e9a);border:2px solid #fff;clip-path:polygon(50% 0,100% 100%,0 100%)}
 .deco.deco_gato::before{left:4%;transform:rotate(-22deg)}.deco.deco_gato::after{right:4%;transform:rotate(22deg)}
 .deco.deco_coroa::before{content:"👑";position:absolute;left:50%;top:-34%;transform:translateX(-50%) rotate(-8deg);font-size:calc(1em + 40%);filter:drop-shadow(0 2px 2px rgba(0,0,0,.4))}
 .av .deco.deco_coroa{font-size:inherit}
@@ -977,7 +977,7 @@ body.theme-algodao{ --bg0:#ece3fb; --bg1:#f6f0ff; --bg2:#ffffff; --bg3:#f1e7ff; 
 
 /* presente na conversa */
 .giftcard{display:flex;align-items:center;gap:12px;padding:12px 14px;margin-top:4px;border-radius:10px;min-width:260px;max-width:380px;
-  background:linear-gradient(135deg,rgba(255,107,74,.22),rgba(255,61,127,.22));border:1px solid rgba(255,107,74,.35)}
+  background:linear-gradient(135deg,rgba(255,46,154,.22),rgba(182,255,46,.22));border:1px solid rgba(255,46,154,.35)}
 .giftcard .gbox{font-size:34px;filter:drop-shadow(0 4px 8px rgba(0,0,0,.3))}
 .giftcard:not(.opened) .gbox{animation:giftWiggle 2.4s ease-in-out infinite}
 @keyframes giftWiggle{0%,80%,100%{transform:rotate(0)}85%{transform:rotate(-10deg)}90%{transform:rotate(10deg)}95%{transform:rotate(-6deg)}}
@@ -1112,3 +1112,34 @@ html.desktop #install{display:none!important}
 .brand .tagw{font-size:46px;line-height:1}
 .brandrow .tagw{font-size:27px;line-height:1}
 .tlogo{flex:none;overflow:visible}
+
+/* =====================================================================
+   v6.2 · paleta da logo grafite: rosa spray + verde-limão sobre grafite
+   ===================================================================== */
+:root{
+  --bg0:#0d0e12; --bg1:#13141a; --bg2:#181920; --bg3:#202129; --bg4:#2a2b34; --bg5:#363742;
+  --panel:#15161c; --panel2:#1b1c23; --bgp:#101116; --pop:#1a1b22;
+  --txt:#f4f4f6; --txt2:#b8b9c4; --mut:#80828f; --line:rgba(255,255,255,.07); --line2:rgba(255,255,255,.12);
+  --lime:#b6ff2e; --pink:#ff2e9a;
+  --ok:#b6ff2e; --link:#b6ff2e; --warn:#ffe02e; --bad:#ff4d4d;
+}
+body.theme-light{ --lime:#5f9a00; --ok:#4f8a00; --link:#c2187a; }
+/* online fica limão, como o traço da logo */
+.st.s-online,.odot{background:var(--lime)!important}
+/* menção e destaques no tom da logo */
+.msg.mentioned .bub{box-shadow:inset 3px 0 0 var(--lime)}
+.livetag,.vu .live{background:var(--pink);color:#fff}
+.lvlchip{background:var(--pink)}
+.fichas{color:var(--lime)}
+.ok,.evwhen .evlive{color:var(--lime)}
+.evrow.live{border-color:var(--lime)}.evrow.live svg{color:var(--lime)}
+.evlive{background:var(--lime);color:#111}
+.badge-new,.ricon .badge{background:var(--pink)}
+.ricon.shopb{border-color:color-mix(in srgb,var(--lime) 40%,transparent)}.ricon.shopb .badge{background:var(--lime)}
+.ricon.on,.ricon:hover{box-shadow:0 0 0 2px var(--pink)}
+.tabs2 button.on,.chips button.on{background:var(--pink);color:#fff}
+a{color:var(--link)}
+::selection{background:color-mix(in srgb,var(--lime) 35%,transparent)}
+/* o "telão" grafite também nos títulos grandes */
+.cbox2 h1,.shophero h1{font-family:"Sedgwick Ave Display",var(--hf);font-weight:400;color:var(--lime);text-shadow:2px 2px 0 var(--pink);letter-spacing:0}
+.cicon{background:var(--pink)}

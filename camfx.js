@@ -98,7 +98,7 @@
         else {
           // fundo
           if(fx.seg === 'blur'){ if(hasFilter) ctx.filter = 'blur(14px) brightness(.9)'; cover(ctx, W, H); ctx.filter = 'none'; }
-          else { const g = ctx.createLinearGradient(0, 0, W, H); g.addColorStop(0, '#2a1450'); g.addColorStop(1, '#ff6b4a'); ctx.fillStyle = g; ctx.fillRect(0, 0, W, H); }
+          else { const g = ctx.createLinearGradient(0, 0, W, H); g.addColorStop(0, '#2a1450'); g.addColorStop(1, '#ff2e9a'); ctx.fillStyle = g; ctx.fillRect(0, 0, W, H); }
           // pessoa recortada pela máscara
           tmp.width = W; tmp.height = H; tctx.globalCompositeOperation = 'source-over'; cover(tctx, W, H);
           tctx.globalCompositeOperation = 'destination-in'; tctx.drawImage(mask, 0, 0, W, H); tctx.globalCompositeOperation = 'source-over';

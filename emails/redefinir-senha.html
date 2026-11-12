@@ -1,0 +1,21 @@
+<!-- Cole isto em Supabase > Authentication > Emails > (modelo) > Message body (aba "Source") -->
+<div style="margin:0;padding:32px 12px;background:#0c0c11;font-family:Inter,Segoe UI,Arial,sans-serif">
+  <table role="presentation" width="100%" cellpadding="0" cellspacing="0" style="max-width:480px;margin:0 auto;background:#15151d;border-radius:24px;overflow:hidden;border:1px solid #26262f">
+    <tr><td style="height:8px;background:#ff2e9a"></td></tr>
+    <tr><td style="padding:34px 32px 10px;text-align:center">
+      <div style="display:inline-block;width:60px;height:60px;line-height:60px;border-radius:18px;background:#ff2e9a;color:#fff;font-size:30px;font-weight:800">▶</div>
+      <div style="margin-top:12px;font-size:22px;font-weight:800;color:#ffffff;letter-spacing:-.3px">telão</div>
+    </td></tr>
+    <tr><td style="padding:10px 32px 6px;text-align:center">
+      <h1 style="margin:0 0 10px;font-size:24px;color:#ffffff">Criar uma nova senha</h1>
+      <p style="margin:0;font-size:15px;line-height:1.6;color:#b9b8c6">Recebemos um pedido para trocar a senha da sua conta no Telão. Clique no botão para escolher uma nova.</p>
+    </td></tr>
+    <tr><td style="padding:26px 32px;text-align:center">
+      <a href="{{ .ConfirmationURL }}" style="display:inline-block;padding:15px 30px;border-radius:14px;background:#ff2e9a;color:#ffffff;font-size:16px;font-weight:700;text-decoration:none">Criar nova senha</a>
+    </td></tr>
+    <tr><td style="padding:0 32px 30px;text-align:center">
+      <p style="margin:0;font-size:12px;line-height:1.6;color:#82819a">Se não foi você, ignore este e-mail — sua senha continua a mesma.<br>Se o botão não funcionar, copie e cole este link no navegador:<br><span style="color:#ff62b4;word-break:break-all">{{ .ConfirmationURL }}</span></p>
+    </td></tr>
+  </table>
+  <p style="text-align:center;font-size:11px;color:#55546a;margin-top:16px">Telão · tela, voz e chat com os amigos</p>
+</div>

@@ -431,7 +431,7 @@ function secSrvBoost(box, back){
       <div class="track"><i style="width:${Math.max(4, pct)}%"></i></div>
       <button class="btn" id="sbB">${BOOST_SVG(16)} Impulsionar este servidor</button></div>
     ${canEdit ? `<h3>Personalização liberada</h3>
-      ${row('Cor do servidor' + (lv < 1 ? ' 🔒' : ''), lv < 1 ? 'Libera no nível 1.' : 'Muda a cor de destaque para todo mundo dentro do servidor.', `<input type="color" id="sbAcc" value="${esc(s.accent || '#ff6b4a')}" ${lv < 1 ? 'disabled' : ''}>${s.accent ? ' <button class="btn sec sm" id="sbAccX">Tirar</button>' : ''}`)}
+      ${row('Cor do servidor' + (lv < 1 ? ' 🔒' : ''), lv < 1 ? 'Libera no nível 1.' : 'Muda a cor de destaque para todo mundo dentro do servidor.', `<input type="color" id="sbAcc" value="${esc(s.accent || '#ff2e9a')}" ${lv < 1 ? 'disabled' : ''}>${s.accent ? ' <button class="btn sec sm" id="sbAccX">Tirar</button>' : ''}`)}
       ${row('Banner do servidor' + (lv < 2 ? ' 🔒' : ''), lv < 2 ? 'Libera no nível 2 (GIF no nível 3).' : 'Aparece no topo da lista de canais.', `<button class="btn sm" id="sbBan" ${lv < 2 ? 'disabled' : ''}>Enviar imagem</button>${s.banner_url ? ' <button class="btn sec sm" id="sbBanX">Tirar</button>' : ''}<input type="file" id="sbBanF" accept="image/*" hidden>`)}
       ${row('Convite personalizado' + (lv < 3 ? ' 🔒' : ''), lv < 3 ? 'Libera no nível 3.' : 'Ex.: telao…/?convite=galera', `<input class="inp" id="sbVan" style="width:160px" placeholder="galera" value="${/^[0-9a-f]{8}$/.test(s.invite_code) ? '' : esc(s.invite_code)}" ${lv < 3 ? 'disabled' : ''}> <button class="btn sm" id="sbVanOk" ${lv < 3 ? 'disabled' : ''}>Salvar</button>`)}` : ''}
     <h3>Níveis</h3>${levelsHtml(lv)}

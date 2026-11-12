@@ -2,24 +2,25 @@
    PREFERÊNCIAS, INSÍGNIAS, PERFIL, TELÃO+ E PAINÉIS DE CONFIGURAÇÕES
    ===================================================================== */
 const PRICE_TXT = 'R$ 9,90';
-const PDEF = { accent:'#ff6b4a', theme:'dark', fontSize:15, compact:false, inputId:'', outputId:'', echo:true, noise:true, agc:true,
+const PDEF = { accent:'#ff2e9a', theme:'dark', fontSize:15, compact:false, inputId:'', outputId:'', echo:true, noise:true, agc:true,
   mode:'vad', sensitivity:4, pttKey:'Backquote', muteKey:'ctrl+shift+KeyM', deafKey:'ctrl+shift+KeyD', screenKey:'',
   notifDM:true, notifMention:true, notifCall:true, soundMsg:true, soundVoice:true, soundPtt:true };
 const P = App.prefs = Object.assign({}, PDEF, ls.get('telao-prefs', {}));
+if(!P.accent || P.accent.toLowerCase() === '#ff6b4a') P.accent = '#ff2e9a';
 function savePrefs(){ ls.set('telao-prefs', P); applyPrefs(); }
 function applyPrefs(){
   document.body.classList.remove('theme-dark','theme-amoled','theme-light');
   document.body.classList.add('theme-' + P.theme);
   document.body.classList.toggle('compact', !!P.compact);
   document.documentElement.style.setProperty('--fs', P.fontSize + 'px');
-  const a = S._srvAcc || P.accent || '#ff6b4a', rs = document.documentElement.style;
+  const a = S._srvAcc || P.accent || '#ff2e9a', rs = document.documentElement.style;
   const [r,g,b] = [1,3,5].map(i => parseInt(a.slice(i, i+2), 16));
   const lum = (0.299*r + 0.587*g + 0.114*b) / 255;
   rs.setProperty('--acc', a);
   rs.setProperty('--acc2', `rgb(${Math.min(255, r+40)},${Math.min(255, g+40)},${Math.min(255, b+40)})`);
   rs.setProperty('--accs', `rgba(${r},${g},${b},.18)`);
   rs.setProperty('--acct', lum > 0.62 ? '#111' : '#fff');
-  const tc = document.querySelector('meta[name=theme-color]'); if(tc) tc.content = P.theme === 'light' ? '#e3e5e8' : P.theme === 'amoled' ? '#000000' : '#1e1f22';
+  const tc = document.querySelector('meta[name=theme-color]'); if(tc) tc.content = P.theme === 'light' ? '#e3e5e8' : P.theme === 'amoled' ? '#000000' : '#0d0e12';
 }
 applyPrefs();
 
@@ -136,7 +137,7 @@ function fxLayerHtml(fx){
 function profileCard(p, extra=''){
   const plus = hasPlus(p);
   const themed = plus && p.theme_a;
-  const banner = plus && p.banner_url ? `background-image:url('${esc(p.banner_url)}')` : `background:${esc(p.banner_color || p.avatar_color || '#ff6b4a')}`;
+  const banner = plus && p.banner_url ? `background-image:url('${esc(p.banner_url)}')` : `background:${esc(p.banner_color || p.avatar_color || '#ff2e9a')}`;
   const style = themed ? `background:linear-gradient(180deg,${esc(p.theme_a)},${esc(p.theme_b || p.theme_a)});--pc-bg:${esc(p.theme_a)}` : '';
   const bs = badgesOf(p);
   const links = (Array.isArray(p.links) ? p.links : []).filter(l => LINKS[l.t] && l.u);
@@ -431,7 +432,7 @@ function secProfile(box, back){
     $b('#pfCnt').textContent = (190 - D.bio.length) + ' restantes';
     setDirty();
   };
-  $b('#pfN').value = D.display_name; $b('#pfBio').value = D.bio; $b('#pfPr').value = D.pronouns; $b('#pfBc').value = D.banner_color || D.avatar_color || '#ff6b4a';
+  $b('#pfN').value = D.display_name; $b('#pfBio').value = D.bio; $b('#pfPr').value = D.pronouns; $b('#pfBc').value = D.banner_color || D.avatar_color || '#ff2e9a';
   $b('#pfN').oninput = e => { D.display_name = e.target.value; refresh(); };
   $b('#pfBio').oninput = e => { D.bio = e.target.value; refresh(); };
   $b('#pfPr').oninput = e => { D.pronouns = e.target.value; refresh(); };
@@ -452,7 +453,7 @@ function secProfile(box, back){
   $b('#pfLAdd').onclick = () => { if(D.links.length < 5){ D.links.push({ t:'instagram', u:'' }); drawLinks(); refresh(); } };
   box.querySelectorAll('[data-plus]').forEach(x => x.onclick = () => setSec('plus'));
   if(plus){
-    $b('#pfTa').value = D.theme_a || '#3b1d6e'; $b('#pfTb').value = D.theme_b || '#ff6b4a';
+    $b('#pfTa').value = D.theme_a || '#3b1d6e'; $b('#pfTb').value = D.theme_b || '#ff2e9a';
     $b('#pfTa').oninput = e => { D.theme_a = e.target.value; D.theme_b = D.theme_b || $b('#pfTb').value; refresh(); };
     $b('#pfTb').oninput = e => { D.theme_b = e.target.value; D.theme_a = D.theme_a || $b('#pfTa').value; refresh(); };
     $b('#pfTrm').onclick = () => { D.theme_a = D.theme_b = null; refresh(); };
@@ -572,7 +573,7 @@ function secAppearance(box, back){
     <h3>Tema</h3>
     <div class="themes">${[['dark','Escuro','#313338'],['amoled','Preto (AMOLED)','#000'],['light','Claro','#fff']].map(([v,l,c]) => `<button data-t="${v}" class="${P.theme===v?'on':''}"><span class="sw2" style="background:${c}"></span>${l}</button>`).join('')}</div>
     <h3>Cor de destaque</h3>
-    <div class="accents">${['#ff6b4a','#ff3d7f','#ffb020','#2bd17e','#14b8a6','#38bdf8','#6366f1','#a855f7','#e879f9','#f43f5e','#84cc16','#a3a3a3'].map(c => `<button data-acc="${c}" class="${(P.accent||'#ff6b4a')===c?'on':''}" style="background:${c}"></button>`).join('')}<input type="color" id="apAcc" value="${esc(P.accent||'#ff6b4a')}" title="Escolher outra cor"></div>
+    <div class="accents">${['#ff2e9a','#b6ff2e','#2ee6ff','#ff7a1a','#ffe02e','#8b5cf6','#ff4d4d','#2bd17e','#3b82f6','#e879f9','#f5f5f5','#8a8f98'].map(c => `<button data-acc="${c}" class="${(P.accent||'#ff2e9a')===c?'on':''}" style="background:${c}"></button>`).join('')}<input type="color" id="apAcc" value="${esc(P.accent||'#ff2e9a')}" title="Escolher outra cor"></div>
     <hr class="sdiv"><h3>Tamanho da fonte das conversas · <span id="apFs">${P.fontSize}px</span></h3>
     <input type="range" class="range" id="apR" min="12" max="20" step="1" value="${P.fontSize}">
     <hr class="sdiv">

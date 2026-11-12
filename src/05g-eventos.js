@@ -3,7 +3,7 @@
    ===================================================================== */
 S.events = new Map();   // sid -> [eventos]
 S.rsvps = new Map();    // eventId -> Set(uid)
-const EV_COLORS = ['#ff6b4a','#3b82f6','#22c55e','#eab308','#a855f7','#ec4899','#14b8a6','#64748b'];
+const EV_COLORS = ['#ff2e9a','#3b82f6','#22c55e','#eab308','#a855f7','#ec4899','#14b8a6','#64748b'];
 const evLive = e => new Date(e.starts_at) <= new Date() && new Date() <= new Date(e.ends_at || (new Date(e.starts_at).getTime() + 3 * 3600e3));
 const evOver = e => new Date() > new Date(e.ends_at || (new Date(e.starts_at).getTime() + 3 * 3600e3));
 const canEvents = sid => App.hasPerm(sid, 256) || App.hasPerm(sid, 2);
@@ -75,7 +75,7 @@ function eventsModal(s, keep){
 function evCard(s, e){
   const ch = e.channel_id && findChannel(e.channel_id), set = S.rsvps.get(e.id) || new Set(), going = set.has(S.me.id), live = evLive(e);
   const mine = canEvents(s.id) || e.created_by === S.me.id, d = new Date(e.starts_at);
-  return `<div class="evcard ${live ? 'live' : ''}" style="--evc:${esc(e.cover_color || '#ff6b4a')}">
+  return `<div class="evcard ${live ? 'live' : ''}" style="--evc:${esc(e.cover_color || '#ff2e9a')}">
     <div class="evdate"><b>${d.getDate()}</b><small>${d.toLocaleDateString('pt-BR', { month:'short' }).replace('.', '')}</small></div>
     <div class="evb"><div class="evwhen">${live ? '<span class="evlive">AO VIVO</span>' : fmtEv(e.starts_at)}${ch ? ` · ${ic('volume', 12)} ${esc(ch.name)}` : ''}</div>
       <b class="evt">${esc(e.title)}</b>${e.description ? `<p>${esc(e.description)}</p>` : ''}

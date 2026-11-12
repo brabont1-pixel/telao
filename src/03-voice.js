@@ -486,7 +486,7 @@ function mountDraw(sess){
   loop();
   if(!DRAW.on) return;
   const pt = e => { const r = cv.getBoundingClientRect(), vr = videoRect(cv); const x = ((e.clientX - r.left) * devicePixelRatio - vr.x) / vr.w, y = ((e.clientY - r.top) * devicePixelRatio - vr.y) / vr.h; return [Math.max(0, Math.min(1, x)), Math.max(0, Math.min(1, y))]; };
-  const color = S.me.avatar_color || '#ff6b4a';
+  const color = S.me.avatar_color || '#ff2e9a';
   const flush = (final) => {
     const c = DRAW.cur; if(!c || c.pts.length < 2) return;
     if(!final && Date.now() - DRAW.lastSend < 60) return;

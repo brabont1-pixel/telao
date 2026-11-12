@@ -9,7 +9,7 @@ const esc = s => String(s ?? '').replace(/[&<>"']/g, c => ({'&':'&amp;','<':'&lt
 const COLORS = ['#5865f2','#eb459e','#3ba55c','#faa61a','#ed4245','#f47b67','#1abc9c','#9b59b6','#e67e22','#607d8b'];
 const ls = { get(k,d){ try{ const v=localStorage.getItem(k); return v==null?d:JSON.parse(v); }catch(e){ return d; } }, set(k,v){ try{ localStorage.setItem(k, JSON.stringify(v)); }catch(e){} } };
 
-const APP_VERSION = '6.1';
+const APP_VERSION = '6.2';
 const S = {
   me: null, profiles: new Map(), servers: [], channels: new Map(), members: new Map(),
   friends: [], dms: [], dmActivity: ls.get('telao-dmact', {}), online: new Set(),
@@ -59,7 +59,7 @@ const initials = p => (p.display_name || p.username || '?').trim().split(/\s+/).
 function avatar(p, cls='', status=false){
   const img = p.avatar_url && (!/\.gif($|\?)/i.test(p.avatar_url) || hasPlus(p)) ? `<img src="${esc(p.avatar_url)}" alt="" loading="lazy" decoding="async">` : `<span class="ini">${esc(initials(p))}</span>`;
   const ring = p.avatar_ring && hasPlus(p) ? ` avring avring-${esc(p.avatar_ring)}` : '';
-  return `<div class="av ${cls}${ring}" style="--avc:${esc(p.avatar_color||'#ff6b4a')}">${img}${status?`<span class="st s-${statusOf(p.id)}"></span>`:''}</div>`;
+  return `<div class="av ${cls}${ring}" style="--avc:${esc(p.avatar_color||'#ff2e9a')}">${img}${status?`<span class="st s-${statusOf(p.id)}"></span>`:''}</div>`;
 }
 function serverInitials(n){ return n.trim().split(/\s+/).map(w=>w[0]).slice(0,2).join('').toUpperCase() || '?'; }
 function fmtTime(d){
@@ -638,7 +638,7 @@ function renderRail(){
 }
 
 /* ---------------- status (online, ausente, não perturbe, invisível) ---------------- */
-const STATUS = { online:['Online','#23a55a'], idle:['Ausente','#f0b232'], dnd:['Não perturbe','#f23f43'], invisible:['Invisível','#80848e'], offline:['Offline','#80848e'] };
+const STATUS = { online:['Online','#b6ff2e'], idle:['Ausente','#f0b232'], dnd:['Não perturbe','#f23f43'], invisible:['Invisível','#80848e'], offline:['Offline','#80848e'] };
 function statusOf(uid){
   if(uid === S.me?.id) return S.myStatus || 'online';
   return S.presence.get(uid) || 'offline';

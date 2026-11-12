@@ -55,7 +55,7 @@ function burst(kind){
   const cv = document.createElement('canvas'); cv.className = 'burst'; host.appendChild(cv);
   const r = host.getBoundingClientRect(); cv.width = r.width; cv.height = r.height;
   const ctx = cv.getContext('2d'), N = kind === 'confete' ? 140 : 40;
-  const colors = ['#ff6b4a','#ffd166','#06d6a0','#4cc9f0','#b388ff','#ff4d8d'];
+  const colors = ['#ff2e9a','#ffd166','#06d6a0','#4cc9f0','#b388ff','#ff4d8d'];
   const glyph = kind === 'coracoes' ? ['❤️','💖','💗','💕'] : kind === 'trofeu' ? ['🏆','⭐','✨','🥇'] : null;
   const ps = Array.from({ length: N }, () => ({ x: r.width * (0.2 + Math.random() * 0.6), y: glyph ? r.height + 20 : r.height * 0.3, vx: (Math.random() - .5) * (glyph ? 2 : 11), vy: glyph ? -(3 + Math.random() * 4) : -(4 + Math.random() * 9),
     rot: Math.random() * 6, vr: (Math.random() - .5) * .3, c: colors[Math.floor(Math.random() * colors.length)], s: 6 + Math.random() * 7, g: glyph ? glyph[Math.floor(Math.random() * glyph.length)] : null }));
