@@ -239,3 +239,18 @@ O jeito principal agora é pelo **Last.fm**, que não tem limite de pessoas nem 
 **Cada pessoa:** Configurações → Conexões → Spotify. Lá tem o passo a passo: criar conta grátis no Last.fm, ligar o Spotify em last.fm/settings/applications e digitar o usuário do Last.fm no Telão. A música aparece no perfil em até 30 segundos depois do play.
 
 O "Spotify direto" (com Ouvir junto) continua opcional e só aparece se você configurar o Client ID do Spotify.
+
+# Versão 6.4: segurança, canais configuráveis, idade e filtro de nudez
+
+**Rode o `supabase.sql` de novo** no SQL Editor (colunas novas nos canais, idade e regras de mensagem).
+
+- **Canais de texto** (engrenagem do canal → Regras/Acesso): modo lento (5 s a 6 h), só leitura (avisos), bloquear links, bloquear arquivos, +18 e canal privado por cargo. As regras valem no banco, não dá para burlar pelo app.
+- **Canais de voz**: limite de pessoas, qualidade do áudio (64 a 384 kbps), qualidade de câmera/tela, só "pressionar para falar", bloquear câmera, bloquear tela, +18 e privado por cargo.
+- **Idade**: o cadastro pede a data de nascimento (mínimo 13 anos). Ela não aparece para ninguém e não pode ser trocada. Canais e servidores +18 mostram um aviso e só liberam para maiores de 18.
+- **Segurança da conta** (Configurações → Segurança): verificação em duas etapas com app autenticador, "sair de todos os aparelhos", aviso antes de abrir links de fora (com alerta de golpe "nitro grátis", links encurtados etc.).
+  - Se aparecer erro ao ativar a verificação: Supabase → Authentication → Multi-Factor → deixe **TOTP** ligado.
+- **Segurança do servidor** (Configurações do servidor → Segurança): servidor +18, nível de verificação (conta com +5 min, membro há +10 min, exigir duas etapas) e lista de ocorrências do filtro.
+- **Anti-spam**: no máximo 8 mensagens a cada 10 segundos por pessoa.
+- **Filtro automático de nudez/pornografia**: telas e câmeras são analisadas no próprio aparelho de quem transmite a cada 2,5 s (modelo aberto NSFWJS, pasta `models/nsfw`). Se detectar, a transmissão para na hora e a pessoa recebe um aviso. Na segunda vez em 24 h, fica 24 h sem compartilhar tela e câmera. Nada da tela é enviado para servidor nenhum.
+- **Áudio**: supressão de ruído em 3 níveis (a "Forte" junta o filtro do navegador, isolamento de voz, corte de grave/zumbido, nivelador de voz e um portão que fecha o microfone no silêncio), modo música (som estéreo sem filtros) e correção de perda de pacote (a voz não picota com internet ruim).
+- **Cabeçalhos de segurança** na Vercel: o site não pode ser aberto dentro de outro site (proteção contra clickjacking) e outras proteções do navegador.

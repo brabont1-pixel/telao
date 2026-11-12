@@ -928,6 +928,138 @@ create policy "marcar interesse" on public.event_rsvps for insert to authenticat
 drop policy if exists "tirar interesse" on public.event_rsvps;
 create policy "tirar interesse" on public.event_rsvps for delete to authenticated using (user_id = auth.uid());
 
+
+-- =====================================================================
+-- v6.4: SEGURANÇA, CANAIS CONFIGURÁVEIS e RESTRIÇÃO DE IDADE
+-- =====================================================================
+alter table public.profiles add column if not exists birthdate date;
+alter table public.profiles add column if not exists share_block_until timestamptz;
+alter table public.servers add column if not exists nsfw boolean not null default false;
+alter table public.servers add column if not exists verify_level int not null default 0 check (verify_level between 0 and 3);
+alter table public.channels add column if not exists nsfw boolean not null default false;
+alter table public.channels add column if not exists slowmode int not null default 0 check (slowmode between 0 and 21600);
+alter table public.channels add column if not exists readonly boolean not null default false;
+alter table public.channels add column if not exists allowed_roles uuid[];
+alter table public.channels add column if not exists user_limit int not null default 0 check (user_limit between 0 and 99);
+alter table public.channels add column if not exists bitrate int not null default 96 check (bitrate between 32 and 510);
+alter table public.channels add column if not exists video_quality text not null default 'auto' check (video_quality in ('auto','720p','1080p'));
+alter table public.channels add column if not exists no_links boolean not null default false;
+alter table public.channels add column if not exists no_media boolean not null default false;
+alter table public.channels add column if not exists ptt_only boolean not null default false;
+alter table public.channels add column if not exists no_camera boolean not null default false;
+alter table public.channels add column if not exists no_screen boolean not null default false;
+
+-- idade: a data de nascimento é definida uma vez só (mínimo 13 anos)
+create or replace function public.is_adult(uid uuid) returns boolean
+language sql stable security definer set search_path = public as $$
+  select coalesce((select birthdate <= (current_date - interval '18 years')::date from profiles where id = uid), false);
+$$;
+create or replace function public.set_birthdate(p_date date) returns boolean
+language plpgsql security definer set search_path = public as $$
+declare cur date;
+begin
+  select birthdate into cur from profiles where id = auth.uid();
+  if cur is not null then raise exception 'A data de nascimento já foi definida e não pode ser trocada'; end if;
+  if p_date > (current_date - interval '13 years')::date then raise exception 'O Telão é para maiores de 13 anos'; end if;
+  if p_date < date '1900-01-01' then raise exception 'Data inválida'; end if;
+  perform set_config('telao.priv_ok', '1', true);
+  update profiles set birthdate = p_date where id = auth.uid();
+  perform set_config('telao.priv_ok', '', true);
+  return public.is_adult(auth.uid());
+end $$;
+
+-- ver o canal (canais privados por cargo) x acessar o conteúdo (+18)
+create or replace function public.can_view_channel(cid uuid) returns boolean
+language sql stable security definer set search_path = public as $$
+  select exists (
+    select 1 from channels c
+    where c.id = cid and (
+      auth.uid() in (c.dm_a, c.dm_b)
+      or (c.server_id is not null and exists (select 1 from server_members m where m.server_id = c.server_id and m.user_id = auth.uid())
+          and (c.allowed_roles is null or cardinality(c.allowed_roles) = 0
+               or exists (select 1 from servers s where s.id = c.server_id and s.owner_id = auth.uid())
+               or public.has_perm(c.server_id, 32)
+               or exists (select 1 from member_roles mr where mr.server_id = c.server_id and mr.user_id = auth.uid() and mr.role_id = any(c.allowed_roles))))
+    )
+  );
+$$;
+create or replace function public.can_access_channel(cid uuid) returns boolean
+language sql stable security definer set search_path = public as $$
+  select public.can_view_channel(cid) and not exists (
+    select 1 from channels c left join servers s on s.id = c.server_id
+    where c.id = cid and (c.nsfw or coalesce(s.nsfw, false)) and not public.is_adult(auth.uid()));
+$$;
+drop policy if exists "ver canais" on public.channels;
+create policy "ver canais" on public.channels for select to authenticated using (
+  (kind = 'dm' and auth.uid() in (dm_a, dm_b))
+  or (server_id is not null and public.is_member(server_id) and (
+      allowed_roles is null or cardinality(allowed_roles) = 0 or public.is_server_owner(server_id) or public.has_perm(server_id, 32)
+      or exists (select 1 from public.member_roles mr where mr.server_id = channels.server_id and mr.user_id = auth.uid() and mr.role_id = any(channels.allowed_roles)))));
+
+-- regras ao mandar mensagem: modo lento, só leitura, sem links/mídia e anti-spam
+create or replace function public.message_rules() returns trigger
+language plpgsql security definer set search_path = public as $$
+declare c channels; mod boolean; last_at timestamptz; recent int;
+begin
+  select * into c from channels where id = new.channel_id;
+  mod := c.server_id is not null and (public.has_perm(c.server_id, 1) or public.has_perm(c.server_id, 8));
+  -- anti-spam para todo mundo: no máximo 8 mensagens em 10 segundos
+  select count(*) into recent from messages where author_id = new.author_id and created_at > now() - interval '10 seconds';
+  if recent >= 8 then raise exception 'Calma! Você está mandando mensagens rápido demais.'; end if;
+  if c.server_id is null or mod then return new; end if;
+  -- nível de verificação do servidor
+  declare vl int; begin
+    select verify_level into vl from servers where id = c.server_id;
+    if vl >= 1 and exists (select 1 from profiles where id = new.author_id and created_at > now() - interval '5 minutes') then raise exception 'Este servidor pede que sua conta tenha mais de 5 minutos para falar.'; end if;
+    if vl >= 2 and exists (select 1 from server_members where server_id = c.server_id and user_id = new.author_id and joined_at > now() - interval '10 minutes') then raise exception 'Este servidor pede que você esteja aqui há mais de 10 minutos para falar.'; end if;
+    if vl >= 3 and not exists (select 1 from auth.mfa_factors f where f.user_id = new.author_id and f.status = 'verified') then raise exception 'Este servidor pede a verificação em duas etapas ligada (Configurações → Segurança).'; end if;
+  end;
+  if c.readonly then raise exception 'Este canal é só para leitura.'; end if;
+  if c.slowmode > 0 then
+    select max(created_at) into last_at from messages where channel_id = new.channel_id and author_id = new.author_id;
+    if last_at is not null and last_at > now() - make_interval(secs => c.slowmode) then
+      raise exception 'Modo lento: espere % s para mandar outra mensagem.', ceil(extract(epoch from (last_at + make_interval(secs => c.slowmode) - now())))::int;
+    end if;
+  end if;
+  if c.no_links and new.content ~* '(https?://|www\.)' then raise exception 'Links não são permitidos neste canal.'; end if;
+  if c.no_media and jsonb_array_length(coalesce(new.attachments, '[]'::jsonb)) > 0
+     and exists (select 1 from jsonb_array_elements(new.attachments) a where coalesce(a->>'type', '') not in ('poll')) then
+    raise exception 'Arquivos e imagens não são permitidos neste canal.';
+  end if;
+  return new;
+end $$;
+drop trigger if exists message_rules on public.messages;
+create trigger message_rules before insert on public.messages for each row execute function public.message_rules();
+
+-- moderação automática da tela: registra e, depois de 2 casos em 24 h, bloqueia compartilhar por 24 h
+create table if not exists public.safety_events (
+  id uuid primary key default gen_random_uuid(),
+  user_id uuid not null default auth.uid() references public.profiles(id) on delete cascade,
+  kind text not null check (kind in ('screen_nsfw','camera_nsfw','image_nsfw')),
+  server_id uuid references public.servers(id) on delete set null,
+  channel_id uuid references public.channels(id) on delete set null,
+  score real,
+  created_at timestamptz not null default now()
+);
+alter table public.safety_events enable row level security;
+drop policy if exists "admin ve eventos" on public.safety_events;
+create policy "admin ve eventos" on public.safety_events for select to authenticated using (public.is_admin_user() or user_id = auth.uid() or (server_id is not null and public.has_perm(server_id, 64)));
+create or replace function public.report_nsfw(p_kind text, p_channel uuid, p_score real) returns timestamptz
+language plpgsql security definer set search_path = public as $$
+declare sid uuid; n int; until_ts timestamptz;
+begin
+  select server_id into sid from channels where id = p_channel;
+  insert into safety_events (user_id, kind, server_id, channel_id, score) values (auth.uid(), p_kind, sid, p_channel, p_score);
+  select count(*) into n from safety_events where user_id = auth.uid() and kind in ('screen_nsfw','camera_nsfw') and created_at > now() - interval '24 hours';
+  if n >= 2 then
+    until_ts := now() + interval '24 hours';
+    perform set_config('telao.priv_ok', '1', true);
+    update profiles set share_block_until = until_ts where id = auth.uid();
+    perform set_config('telao.priv_ok', '', true);
+  end if;
+  return until_ts;
+end $$;
+
 -- impede trocar campos sensíveis via update
 create or replace function public.guard_updates() returns trigger
 language plpgsql as $$
@@ -954,6 +1086,7 @@ begin
     if not public.is_privileged() then
       new.is_admin := old.is_admin; new.plan_until := old.plan_until; new.plus_months := old.plus_months; new.badges := old.badges;
       new.fichas := old.fichas; new.streak := old.streak; new.last_daily := old.last_daily; new.equipped := old.equipped;
+      new.birthdate := old.birthdate; new.share_block_until := old.share_block_until;
       -- recursos do Telão+ só para quem tem o plano
       if not public.has_plus(old.id) then
         if new.banner_url is distinct from old.banner_url and new.banner_url is not null then new.banner_url := old.banner_url; end if;

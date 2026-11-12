@@ -20,7 +20,9 @@
     sdp = boostVideo(sdp);
     const m = sdp.match(/a=rtpmap:(\d+) opus\/48000\/2/i);
     if(!m) return sdp;
-    const pt = m[1], want = ['stereo=1','sprop-stereo=1','maxaveragebitrate=510000','useinbandfec=1'];
+    // qualidade da voz: o canal define o teto (padrão 96 kbps); FEC deixa a voz firme mesmo com internet ruim
+    const kb = Math.max(32, Math.min(510, (Voice.channel && Voice.channel.bitrate) || 96));
+    const pt = m[1], want = ['stereo=1','sprop-stereo=1','maxaveragebitrate=' + (kb * 1000),'useinbandfec=1','usedtx=0','maxplaybackrate=48000'];
     const re = new RegExp('a=fmtp:'+pt+' ([^\\r\\n]*)');
     if(re.test(sdp)) return sdp.replace(re,(l,p)=>{
       const keep = p.split(';').map(x=>x.trim()).filter(x=>x && !want.some(w=>x.split('=')[0]===w.split('=')[0]));
@@ -55,20 +57,71 @@
     get active(){ return !!this.channel; },
     pttDown: false,
     prefs(){ return (window.App && App.prefs) || {}; },
+    /* nível de ruído: 'off' | 'padrao' (filtro do navegador) | 'forte' (navegador + isolamento de voz + portão de ruído)
+       modo música: desliga todo processamento para mandar o som limpo (violão, beat, etc.) */
+    noiseLevel(){ const P = this.prefs(); return P.noiseLevel || (P.noise === false ? 'off' : 'forte'); },
     micConstraints(){
-      const P = this.prefs();
-      const c = { echoCancellation: P.echo !== false, noiseSuppression: P.noise !== false, autoGainControl: P.agc !== false };
+      const P = this.prefs(), lvl = this.noiseLevel(), music = !!P.musicMode;
+      const sup = (navigator.mediaDevices.getSupportedConstraints && navigator.mediaDevices.getSupportedConstraints()) || {};
+      const c = { echoCancellation: !music && P.echo !== false, noiseSuppression: !music && lvl !== 'off', autoGainControl: !music && P.agc !== false,
+        channelCount: music ? { ideal: 2 } : { ideal: 1 }, sampleRate: { ideal: 48000 }, sampleSize: { ideal: 16 } };
+      if(sup.voiceIsolation && !music && lvl === 'forte') c.voiceIsolation = true;
       if(P.inputId) c.deviceId = { exact: P.inputId };
       return { audio: c };
     },
     async getMic(){
-      try{ return await navigator.mediaDevices.getUserMedia(this.micConstraints()); }
+      let raw;
+      try{ raw = await navigator.mediaDevices.getUserMedia(this.micConstraints()); }
       catch(e){
         if(e.name === 'OverconstrainedError' || e.name === 'NotFoundError'){ // microfone escolhido sumiu: usa o padrão
-          const c = this.micConstraints(); delete c.audio.deviceId; return navigator.mediaDevices.getUserMedia(c);
-        }
-        throw e;
+          const c = this.micConstraints(); delete c.audio.deviceId; raw = await navigator.mediaDevices.getUserMedia(c);
+        } else throw e;
       }
+      return this.processMic(raw);
+    },
+    /* cadeia de áudio: corta grave de vento/ventilador, nivela a voz e fecha o microfone no silêncio (portão de ruído) */
+    processMic(raw){
+      const P = this.prefs(), lvl = this.noiseLevel();
+      if(P.musicMode || lvl !== 'forte' || !(window.AudioContext || window.webkitAudioContext)) return raw;
+      try{
+        const ctx = new (window.AudioContext || window.webkitAudioContext)({ sampleRate: 48000, latencyHint: 'interactive' });
+        const src = ctx.createMediaStreamSource(raw);
+        const hp = ctx.createBiquadFilter(); hp.type = 'highpass'; hp.frequency.value = 85; hp.Q.value = 0.7;
+        const hum = ctx.createBiquadFilter(); hum.type = 'notch'; hum.frequency.value = 60; hum.Q.value = 12;
+        const pres = ctx.createBiquadFilter(); pres.type = 'peaking'; pres.frequency.value = 3200; pres.gain.value = 2; pres.Q.value = 0.9;
+        const comp = ctx.createDynamicsCompressor(); comp.threshold.value = -24; comp.knee.value = 18; comp.ratio.value = 3.5; comp.attack.value = 0.004; comp.release.value = 0.2;
+        const gate = ctx.createGain(); gate.gain.value = 1;
+        const an = ctx.createAnalyser(); an.fftSize = 1024; an.smoothingTimeConstant = 0;
+        const dst = ctx.createMediaStreamDestination();
+        src.connect(hp).connect(hum).connect(pres).connect(comp).connect(gate).connect(dst);
+        hp.connect(an);
+        const buf = new Float32Array(an.fftSize);
+        let floor = -60, open = false, holdUntil = 0;
+        const tick = () => {
+          an.getFloatTimeDomainData(buf);
+          let sum = 0; for(let i = 0; i < buf.length; i++) sum += buf[i] * buf[i];
+          const db = 10 * Math.log10(sum / buf.length + 1e-12);
+          // aprende o nível do ruído de fundo devagar
+          if(!open) floor = floor * 0.995 + db * 0.005; else floor = Math.min(floor, floor * 0.9995 + db * 0.0005);
+          const thr = Math.max(-58, Math.min(-28, floor + 9 + ((P.gateBoost || 0))));
+          const now = ctx.currentTime;
+          if(db > thr){ holdUntil = now + 0.28; if(!open){ open = true; gate.gain.cancelScheduledValues(now); gate.gain.setTargetAtTime(1, now, 0.006); } }
+          else if(open && now > holdUntil){ open = false; gate.gain.cancelScheduledValues(now); gate.gain.setTargetAtTime(0.03, now, 0.06); }
+        };
+        const iv = setInterval(tick, 10);
+        const out = dst.stream;
+        out._raw = raw; out._ctx = ctx; out._iv = iv;
+        const t = out.getAudioTracks()[0]; if(t && 'contentHint' in t) t.contentHint = 'speech';
+        if(ctx.state === 'suspended') ctx.resume().catch(() => {});
+        return out;
+      }catch(e){ return raw; }
+    },
+    stopStream(s){
+      if(!s) return;
+      s.getTracks().forEach(t => t.stop());
+      if(s._raw) s._raw.getTracks().forEach(t => t.stop());
+      if(s._iv) clearInterval(s._iv);
+      if(s._ctx) try{ s._ctx.close(); }catch(e){}
     },
     micEnabled(){
       const P = this.prefs();
@@ -87,7 +140,7 @@
       let ns;
       try{ ns = await this.getMic(); }catch(e){ App.toast('Não consegui usar esse microfone: ' + e.message, true); return; }
       const nt = ns.getAudioTracks()[0];
-      nt.enabled = this.micEnabled(); if('contentHint' in nt) nt.contentHint = 'speech';
+      nt.enabled = this.micEnabled(); if('contentHint' in nt) nt.contentHint = this.prefs().musicMode ? 'music' : 'speech';
       const old = this.micStream;
       this.peers.forEach(p => {
         const snd = p.micSenders && p.micSenders[0];
@@ -95,7 +148,7 @@
         else p.micSenders = [p.pc.addTrack(nt, ns)];
       });
       this.micStream = ns;
-      if(old) old.getTracks().forEach(t => t.stop());
+      if(old) this.stopStream(old);
       const a = this.analysers.get(SESSION); if(a){ try{a.src.disconnect();}catch(e){} this.analysers.delete(SESSION); }
       this.addAnalyser(SESSION, ns);
       this.track();
@@ -137,7 +190,7 @@
       this.stopScreen(true); this.stopCamera(true);
       this.peers.forEach((p,id)=>this.closePeer(id));
       this.peers.clear();
-      if(this.micStream){ this.micStream.getTracks().forEach(t=>t.stop()); this.micStream=null; }
+      if(this.micStream){ this.stopStream(this.micStream); this.micStream=null; }
       this.analysers.forEach(a=>{ try{a.src.disconnect();}catch(e){} }); this.analysers.clear();
       this.speaking.clear();
       try{ this.presenceCh && await this.presenceCh.untrack(); }catch(e){}

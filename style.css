@@ -1143,3 +1143,22 @@ a{color:var(--link)}
 /* o "telão" grafite também nos títulos grandes */
 .cbox2 h1,.shophero h1{font-family:"Sedgwick Ave Display",var(--hf);font-weight:400;color:var(--lime);text-shadow:2px 2px 0 var(--pink);letter-spacing:0}
 .cicon{background:var(--pink)}
+/* ---------- v6.4 · segurança, idade, canais ---------- */
+.tag18{display:inline-flex;align-items:center;font-size:10px;font-weight:800;padding:1px 5px;border-radius:4px;background:var(--bad);color:#fff;letter-spacing:.3px;margin-left:6px}
+.chtags{display:inline-flex;align-items:center;gap:3px;margin-left:4px;color:var(--mut)}.cht{display:inline-flex}
+.chlim{font-size:10.5px;color:var(--mut);background:var(--bg3);border-radius:4px;padding:0 5px;font-variant-numeric:tabular-nums}
+.gate18{max-width:460px;margin:12vh auto 0;text-align:center;padding:20px}
+.g18i{width:84px;height:84px;margin:0 auto 18px;border-radius:50%;background:var(--bad);color:#fff;display:flex;align-items:center;justify-content:center;font:800 26px var(--hf)}
+.gate18 h2{font-family:var(--hf);font-size:24px;margin-bottom:8px}.gate18 p{color:var(--txt2);line-height:1.55;margin-bottom:20px}
+.g18b{display:flex;gap:10px;justify-content:center}
+.cmprule{display:flex;align-items:center;gap:6px;flex-wrap:wrap;font-size:12px;color:var(--mut);padding:0 16px 6px}.cmprule svg{vertical-align:-2px}.dotsep{opacity:.5}
+.chset .grid2{display:grid;grid-template-columns:1fr 1fr;gap:12px}
+.rolepick{display:flex;flex-direction:column;gap:4px;margin-top:8px;max-height:220px;overflow:auto}
+.rp{display:flex;align-items:center;gap:8px;padding:8px 10px;border-radius:8px;background:var(--bg2);cursor:pointer;font-size:14px}.rp i{width:10px;height:10px;border-radius:50%}
+.vlevels,.nzlv{display:grid;grid-template-columns:repeat(auto-fit,minmax(150px,1fr));gap:8px;margin:8px 0 14px}
+.vl{text-align:left;padding:12px;border-radius:10px;background:var(--bg2);border:1.5px solid var(--line);display:flex;flex-direction:column;gap:3px;color:var(--txt)}
+.vl small{color:var(--mut);font-size:12px;line-height:1.35}.vl.on{border-color:var(--pink);background:color-mix(in srgb,var(--pink) 10%,var(--bg2))}.vl:disabled{opacity:.6}
+.warnbox{padding:12px 14px;border-radius:10px;background:color-mix(in srgb,var(--bad) 14%,var(--bg2));border:1px solid color-mix(in srgb,var(--bad) 40%,transparent);line-height:1.5}
+.linkbox{padding:10px 12px;border-radius:8px;background:var(--bg3);font-family:ui-monospace,Consolas,monospace;font-size:12.5px;word-break:break-all}.linkbox.sus{border:1px solid var(--bad);color:#ffb4b4}
+.code6{text-align:center;font-size:26px;letter-spacing:10px;font-variant-numeric:tabular-nums;max-width:240px;margin:0 auto}
+.evlog{display:flex;flex-direction:column;gap:6px}.evlog div{display:flex;align-items:center;gap:6px}

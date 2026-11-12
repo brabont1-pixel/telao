@@ -225,7 +225,7 @@ function renderSettings(){
   let nav;
   if(SET.kind === 'user'){
     nav = [
-      ['h','Configurações de usuário'], ['account','Minha conta'], ['profile','Perfis'], ['connections','Conexões'],
+      ['h','Configurações de usuário'], ['account','Minha conta'], ['security','Segurança'], ['profile','Perfis'], ['connections','Conexões'],
       ['plus', `<span style="display:inline-flex;width:18px;height:18px">${badgeSvg('plus', plusTier(me))}</span> Telão+`],
       ['shop', 'Loja e presentes'], ['boosts', `<span style="display:inline-flex">${BOOST_SVG(18)}</span> Impulsos`],
       ['h','Configurações do app'], ['appearance','Aparência'], ['a11y','Acessibilidade'], ['lang','Idioma'], ['voice','Voz e vídeo'], ['notif','Notificações'], ['keys','Teclas de atalho'], ['app','App e instalação'],
@@ -241,6 +241,7 @@ function renderSettings(){
     nav.push(['members','Membros'], ['boost', `<span style="display:inline-flex">${BOOST_SVG(16)}</span> Impulsos`]);
     if(App.hasPerm(s.id, 2)) nav.push(['invites','Convites']);
     if(App.hasPerm(s.id, 128) || App.hasPerm(s.id, 4)) nav.push(['bans','Banimentos']);
+    if(App.hasPerm(s.id, 2) || App.hasPerm(s.id, 64)) nav.push(['safety','Segurança']);
     if(s.owner_id === S.me.id) nav.push(['hr'], ['delete','Excluir servidor','danger']);
     if(!nav.find(n => n[0] === SET.sec)) SET.sec = (nav[1] || [])[0] || 'members';
   }
@@ -260,8 +261,8 @@ function renderSettings(){
   const box = SET.el.querySelector('#sIn');
   const back = isMobile() ? `<button class="btn sec sm mobileback" id="sBack">← Voltar</button>` : '';
   const fn = SET.kind === 'user'
-    ? { account: secAccount, profile: secProfile, plus: secPlus, shop: secShop, connections: secConnections, boosts: secMyBoosts, appearance: secAppearance, a11y: secA11y, lang: secLang, voice: secVoice, notif: secNotif, keys: secKeys, app: secApp, admin: secAdmin }[SET.sec]
-    : { overview: secSrvOverview, roles: secSrvRoles, channels: secSrvChannels, members: secSrvMembers, boost: secSrvBoost, bans: secSrvBans, invites: secSrvInvites }[SET.sec];
+    ? { account: secAccount, profile: secProfile, plus: secPlus, shop: secShop, connections: secConnections, security: secSecurity, boosts: secMyBoosts, appearance: secAppearance, a11y: secA11y, lang: secLang, voice: secVoice, notif: secNotif, keys: secKeys, app: secApp, admin: secAdmin }[SET.sec]
+    : { overview: secSrvOverview, roles: secSrvRoles, channels: secSrvChannels, members: secSrvMembers, boost: secSrvBoost, bans: secSrvBans, safety: secSrvSafety, invites: secSrvInvites }[SET.sec];
   if(fn) fn(box, back);
   const b = box.querySelector('#sBack'); if(b) b.onclick = () => { SET.mobileOpen = false; renderSettings(); };
 }
@@ -613,7 +614,9 @@ function secVoice(box, back){
     <input type="range" class="range" id="vSens" min="1" max="30" value="${P.sensitivity}">
     <small style="color:var(--mut)">A linha amarela no medidor é o limite: acima dela, seu avatar acende de verde.</small>
     <hr class="sdiv"><h3>Processamento de voz</h3>
-    ${row('Supressão de ruído', 'Corta barulhos de fundo (ventilador, teclado).', toggle('vNoise', P.noise))}
+    <div class="srow"><div class="t"><b>Supressão de ruído</b><small>Corta barulho de fundo: ventilador, teclado, rua, cachorro.</small></div></div>
+    <div class="nzlv">${[['off','Desligada','Som cru do microfone.'],['padrao','Padrão','Filtro do navegador.'],['forte','Forte','Filtro do navegador + isolamento de voz + portão que fecha o microfone no silêncio. Recomendado.']].map(([v, l, d]) => `<button class="vl ${Voice.noiseLevel() === v ? 'on' : ''}" data-nz="${v}"><b>${l}</b><small>${d}</small></button>`).join('')}</div>
+    ${row('Modo música', 'Desliga todos os filtros e manda o som em estéreo, para tocar instrumento ou mostrar uma música com qualidade. Use fone.', toggle('vMusic', !!P.musicMode))}
     ${row('Cancelamento de eco', 'Evita que seus amigos ouçam o próprio eco.', toggle('vEcho', P.echo))}
     ${row('Controle automático de ganho', 'Ajusta o volume do seu microfone sozinho.', toggle('vAgc', P.agc))}
     <hr class="sdiv"><h3>Transmissão de tela ${plus ? '<span class="plustag">TELÃO+</span>' : ''}</h3>
@@ -654,7 +657,8 @@ function secVoice(box, back){
   th();
   $b('#vSens').oninput = e => { P.sensitivity = +e.target.value; savePrefs(); th(); };
   const proc = (id, key) => $b(id).onchange = e => { P[key] = e.target.checked; savePrefs(); Voice.switchMic(); if(test) startTest(); };
-  proc('#vNoise','noise'); proc('#vEcho','echo'); proc('#vAgc','agc');
+  proc('#vEcho','echo'); proc('#vAgc','agc'); proc('#vMusic','musicMode');
+  box.querySelectorAll('[data-nz]').forEach(b => b.onclick = () => { P.noiseLevel = b.dataset.nz; P.noise = b.dataset.nz !== 'off'; savePrefs(); Voice.switchMic(); renderSettings(); });
   $b('#vSnd').onchange = e => { P.soundVoice = e.target.checked; savePrefs(); };
   $b('#vDuck').onchange = e => { P.duck = e.target.checked; savePrefs(); };
   $b('#vSndP').onchange = e => { P.soundPtt = e.target.checked; savePrefs(); };
