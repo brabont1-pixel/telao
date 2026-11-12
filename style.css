@@ -1162,3 +1162,43 @@ a{color:var(--link)}
 .linkbox{padding:10px 12px;border-radius:8px;background:var(--bg3);font-family:ui-monospace,Consolas,monospace;font-size:12.5px;word-break:break-all}.linkbox.sus{border:1px solid var(--bad);color:#ffb4b4}
 .code6{text-align:center;font-size:26px;letter-spacing:10px;font-variant-numeric:tabular-nums;max-width:240px;margin:0 auto}
 .evlog{display:flex;flex-direction:column;gap:6px}.evlog div{display:flex;align-items:center;gap:6px}
+/* ---------- v6.5 · solicitações, comunidade, tags, novidades, emojis ---------- */
+.reqlist{display:flex;flex-direction:column;gap:10px;max-height:60vh;overflow:auto}
+.reqc{background:var(--bg2);border:1px solid var(--line);border-radius:12px;padding:12px}
+.reqh{display:flex;align-items:center;gap:10px}.reqh .t{display:flex;flex-direction:column}.reqh small{color:var(--mut);font-size:12px}
+.reqm{margin:10px 0;padding:8px 10px;border-radius:8px;background:var(--bg3);font-size:14px;display:flex;flex-direction:column;gap:4px;max-height:120px;overflow:auto}
+.reqb{display:flex;gap:8px;justify-content:flex-end}
+.reqbanner{margin:10px 16px 0;padding:9px 12px;border-radius:10px;background:color-mix(in srgb,var(--lime) 10%,var(--bg2));border:1px solid color-mix(in srgb,var(--lime) 30%,transparent);font-size:13px;color:var(--txt2);display:flex;align-items:center;gap:8px}
+.commi{vertical-align:-2px;flex:none}
+.railcomm{position:absolute;right:-3px;bottom:-3px;display:flex;border-radius:50%;box-shadow:0 0 0 3px var(--bg0)}
+.ricon{position:relative}
+.explore{position:fixed;inset:0;z-index:300;background:rgba(5,5,8,.75);display:flex;align-items:center;justify-content:center;padding:20px}
+.exbox{width:min(1040px,100%);max-height:92vh;overflow:auto;background:var(--panel);border:1px solid var(--line2);border-radius:14px;padding:24px;box-shadow:var(--shadow)}
+.exhead{display:flex;justify-content:space-between;gap:12px;margin-bottom:16px}.exhead h1{font-family:"Sedgwick Ave Display",var(--hf);font-weight:400;font-size:34px;color:var(--lime);text-shadow:2px 2px 0 var(--pink)}.exhead p{color:var(--txt2)}
+.exsearch{display:flex;align-items:center;gap:8px;background:var(--bg2);border:1px solid var(--line);border-radius:10px;padding:0 12px;margin-bottom:12px;color:var(--mut)}.exsearch input{flex:1;background:none;border:0;outline:0;color:var(--txt);padding:12px 0;font:inherit}
+.exgrid{display:grid;grid-template-columns:repeat(auto-fill,minmax(230px,1fr));gap:12px}
+.excard{position:relative;background:var(--bg2);border:1px solid var(--line);border-radius:12px;overflow:hidden;display:flex;flex-direction:column;transition:transform .15s,border-color .15s}
+.excard:hover{transform:translateY(-2px);border-color:var(--line2)}
+.exban{height:84px;background:color-mix(in srgb,var(--sc) 55%,var(--bg3));background-size:cover;background-position:center}
+.exic{position:absolute;top:52px;left:14px;width:56px;height:56px;border-radius:14px;overflow:hidden;background:var(--sc);border:4px solid var(--bg2);display:flex;align-items:center;justify-content:center;font-weight:800;color:#fff}.exic img{width:100%;height:100%;object-fit:cover}
+.exb{padding:34px 14px 14px;display:flex;flex-direction:column;gap:6px;flex:1}.exb b{display:flex;align-items:center;gap:5px}.exb p{font-size:13px;color:var(--txt2);flex:1;display:-webkit-box;-webkit-line-clamp:3;-webkit-box-orient:vertical;overflow:hidden}
+.exmeta{display:flex;flex-wrap:wrap;gap:8px;font-size:12px;color:var(--mut);align-items:center}.exmeta span{display:inline-flex;align-items:center;gap:3px}
+.extag{background:var(--bg4);color:var(--txt2);padding:1px 7px;border-radius:4px;font-size:11px}
+.exb .btn{align-self:flex-start;margin-top:4px}
+.gtag{display:inline-flex;align-items:center;gap:3px;margin-left:6px;padding:0 6px;height:18px;border-radius:5px;background:var(--bg4);border:1px solid var(--line2);font-size:11px;font-weight:800;letter-spacing:.4px;color:var(--txt);vertical-align:1px;line-height:1}
+.gtag i{font-style:normal;font-size:11px}
+.tagprev{display:flex;align-items:center;gap:4px;padding:14px;border-radius:10px;background:var(--bg2);margin:10px 0 16px;font-size:15px}
+.tagbadges{display:flex;flex-wrap:wrap;gap:6px}.tagbadges button{width:36px;height:36px;border-radius:8px;background:var(--bg2);border:1.5px solid var(--line);font-size:18px}.tagbadges button.on{border-color:var(--pink);background:color-mix(in srgb,var(--pink) 14%,var(--bg2))}
+.nlist{display:flex;flex-direction:column;gap:10px;max-height:62vh;overflow:auto}
+.nitem{padding:12px 14px;border-radius:12px;background:var(--bg2);border:1px solid var(--line);display:flex;flex-direction:column;gap:6px}
+.nitem.new{border-color:color-mix(in srgb,var(--lime) 45%,transparent)}
+.nk{display:flex;align-items:center;gap:5px;font-size:11px;font-weight:800;letter-spacing:.4px;text-transform:uppercase;color:var(--pink)}.nk span{margin-left:auto;color:var(--mut);font-weight:500;text-transform:none;letter-spacing:0}
+.nitem b{font-size:15px}.nb{font-size:14px;color:var(--txt2);line-height:1.55}.nitem .btn{align-self:flex-start}
+img.cemoji{width:22px;height:22px;object-fit:contain;vertical-align:-5px;margin:0 1px}
+img.cemoji.big{width:48px;height:48px}
+.rx img.cemoji{width:18px;height:18px;vertical-align:-4px}
+.ceps button img{width:28px;height:28px;object-fit:contain}.celock{opacity:.45;filter:grayscale(.5)}
+.emlim{display:flex;gap:16px;flex-wrap:wrap;align-items:center;margin:10px 0 14px;color:var(--txt2);font-size:14px}
+.emup{display:flex;align-items:center;gap:12px;margin-bottom:14px;flex-wrap:wrap}
+.emlist{display:flex;flex-direction:column;gap:4px}
+.emrow{display:flex;align-items:center;gap:10px;padding:8px 10px;border-radius:8px;background:var(--bg2)}.emrow img{width:32px;height:32px;object-fit:contain}.emrow code{font-size:13px}

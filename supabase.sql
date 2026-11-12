@@ -1006,6 +1006,7 @@ begin
   -- anti-spam para todo mundo: no máximo 8 mensagens em 10 segundos
   select count(*) into recent from messages where author_id = new.author_id and created_at > now() - interval '10 seconds';
   if recent >= 8 then raise exception 'Calma! Você está mandando mensagens rápido demais.'; end if;
+  perform public.check_custom_emojis(new.content, new.channel_id, new.author_id);
   if c.server_id is null or mod then return new; end if;
   -- nível de verificação do servidor
   declare vl int; begin
@@ -1060,6 +1061,212 @@ begin
   return until_ts;
 end $$;
 
+
+-- =====================================================================
+-- v6.5: PRIVACIDADE DE DM, COMUNIDADES, TAGS DE SERVIDOR, AVISOS DO TELÃO e EMOJIS DE SERVIDOR
+-- =====================================================================
+-- quem pode me mandar mensagem: 'all' (qualquer um), 'servers' (quem está num servidor comigo), 'friends' (só amigos)
+alter table public.profiles add column if not exists dm_privacy text not null default 'servers' check (dm_privacy in ('all','servers','friends'));
+alter table public.channels add column if not exists dm_status text not null default 'ok' check (dm_status in ('ok','pending'));
+alter table public.channels add column if not exists dm_requester uuid references public.profiles(id) on delete set null;
+
+create or replace function public.open_dm(p_user uuid) returns uuid
+language plpgsql security definer set search_path = public as $$
+declare a uuid; b uuid; cid uuid; fr boolean; priv text;
+begin
+  if auth.uid() is null then raise exception 'Não autenticado'; end if;
+  if p_user = auth.uid() then raise exception 'Não dá para mandar mensagem para você mesmo'; end if;
+  if exists (select 1 from friendships where status = 'blocked' and ((requester = p_user and addressee = auth.uid()) or (requester = auth.uid() and addressee = p_user))) then
+    raise exception 'Não é possível mandar mensagem para essa pessoa';
+  end if;
+  fr := exists (select 1 from friendships where status = 'accepted'
+                and ((requester = auth.uid() and addressee = p_user) or (requester = p_user and addressee = auth.uid())));
+  a := least(auth.uid(), p_user); b := greatest(auth.uid(), p_user);
+  select id into cid from channels where kind = 'dm' and dm_a = a and dm_b = b;
+  if cid is not null then
+    if fr then update channels set dm_status = 'ok' where id = cid and dm_status <> 'ok'; end if;
+    return cid;
+  end if;
+  if not fr then
+    select dm_privacy into priv from profiles where id = p_user;
+    if priv = 'friends' then raise exception 'Essa pessoa só recebe mensagens de amigos. Mande um pedido de amizade.'; end if;
+    if priv = 'servers' and not public.shares_server(p_user) then raise exception 'Vocês precisam estar num mesmo servidor (ou ser amigos) para conversar.'; end if;
+  end if;
+  insert into channels (name, kind, dm_a, dm_b, dm_status, dm_requester)
+    values ('dm', 'dm', a, b, case when fr then 'ok' else 'pending' end, case when fr then null else auth.uid() end) returning id into cid;
+  return cid;
+end $$;
+create or replace function public.answer_dm_request(p_channel uuid, p_accept boolean) returns void
+language plpgsql security definer set search_path = public as $$
+declare c channels;
+begin
+  select * into c from channels where id = p_channel and kind = 'dm';
+  if not found or auth.uid() not in (c.dm_a, c.dm_b) or c.dm_requester = auth.uid() then raise exception 'Solicitação não encontrada'; end if;
+  if p_accept then update channels set dm_status = 'ok' where id = p_channel;
+  else delete from channels where id = p_channel; end if;
+end $$;
+-- ao virarem amigos, a solicitação vira conversa normal
+create or replace function public.friend_dm_ok() returns trigger
+language plpgsql security definer set search_path = public as $$
+begin
+  if new.status = 'accepted' then
+    update channels set dm_status = 'ok' where kind = 'dm' and dm_status = 'pending'
+      and dm_a = least(new.requester, new.addressee) and dm_b = greatest(new.requester, new.addressee);
+  end if;
+  return new;
+end $$;
+drop trigger if exists friend_dm_ok on public.friendships;
+create trigger friend_dm_ok after insert or update on public.friendships for each row execute function public.friend_dm_ok();
+
+-- servidores da comunidade (aparecem em "Explorar")
+alter table public.servers add column if not exists is_public boolean not null default false;
+alter table public.servers add column if not exists topic_tags text[];
+alter table public.servers add column if not exists public_since timestamptz;
+create or replace function public.discover_servers(p_q text default null, p_tag text default null) returns table (
+  id uuid, name text, description text, icon_url text, icon_color text, banner_url text, accent text, topic_tags text[], members bigint, online_hint bigint, is_member boolean, boosts int, nsfw boolean)
+language sql stable security definer set search_path = public as $$
+  select s.id, s.name, s.description, s.icon_url, s.icon_color, s.banner_url, s.accent, s.topic_tags,
+         (select count(*) from server_members m where m.server_id = s.id) as members, 0::bigint,
+         exists (select 1 from server_members m where m.server_id = s.id and m.user_id = auth.uid()),
+         public.server_boost_count(s.id), s.nsfw
+  from servers s
+  where s.is_public
+    and not exists (select 1 from server_bans b where b.server_id = s.id and b.user_id = auth.uid())
+    and (p_q is null or s.name ilike '%' || p_q || '%' or s.description ilike '%' || p_q || '%')
+    and (p_tag is null or p_tag = any(s.topic_tags))
+  order by (select count(*) from server_members m where m.server_id = s.id) desc, s.public_since desc nulls last
+  limit 60;
+$$;
+create or replace function public.join_public_server(p_server uuid) returns uuid
+language plpgsql security definer set search_path = public as $$
+begin
+  if not exists (select 1 from servers where id = p_server and is_public) then raise exception 'Esse servidor não está aberto para a comunidade'; end if;
+  if exists (select 1 from server_bans where server_id = p_server and user_id = auth.uid()) then raise exception 'Você foi banido desse servidor'; end if;
+  insert into server_members (server_id, user_id, role) values (p_server, auth.uid(), 'member') on conflict do nothing;
+  return p_server;
+end $$;
+
+-- tag do servidor (nível 2 de impulsos): até 4 letras + um símbolo; membros mostram ao lado do nome em todo o Telão
+alter table public.servers add column if not exists tag text check (tag ~ '^[A-Za-z0-9]{2,4}$');
+alter table public.servers add column if not exists tag_badge text check (char_length(tag_badge) <= 16);
+alter table public.profiles add column if not exists guild_tag jsonb;
+create or replace function public.use_server_tag(p_server uuid) returns jsonb
+language plpgsql security definer set search_path = public as $$
+declare t jsonb;
+begin
+  if p_server is null then t := null;
+  else
+    if not public.is_member(p_server) then raise exception 'Você precisa estar no servidor'; end if;
+    if public.server_level(p_server) < 2 then raise exception 'A tag libera quando o servidor chega no nível 2'; end if;
+    select jsonb_build_object('sid', id, 'tag', tag, 'badge', tag_badge, 'name', name) into t from servers where id = p_server and tag is not null;
+    if t is null then raise exception 'Esse servidor ainda não criou uma tag'; end if;
+  end if;
+  perform set_config('telao.priv_ok', '1', true);
+  update profiles set guild_tag = t where id = auth.uid();
+  perform set_config('telao.priv_ok', '', true);
+  return t;
+end $$;
+create or replace function public.sync_server_tag() returns trigger
+language plpgsql security definer set search_path = public as $$
+begin
+  perform set_config('telao.priv_ok', '1', true);
+  if tg_table_name = 'servers' then
+    if new.tag is distinct from old.tag or new.tag_badge is distinct from old.tag_badge or new.name is distinct from old.name then
+      update profiles set guild_tag = case when new.tag is null then null else jsonb_build_object('sid', new.id, 'tag', new.tag, 'badge', new.tag_badge, 'name', new.name) end
+        where guild_tag->>'sid' = new.id::text;
+    end if;
+  else
+    update profiles set guild_tag = null where id = old.user_id and guild_tag->>'sid' = old.server_id::text;
+  end if;
+  perform set_config('telao.priv_ok', '', true);
+  return coalesce(new, old);
+end $$;
+drop trigger if exists sync_tag_srv on public.servers;
+create trigger sync_tag_srv after update on public.servers for each row execute function public.sync_server_tag();
+drop trigger if exists sync_tag_mem on public.server_members;
+create trigger sync_tag_mem after delete on public.server_members for each row execute function public.sync_server_tag();
+
+-- avisos do Telão (novidades e anúncios do dono), com caixa de notificações para todo mundo
+create table if not exists public.app_notices (
+  id uuid primary key default gen_random_uuid(),
+  kind text not null default 'announce' check (kind in ('update','announce','event')),
+  title text not null check (char_length(title) between 1 and 120),
+  body text check (char_length(body) <= 4000),
+  link text,
+  version text,
+  created_by uuid default auth.uid() references public.profiles(id) on delete set null,
+  created_at timestamptz not null default now()
+);
+alter table public.app_notices enable row level security;
+drop policy if exists "todos leem avisos" on public.app_notices;
+create policy "todos leem avisos" on public.app_notices for select to authenticated using (true);
+drop policy if exists "admin publica avisos" on public.app_notices;
+create policy "admin publica avisos" on public.app_notices for all to authenticated using (public.is_admin_user()) with check (public.is_admin_user());
+alter table public.profiles add column if not exists notices_read_at timestamptz;
+
+-- emojis do servidor (estáticos e animados)
+create table if not exists public.server_emojis (
+  id uuid primary key default gen_random_uuid(),
+  server_id uuid not null references public.servers(id) on delete cascade,
+  name text not null check (name ~ '^[a-z0-9_]{2,32}$'),
+  url text not null,
+  animated boolean not null default false,
+  created_by uuid default auth.uid() references public.profiles(id) on delete set null,
+  created_at timestamptz not null default now(),
+  unique (server_id, name)
+);
+alter table public.server_emojis enable row level security;
+drop policy if exists "ver emojis" on public.server_emojis;
+create policy "ver emojis" on public.server_emojis for select to authenticated using (true);
+-- 512 = Gerenciar emojis
+drop policy if exists "criar emojis" on public.server_emojis;
+create policy "criar emojis" on public.server_emojis for insert to authenticated with check ((public.has_perm(server_id, 512) or public.has_perm(server_id, 2))
+  and (select count(*) from public.server_emojis e where e.server_id = server_emojis.server_id and e.animated = server_emojis.animated) < 50 + 25 * public.server_level(server_id));
+drop policy if exists "editar emojis" on public.server_emojis;
+create policy "editar emojis" on public.server_emojis for update to authenticated using (public.has_perm(server_id, 512) or public.has_perm(server_id, 2));
+drop policy if exists "apagar emojis" on public.server_emojis;
+create policy "apagar emojis" on public.server_emojis for delete to authenticated using (public.has_perm(server_id, 512) or public.has_perm(server_id, 2));
+alter table public.message_reactions drop constraint if exists message_reactions_emoji_check;
+alter table public.message_reactions add constraint message_reactions_emoji_check check (char_length(emoji) between 1 and 80);
+-- usar emoji de outro servidor (ou em DM) é do Telão+, e só de servidores em que a pessoa está
+create or replace function public.check_custom_emojis(p_text text, p_channel uuid, p_author uuid) returns void
+language plpgsql stable security definer set search_path = public as $$
+declare m text[]; es uuid; cs uuid;
+begin
+  if p_text is null or position('<' in p_text) = 0 then return; end if;
+  select server_id into cs from channels where id = p_channel;
+  for m in select regexp_matches(p_text, '<a?:[a-z0-9_]{2,32}:([0-9a-f-]{36})>', 'g') loop
+    select server_id into es from server_emojis where id = m[1]::uuid;
+    if es is null then raise exception 'Esse emoji não existe mais.'; end if;
+    if cs is distinct from es then
+      if not public.has_plus(p_author) then raise exception 'Usar emojis de outros servidores é do Telão+.'; end if;
+      if not exists (select 1 from server_members where server_id = es and user_id = p_author) then raise exception 'Você precisa estar no servidor desse emoji para usar.'; end if;
+    end if;
+  end loop;
+end $$;
+create or replace function public.reaction_emoji_rules() returns trigger
+language plpgsql security definer set search_path = public as $$
+declare cid uuid;
+begin
+  if new.emoji like 'opt:%' then return new; end if;
+  select channel_id into cid from messages where id = new.message_id;
+  perform public.check_custom_emojis(new.emoji, cid, auth.uid());
+  return new;
+end $$;
+drop trigger if exists reaction_emoji_rules on public.message_reactions;
+create trigger reaction_emoji_rules before insert on public.message_reactions for each row execute function public.reaction_emoji_rules();
+
+
+-- novidades desta versão (aparece em Novidades para todo mundo, uma vez só)
+insert into public.app_notices (kind, title, body, version)
+select 'update', 'Chegou a versão 6.5 do Telão',
+'- **Solicitações de mensagem:** escolha em Configurações → Privacidade quem pode te mandar mensagem. Quem não é amigo cai numa caixa separada.
+- **Comunidades:** servidores abertos aparecem em Explorar (ícone de globo na barra) e ganham um selo.
+- **Tag do servidor:** servidores nível 2 criam uma tag que os membros mostram ao lado do nome.
+- **Emojis de servidor**, estáticos e animados. Com o Telão+ dá para usar em qualquer lugar.
+- **Novidades:** este sininho, com as atualizações e anúncios do Telão.', '6.5'
+where not exists (select 1 from public.app_notices where version = '6.5');
+
 -- impede trocar campos sensíveis via update
 create or replace function public.guard_updates() returns trigger
 language plpgsql as $$
@@ -1077,6 +1284,8 @@ begin
       if new.icon_url is distinct from old.icon_url and new.icon_url ~* '\.gif($|\?)' and public.server_level(old.id) < 1 then new.icon_url := old.icon_url; end if;
       if new.accent is distinct from old.accent and new.accent is not null and public.server_level(old.id) < 1 then new.accent := old.accent; end if;
       if new.banner_url is distinct from old.banner_url and new.banner_url is not null and public.server_level(old.id) < 2 then new.banner_url := old.banner_url; end if;
+      if (new.tag is distinct from old.tag or new.tag_badge is distinct from old.tag_badge) and new.tag is not null and public.server_level(old.id) < 2 then new.tag := old.tag; new.tag_badge := old.tag_badge; end if;
+      if new.is_public and not old.is_public then new.public_since := now(); end if;
     end if;
   elsif tg_table_name = 'friendships' then
     new.requester := old.requester; new.addressee := old.addressee;
@@ -1086,7 +1295,7 @@ begin
     if not public.is_privileged() then
       new.is_admin := old.is_admin; new.plan_until := old.plan_until; new.plus_months := old.plus_months; new.badges := old.badges;
       new.fichas := old.fichas; new.streak := old.streak; new.last_daily := old.last_daily; new.equipped := old.equipped;
-      new.birthdate := old.birthdate; new.share_block_until := old.share_block_until;
+      new.birthdate := old.birthdate; new.share_block_until := old.share_block_until; new.guild_tag := old.guild_tag;
       -- recursos do Telão+ só para quem tem o plano
       if not public.has_plus(old.id) then
         if new.banner_url is distinct from old.banner_url and new.banner_url is not null then new.banner_url := old.banner_url; end if;
@@ -1129,6 +1338,8 @@ begin
   begin alter publication supabase_realtime add table public.server_boosts; exception when others then null; end;
   begin alter publication supabase_realtime add table public.server_events; exception when others then null; end;
   begin alter publication supabase_realtime add table public.event_rsvps; exception when others then null; end;
+  begin alter publication supabase_realtime add table public.app_notices; exception when others then null; end;
+  begin alter publication supabase_realtime add table public.server_emojis; exception when others then null; end;
 end $$;
 
 -- ---------- Arquivos (avatar, banner, GIF) ----------

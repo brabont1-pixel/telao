@@ -385,6 +385,7 @@ function userMenu(uid, x, y){
           const r2 = el.querySelector('#usR'); if(r2) r2.oninput = () => { el.querySelector('#usL').textContent = r2.value + '%'; Voice.setScreenVolume(uid, r2.value / 100); };
         } });
     }
+    if(!(fr && fr.status === 'accepted')) items.push({ label:'Mandar mensagem', icon: ic('chat',18), onClick: () => openDM(uid) });
     if(fr && fr.status === 'accepted') items.push({ label:'Mensagem', icon: ic('chat',18), onClick: () => openDM(uid) }, { label:'Ligar', icon: ic('phone',18), onClick: async () => { const d = await openDM(uid); if(d) joinVoice(d); } }, { label:'Dar presente', icon: '<span style="font-size:16px;width:18px;text-align:center">🎁</span>', onClick: () => giftModal(uid) });
     else if(!fr) items.push({ label:'Adicionar amigo', icon: ic('userPlus',18), onClick: async () => {
       const { data, error } = await App.sb.rpc('send_friend_request', { p_username: p.username });

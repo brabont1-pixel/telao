@@ -254,3 +254,14 @@ O "Spotify direto" (com Ouvir junto) continua opcional e só aparece se você co
 - **Filtro automático de nudez/pornografia**: telas e câmeras são analisadas no próprio aparelho de quem transmite a cada 2,5 s (modelo aberto NSFWJS, pasta `models/nsfw`). Se detectar, a transmissão para na hora e a pessoa recebe um aviso. Na segunda vez em 24 h, fica 24 h sem compartilhar tela e câmera. Nada da tela é enviado para servidor nenhum.
 - **Áudio**: supressão de ruído em 3 níveis (a "Forte" junta o filtro do navegador, isolamento de voz, corte de grave/zumbido, nivelador de voz e um portão que fecha o microfone no silêncio), modo música (som estéreo sem filtros) e correção de perda de pacote (a voz não picota com internet ruim).
 - **Cabeçalhos de segurança** na Vercel: o site não pode ser aberto dentro de outro site (proteção contra clickjacking) e outras proteções do navegador.
+
+# Versão 6.5: solicitações de mensagem, comunidades, tags, novidades e emojis
+
+**Rode o `supabase.sql` de novo** no SQL Editor. Ele também publica sozinho o aviso "Chegou a versão 6.5" em Novidades.
+
+- **Privacidade das DMs** (Configurações → Privacidade): qualquer pessoa, só quem está num servidor com você (padrão) ou só amigos. Quem não é amigo cai em **Solicitações** (embaixo de Amigos), sem notificação; você aceita ou ignora. Quando viram amigos, a conversa vira normal sozinha.
+- **Comunidades** (Configurações do servidor → Comunidade): abre o servidor para o Telão inteiro, com descrição e até 3 assuntos. Ele aparece em **Explorar comunidades** (ícone de globo na barra da esquerda), ganha o selo verde de comunidade e qualquer pessoa entra sem convite (banidos não).
+- **Tag do servidor** (nível 2 de impulsos): 2 a 4 letras + um símbolo. Cada membro escolhe "Usar esta tag" e ela aparece ao lado do nome em todo o Telão. Se sair do servidor ou o servidor trocar a tag, atualiza sozinho.
+- **Novidades** (sininho no topo da barra): atualizações e anúncios para todas as contas, com bolinha de não lido. Você (admin) publica pelo próprio sininho → **Publicar aviso** (e pode mostrar na tela de quem está online na hora).
+- **Emojis de servidor** (Configurações do servidor → Emojis): estáticos e GIF animados, 50 de cada + 25 por nível de impulso. Todo mundo usa dentro do servidor; com **Telão+** usa em qualquer servidor e nas DMs, desde que esteja no servidor do emoji (o banco confere). Escreva `:nome:` ou escolha no seletor de emoji; funciona nas reações também.
+- Novo cargo: **Gerenciar emojis**.
