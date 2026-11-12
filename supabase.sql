@@ -1338,6 +1338,168 @@ begin
   return jsonb_build_object('now', nowms, 'state', to_jsonb(r));
 end $$;
 
+
+-- =====================================================================
+-- v6.8: GRUPOS DE DM, TEMPO EM CALL e ESTATÍSTICAS DO SERVIDOR
+-- =====================================================================
+alter table public.channels drop constraint if exists channels_kind_check;
+alter table public.channels add constraint channels_kind_check check (kind in ('text','voice','dm','group'));
+alter table public.channels drop constraint if exists channels_check;
+alter table public.channels add constraint channels_check check (
+  (kind = 'dm' and server_id is null and dm_a is not null and dm_b is not null)
+  or (kind = 'group' and server_id is null)
+  or (kind in ('text','voice') and server_id is not null));
+alter table public.channels add column if not exists owner_id uuid references public.profiles(id) on delete set null;
+alter table public.channels add column if not exists icon_url text;
+create table if not exists public.group_members (
+  channel_id uuid not null references public.channels(id) on delete cascade,
+  user_id uuid not null references public.profiles(id) on delete cascade,
+  added_by uuid references public.profiles(id) on delete set null,
+  joined_at timestamptz not null default now(),
+  primary key (channel_id, user_id)
+);
+create index if not exists group_members_user_idx on public.group_members (user_id);
+create or replace function public.is_group_member(cid uuid) returns boolean
+language sql stable security definer set search_path = public as $$
+  select exists (select 1 from group_members where channel_id = cid and user_id = auth.uid());
+$$;
+alter table public.group_members enable row level security;
+drop policy if exists "ver membros do grupo" on public.group_members;
+create policy "ver membros do grupo" on public.group_members for select to authenticated using (public.is_group_member(channel_id));
+
+-- grupos entram nas regras de acesso
+create or replace function public.can_view_channel(cid uuid) returns boolean
+language sql stable security definer set search_path = public as $$
+  select exists (
+    select 1 from channels c
+    where c.id = cid and (
+      auth.uid() in (c.dm_a, c.dm_b)
+      or (c.kind = 'group' and exists (select 1 from group_members g where g.channel_id = c.id and g.user_id = auth.uid()))
+      or (c.server_id is not null and exists (select 1 from server_members m where m.server_id = c.server_id and m.user_id = auth.uid())
+          and (c.allowed_roles is null or cardinality(c.allowed_roles) = 0
+               or exists (select 1 from servers s where s.id = c.server_id and s.owner_id = auth.uid())
+               or public.has_perm(c.server_id, 32)
+               or exists (select 1 from member_roles mr where mr.server_id = c.server_id and mr.user_id = auth.uid() and mr.role_id = any(c.allowed_roles))))
+    )
+  );
+$$;
+drop policy if exists "ver canais" on public.channels;
+create policy "ver canais" on public.channels for select to authenticated using (
+  (kind = 'dm' and auth.uid() in (dm_a, dm_b))
+  or (kind = 'group' and public.is_group_member(id))
+  or (server_id is not null and public.is_member(server_id) and (
+      allowed_roles is null or cardinality(allowed_roles) = 0 or public.is_server_owner(server_id) or public.has_perm(server_id, 32)
+      or exists (select 1 from public.member_roles mr where mr.server_id = channels.server_id and mr.user_id = auth.uid() and mr.role_id = any(channels.allowed_roles)))));
+
+-- criar e mexer no grupo (até 10 pessoas; só dá para colocar amigos)
+create or replace function public.are_friends(a uuid, b uuid) returns boolean
+language sql stable security definer set search_path = public as $$
+  select exists (select 1 from friendships where status = 'accepted' and ((requester = a and addressee = b) or (requester = b and addressee = a)));
+$$;
+create or replace function public.create_group(p_users uuid[], p_name text default null) returns uuid
+language plpgsql security definer set search_path = public as $$
+declare cid uuid; u uuid; n int;
+begin
+  if auth.uid() is null then raise exception 'Não autenticado'; end if;
+  p_users := array(select distinct x from unnest(p_users) x where x <> auth.uid());
+  n := coalesce(array_length(p_users, 1), 0);
+  if n < 2 then raise exception 'Escolha pelo menos 2 amigos (para 1 pessoa, use a conversa normal).'; end if;
+  if n > 9 then raise exception 'O grupo pode ter no máximo 10 pessoas.'; end if;
+  foreach u in array p_users loop
+    if not public.are_friends(auth.uid(), u) then raise exception 'Só dá para colocar amigos no grupo.'; end if;
+  end loop;
+  insert into channels (name, kind, owner_id) values (left(coalesce(nullif(trim(p_name), ''), 'Grupo'), 40), 'group', auth.uid()) returning id into cid;
+  insert into group_members (channel_id, user_id, added_by) values (cid, auth.uid(), auth.uid());
+  insert into group_members (channel_id, user_id, added_by) select cid, x, auth.uid() from unnest(p_users) x;
+  return cid;
+end $$;
+create or replace function public.group_add(p_channel uuid, p_user uuid) returns void
+language plpgsql security definer set search_path = public as $$
+begin
+  if not public.is_group_member(p_channel) then raise exception 'Você não está nesse grupo'; end if;
+  if not public.are_friends(auth.uid(), p_user) then raise exception 'Só dá para adicionar amigos.'; end if;
+  if (select count(*) from group_members where channel_id = p_channel) >= 10 then raise exception 'O grupo já tem 10 pessoas.'; end if;
+  insert into group_members (channel_id, user_id, added_by) values (p_channel, p_user, auth.uid()) on conflict do nothing;
+end $$;
+create or replace function public.group_remove(p_channel uuid, p_user uuid) returns void
+language plpgsql security definer set search_path = public as $$
+declare own uuid; nxt uuid;
+begin
+  select owner_id into own from channels where id = p_channel and kind = 'group';
+  if p_user <> auth.uid() and own is distinct from auth.uid() then raise exception 'Só o dono do grupo pode tirar pessoas'; end if;
+  delete from group_members where channel_id = p_channel and user_id = p_user;
+  if not exists (select 1 from group_members where channel_id = p_channel) then delete from channels where id = p_channel; return; end if;
+  if own = p_user then
+    select user_id into nxt from group_members where channel_id = p_channel order by joined_at limit 1;
+    update channels set owner_id = nxt where id = p_channel;
+  end if;
+end $$;
+create or replace function public.group_update(p_channel uuid, p_name text, p_icon text default null) returns void
+language plpgsql security definer set search_path = public as $$
+begin
+  if not public.is_group_member(p_channel) then raise exception 'Você não está nesse grupo'; end if;
+  update channels set name = left(coalesce(nullif(trim(p_name), ''), name), 40), icon_url = coalesce(p_icon, icon_url) where id = p_channel and kind = 'group';
+end $$;
+
+-- tempo em call (cada aparelho avisa a cada minuto enquanto está na chamada)
+create table if not exists public.voice_sessions (
+  id uuid primary key default gen_random_uuid(),
+  user_id uuid not null default auth.uid() references public.profiles(id) on delete cascade,
+  channel_id uuid references public.channels(id) on delete set null,
+  server_id uuid references public.servers(id) on delete cascade,
+  started_at timestamptz not null default now(),
+  last_seen timestamptz not null default now()
+);
+create index if not exists voice_sessions_srv_idx on public.voice_sessions (server_id, started_at);
+alter table public.voice_sessions enable row level security;
+drop policy if exists "minhas sessoes" on public.voice_sessions;
+create policy "minhas sessoes" on public.voice_sessions for select to authenticated using (user_id = auth.uid());
+create or replace function public.voice_ping(p_session uuid, p_channel uuid) returns uuid
+language plpgsql security definer set search_path = public as $$
+declare sid uuid; id_ uuid;
+begin
+  if p_session is not null then
+    update voice_sessions set last_seen = now() where id = p_session and user_id = auth.uid() and last_seen > now() - interval '5 minutes' returning id into id_;
+    if id_ is not null then return id_; end if;
+  end if;
+  if not public.can_access_channel(p_channel) then return null; end if;
+  select server_id into sid from channels where id = p_channel;
+  insert into voice_sessions (user_id, channel_id, server_id) values (auth.uid(), p_channel, sid) returning id into id_;
+  return id_;
+end $$;
+
+-- estatísticas do servidor (só membros veem)
+create or replace function public.server_stats(p_server uuid, p_days int default 30) returns jsonb
+language plpgsql stable security definer set search_path = public as $$
+declare since timestamptz := now() - make_interval(days => least(greatest(p_days, 1), 365)); r jsonb;
+begin
+  if not public.is_member(p_server) then raise exception 'Só membros veem as estatísticas'; end if;
+  with msgs as (
+    select m.author_id, m.created_at, m.channel_id from messages m join channels c on c.id = m.channel_id
+    where c.server_id = p_server and m.created_at >= since and public.can_view_channel(c.id)
+  ), vs as (
+    select user_id, channel_id, started_at, greatest(0, extract(epoch from (last_seen - started_at)) / 60) mins from voice_sessions
+    where server_id = p_server and started_at >= since
+  )
+  select jsonb_build_object(
+    'days', p_days,
+    'messages', (select count(*) from msgs),
+    'members', (select count(*) from server_members where server_id = p_server),
+    'new_members', (select count(*) from server_members where server_id = p_server and joined_at >= since),
+    'voice_minutes', (select coalesce(round(sum(mins)), 0) from vs),
+    'top_chatters', coalesce((select jsonb_agg(x order by n desc) from (select author_id uid, count(*) n from msgs group by 1 order by 2 desc limit 10) x), '[]'),
+    'top_voice', coalesce((select jsonb_agg(x order by mins desc) from (select user_id uid, round(sum(mins)) mins from vs group by 1 having sum(mins) >= 1 order by 2 desc limit 10) x), '[]'),
+    'top_channels', coalesce((select jsonb_agg(x order by n desc) from (select channel_id cid, count(*) n from msgs group by 1 order by 2 desc limit 6) x), '[]'),
+    'heat', coalesce((select jsonb_agg(jsonb_build_array(d, h, n)) from (
+        select extract(dow from created_at at time zone 'America/Sao_Paulo')::int d, extract(hour from created_at at time zone 'America/Sao_Paulo')::int h, count(*) n from msgs group by 1, 2) x), '[]'),
+    'voice_heat', coalesce((select jsonb_agg(jsonb_build_array(h, round(m))) from (
+        select extract(hour from started_at at time zone 'America/Sao_Paulo')::int h, sum(mins) m from vs group by 1) x), '[]'),
+    'per_day', coalesce((select jsonb_agg(jsonb_build_array(d, n) order by d) from (
+        select (created_at at time zone 'America/Sao_Paulo')::date d, count(*) n from msgs group by 1) x), '[]')
+  ) into r;
+  return r;
+end $$;
+
 -- impede trocar campos sensíveis via update
 create or replace function public.guard_updates() returns trigger
 language plpgsql as $$
@@ -1412,6 +1574,7 @@ begin
   begin alter publication supabase_realtime add table public.app_notices; exception when others then null; end;
   begin alter publication supabase_realtime add table public.server_emojis; exception when others then null; end;
   begin alter publication supabase_realtime add table public.voice_music; exception when others then null; end;
+  begin alter publication supabase_realtime add table public.group_members; exception when others then null; end;
 end $$;
 
 -- ---------- Arquivos (avatar, banner, GIF) ----------

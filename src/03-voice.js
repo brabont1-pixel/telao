@@ -14,10 +14,17 @@ async function joinVoice(ch){
     if(!there) sendToUser(other, 'ring', { channel_id: ch.id, from: S.me.id });
     if(S.route.kind === 'home' && S.route.dm === ch.id) renderMain(true);
   }
+  if(ch.kind === 'group'){
+    const there = new Set(voiceUsers(ch).map(m => m.user_id));
+    // só toca para todo mundo se a chamada está começando agora
+    if(![...there].some(u => u !== S.me.id)) groupOthers(ch).forEach(u => sendToUser(u, 'ring', { channel_id: ch.id, from: S.me.id, group: true }));
+    if(S.route.kind === 'home' && S.route.dm === ch.id) renderMain(true);
+  }
 }
 async function leaveVoice(){
   const ch = Voice.channel; if(!ch) return;
   if(ch.kind === 'dm') sendToUser(dmOther(ch), 'ring-cancel', { channel_id: ch.id, from: S.me.id });
+  if(ch.kind === 'group' && !voiceUsers(ch).some(m => m.user_id !== S.me.id)) groupOthers(ch).forEach(u => sendToUser(u, 'ring-cancel', { channel_id: ch.id, from: S.me.id }));
   await Voice.leave();
   App.sfx('leave');
   S.videoEls.forEach(v => { v.srcObject = null; }); S.videoEls.clear();
@@ -39,17 +46,18 @@ function sendToUser(uid, event, payload){
 let ringTimer = null;
 async function onRing(pl){
   if(Voice.channel && Voice.channel.id === pl.channel_id) return;
-  if(!S.dms.find(d => d.id === pl.channel_id)) await loadDms();
+  if(!privOf(pl.channel_id)) await (pl.group ? loadGroups() : loadDms());
   await ensureProfiles([pl.from]);
-  const d = S.dms.find(x => x.id === pl.channel_id); if(!d) return;
+  const d = privOf(pl.channel_id); if(!d) return;
   const p = prof(pl.from);
   S.ringing = pl;
   const el = $('#ring');
-  el.innerHTML = `${avatar(p,'xl')}<b class="rgname">${esc(p.display_name)}</b><div class="rgsub">está te ligando…</div>
+  const isG = d.kind === 'group';
+  el.innerHTML = `${isG ? groupIcon(d, 'xl') : avatar(p,'xl')}<b class="rgname">${esc(isG ? groupName(d) : p.display_name)}</b><div class="rgsub">${isG ? esc(p.display_name) + ' começou uma chamada no grupo' : 'está te ligando…'}</div>
     <div class="bt"><button class="rgb no" id="rgNo" data-tip="Recusar">${ic('phoneOff',24)}</button><button class="rgb yes" id="rgYes" data-tip="Atender">${ic('phone',24)}</button></div>`;
   el.classList.remove('hidden');
   $('#rgYes').onclick = () => { stopRing(); go({ kind:'home', dm: d.id }); joinVoice(d); };
-  $('#rgNo').onclick = () => { stopRing(); sendToUser(pl.from, 'ring-decline', { channel_id: d.id, from: S.me.id }); };
+  $('#rgNo').onclick = () => { stopRing(); if(!isG) sendToUser(pl.from, 'ring-decline', { channel_id: d.id, from: S.me.id }); };
   clearInterval(ringTimer); App.sfx('ring'); ringTimer = setInterval(() => App.sfx('ring'), 2200);
   setTimeout(() => { if(S.ringing === pl) stopRing(); }, 35000);
   if(P.notifCall) notify(p.display_name + ' está te ligando', 'Abra o Telão para atender', d.id);
@@ -65,7 +73,7 @@ function onSpeaking(){
 let statTimer = null;
 function stageChannel(){
   const r = S.route;
-  if(r.kind === 'home' && r.dm) return { ch: S.dms.find(d => d.id === r.dm), compact: true };
+  if(r.kind === 'home' && r.dm) return { ch: privOf(r.dm), compact: true };
   if(r.kind === 'server') return { ch: (S.channels.get(r.sid) || []).find(c => c.id === r.cid && c.kind === 'voice'), compact: false };
   return {};
 }
@@ -87,11 +95,11 @@ function renderStage(){
 
   if(!inThis){
     wrap.innerHTML = `<div class="stage ${compact?'compact':''}"><div class="joincard">
-      <div class="jicon">${ic(ch.kind==='dm'?'phone':'volume',34)}</div>
-      <h2>${ch.kind==='dm' ? 'Chamada em andamento' : esc(ch.name)}</h2>
+      <div class="jicon">${ic(isPriv(ch)?'phone':'volume',34)}</div>
+      <h2>${isPriv(ch) ? 'Chamada em andamento' : esc(ch.name)}</h2>
       <div class="avs">${users.map(u => avatar(prof(u.user_id),'lg')).join('')}</div>
       <p>${users.length ? users.map(u => esc(prof(u.user_id).display_name)).join(', ') + (users.length>1?' estão':' está') + ' aqui' : 'Ninguém aqui ainda. Entre e chame a galera!'}</p>
-      <div class="jbtns"><button class="btn ok big" id="stJoin">${ic('phone',18)} ${ch.kind==='dm' ? 'Entrar na chamada' : 'Entrar no canal de voz'}</button></div></div></div>`;
+      <div class="jbtns"><button class="btn ok big" id="stJoin">${ic('phone',18)} ${isPriv(ch) ? 'Entrar na chamada' : 'Entrar no canal de voz'}</button></div></div></div>`;
     $('#stJoin').onclick = () => joinVoice(ch);
     return;
   }
@@ -146,6 +154,7 @@ function renderStage(){
         <button class="cbtn" id="sbAct" data-tip="Atividades">${ic('gamepad',22)}</button>
         <button class="cbtn" id="sbFx" data-tip="Reagir">${ic('smile',22)}</button>
         <button class="cbtn" id="sbQ" data-tip="Qualidade">${ic('sliders',22)}</button>
+        ${P.clipOn !== false && window.MediaRecorder ? `<button class="cbtn" id="sbClip" data-tip="Clipe dos últimos 30 s" data-tipsub="${P.clipKey ? 'atalho: ' + P.clipKey.replace(/Key|Digit/g, '').replace(/\+/g, ' + ').replace(/\b\w/g, c => c.toUpperCase()) : 'grava o que acabou de acontecer'}">${ic('zap',22)}</button>` : ''}
       </div>
       <button class="cbtn red wide" id="sbLeave" data-tip="Sair da chamada">${ic('phoneOff',22)}</button>
     </div></div>`;
@@ -174,6 +183,7 @@ function renderStage(){
   $w('#sbFx').onclick = e => { const r = e.currentTarget.getBoundingClientRect(); emojiPicker(r.left - 150, r.top, em => Voice.sendFx({ t:'react', e: em })); };
   $w('#sbQ').onclick = () => openSettings('user','voice');
   $w('#sbLeave').onclick = leaveVoice;
+  if($w('#sbClip')) $w('#sbClip').onclick = () => App.takeClip && App.takeClip();
   if(focused && focused.id !== 'wt'){
     const vid = () => $w('#focusBox video');
     $w('#stFs').onclick = () => { const el = $w('#focusBox'); (el.requestFullscreen || el.webkitRequestFullscreen || (()=>{})).call(el); };

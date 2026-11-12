@@ -286,3 +286,12 @@ O "Spotify direto" (com Ouvir junto) continua opcional e só aparece se você co
   - Automático (ligado por padrão): entra no modo jogo sozinho quando o Telão vai para segundo plano. Opcional: modo jogo enquanto você compartilha a tela.
   - Atalho **Ctrl+Shift+G** liga e desliga o modo jogo de qualquer lugar. Quando está ligado aparece "Modo jogo" no seu painel.
 - O **Telão Bot de música** foi desligado por enquanto (o código ficou guardado na pasta `desativado/`; a tabela no banco não atrapalha nada).
+
+# Versão 6.8: clipes, estatísticas do servidor e grupos
+
+**Rode o `supabase.sql` de novo** (grupos, tempo em call e estatísticas).
+
+- **Clipes dos últimos 30 segundos:** numa call, aperte **Alt+C** (ou o botão de raio na barra da chamada). O Telão guarda sempre os últimos segundos da tela que você está vendo (ou da sua, ou só o áudio se ninguém transmite), com o som da chamada. Abre uma prévia: **Enviar no chat** (escolhe a conversa ou um canal do servidor, com mensagem opcional) ou **Baixar**. No chat o vídeo ganha a etiqueta "Clipe". Dá para trocar o atalho ou desligar em Configurações → Teclas de atalho → Clipes. Nada sai do computador até você enviar.
+  - O atalho funciona com o Telão em foco (limite dos navegadores). No modo jogo a gravação usa menos qualidade para pesar menos.
+- **Estatísticas do servidor** (menu do servidor → Estatísticas, ou Configurações do servidor): mensagens, tempo total em call, membros novos, horário de pico, mensagens por dia, mapa de calor por dia da semana × hora (horário de Brasília), quem mais conversa, quem fica mais tempo em call, canais mais ativos e que horas a galera entra em call. Períodos de 7, 30 ou 90 dias. Todo membro vê. O tempo em call começa a contar a partir desta versão.
+- **Grupos de DM** (3 a 10 pessoas): botão de pessoas ao lado de "Mensagens diretas", ou "Criar grupo com essa pessoa" dentro de uma DM. Só dá para colocar amigos. Tem conversa, chamada de voz e vídeo, transmissão de tela e clipes, sem precisar de servidor. Quando alguém começa a chamada, todo mundo do grupo recebe o toque. Configurações do grupo: nome, foto, adicionar amigos (qualquer membro), tirar pessoas (só o dono) e sair. Se o dono sai, quem entrou primeiro vira o dono.

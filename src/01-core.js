@@ -9,7 +9,7 @@ const esc = s => String(s ?? '').replace(/[&<>"']/g, c => ({'&':'&amp;','<':'&lt
 const COLORS = ['#5865f2','#eb459e','#3ba55c','#faa61a','#ed4245','#f47b67','#1abc9c','#9b59b6','#e67e22','#607d8b'];
 const ls = { get(k,d){ try{ const v=localStorage.getItem(k); return v==null?d:JSON.parse(v); }catch(e){ return d; } }, set(k,v){ try{ localStorage.setItem(k, JSON.stringify(v)); }catch(e){} } };
 
-const APP_VERSION = '6.7';
+const APP_VERSION = '6.8';
 const S = {
   me: null, profiles: new Map(), servers: [], channels: new Map(), members: new Map(),
   friends: [], dms: [], dmActivity: ls.get('telao-dmact', {}), online: new Set(),
@@ -302,12 +302,12 @@ async function start(session){
   App.sb.auth.getUser().then(({ data }) => { S.authUser = data && data.user; });
   Voice.muted = ls.get('telao-muted', false);
 
-  await Promise.all([loadServers(), loadFriends(), loadDms()]);
+  await Promise.all([loadServers(), loadFriends(), loadDms(), loadGroups()]);
   subscribeRealtime();
 
   const saved = ls.get('telao-route', null);
   if(saved && saved.kind === 'server' && S.servers.find(s => s.id === saved.sid)) S.route = saved;
-  else if(saved && saved.kind === 'home' && (!saved.dm || S.dms.find(d => d.id === saved.dm))) S.route = saved;
+  else if(saved && saved.kind === 'home' && (!saved.dm || privOf(saved.dm))) S.route = saved;
   await go(S.route, true);
   if(S.pendingInvite) inviteJoinPrompt(S.pendingInvite);
   if(S.plusReturn) handlePlusReturn(S.plusReturn);
@@ -362,11 +362,33 @@ async function loadDms(){
   S.dms.forEach(d => vpChannel(topicFor(d)));
 }
 const dmOther = d => d.dm_a === S.me.id ? d.dm_b : d.dm_a;
+/* grupos de DM (3 a 10 pessoas): funcionam como uma conversa, com chamada e tela */
+S.groups = [];
+async function loadGroups(){
+  const { data } = await App.sb.from('channels').select('*').eq('kind', 'group');
+  const list = data || [];
+  if(list.length){
+    const { data: mem } = await App.sb.from('group_members').select('channel_id, user_id, joined_at').in('channel_id', list.map(g => g.id));
+    list.forEach(g => { g.members = (mem || []).filter(m => m.channel_id === g.id).sort((a, b) => (a.joined_at || '').localeCompare(b.joined_at || '')).map(m => m.user_id); });
+    await ensureProfiles([...new Set((mem || []).map(m => m.user_id))]);
+  }
+  S.groups = list;
+  list.forEach(g => vpChannel(topicFor(g)));
+}
+const isPriv = ch => !!ch && (ch.kind === 'dm' || ch.kind === 'group');
+const privOf = id => S.dms.find(d => d.id === id) || S.groups.find(g => g.id === id) || null;
+const groupOthers = g => (g.members || []).filter(u => u !== S.me.id);
+const groupName = g => g.name && g.name !== 'Grupo' ? g.name : (groupOthers(g).map(u => prof(u).display_name).join(', ') || 'Grupo');
+function groupIcon(g, cls=''){
+  if(g.icon_url) return `<div class="av ${cls}"><img src="${esc(g.icon_url)}" alt="" loading="lazy" decoding="async"></div>`;
+  const o = groupOthers(g).slice(0, 2);
+  return `<div class="gav ${cls}">${o.map(u => avatar(prof(u), 'gsub')).join('')}${o.length < 2 ? `<div class="av gsub"><span class="ini">${ic('users', 12)}</span></div>` : ''}</div>`;
+}
 function findChannel(cid){
   for(const [, list] of S.channels){ const c = list.find(x => x.id === cid); if(c) return c; }
-  return S.dms.find(d => d.id === cid) || null;
+  return privOf(cid);
 }
-const topicFor = ch => ch.kind === 'dm' ? 'vp:dm:' + ch.id : 'vp:' + ch.server_id;
+const topicFor = ch => isPriv(ch) ? 'vp:dm:' + ch.id : 'vp:' + ch.server_id;
 const curServer = () => S.route.kind === 'server' ? S.servers.find(s => s.id === S.route.sid) : null;
 
 /* ---------------- tempo real ---------------- */
@@ -378,6 +400,7 @@ function subscribeRealtime(){
     .on('postgres_changes', { event:'*', schema:'public', table:'server_roles' }, p => App.onRolesChange && App.onRolesChange(p))
     .on('postgres_changes', { event:'*', schema:'public', table:'member_roles' }, p => App.onRolesChange && App.onRolesChange(p))
     .on('postgres_changes', { event:'*', schema:'public', table:'channels' }, onChannelEvent)
+    .on('postgres_changes', { event:'*', schema:'public', table:'group_members' }, onGroupMembersEvent)
     .on('postgres_changes', { event:'*', schema:'public', table:'friendships' }, async () => { await loadFriends(); renderRail(); if(S.route.kind==='home'){ renderSidebar(); refreshFriends(); } })
     .on('postgres_changes', { event:'*', schema:'public', table:'server_members' }, onMemberEvent)
     .on('postgres_changes', { event:'UPDATE', schema:'public', table:'profiles' }, p => { S.profiles.set(p.new.id, p.new); if(p.new.id===S.me.id) S.me=p.new; renderLight(); })
@@ -433,7 +456,7 @@ function liveWatch(topic, prev, metas){
       S.liveSeen.add(key);
       if(mine === m.voice || isDnd()) return;
       const ch = findChannel(m.voice); if(!ch) return;
-      const where = ch.kind === 'dm' ? 'numa chamada com você' : 'em ' + ch.name;
+      const where = ch.kind === 'dm' ? 'numa chamada com você' : ch.kind === 'group' ? 'no grupo ' + groupName(ch) : 'em ' + ch.name;
       App.toast(`${prof(m.user_id).display_name} está transmitindo ${where}`, false, { label: 'Assistir', fn: () => watchLive(m.voice, sess) });
     }
   });
@@ -476,27 +499,40 @@ async function onMsgEvent(p){
     const m = p.new;
     await ensureProfiles([m.author_id]);
     const ch = findChannel(m.channel_id);
-    if(ch && ch.kind === 'dm'){ S.dmActivity[ch.id] = m.created_at; ls.set('telao-dmact', S.dmActivity); }
+    if(isPriv(ch)){ S.dmActivity[ch.id] = m.created_at; ls.set('telao-dmact', S.dmActivity); }
     const viewing = M.cid === m.channel_id && !document.hidden;
     if(M.cid === m.channel_id) addMessage(m);
     if(m.author_id !== S.me.id && !viewing){
       S.unread.add(m.channel_id); saveUnread();
       const mention = S.me && (m.content.includes('@'+S.me.username) || /@(todos|everyone)\b/.test(m.content));
-      if((ch && ch.kind === 'dm' && P.notifDM) || (mention && P.notifMention)){
+      if((isPriv(ch) && P.notifDM) || (mention && P.notifMention)){
         if(!isDnd()) App.sfx('msg');
-        notify(prof(m.author_id).display_name + (ch && ch.kind!=='dm' ? ' em #'+ch.name : ''), m.content || '📎 Enviou um anexo', m.channel_id);
+        notify(prof(m.author_id).display_name + (ch && ch.kind === 'group' ? ' em ' + groupName(ch) : ch && ch.kind!=='dm' ? ' em #'+ch.name : ''), m.content || '📎 Enviou um anexo', m.channel_id);
       }
       renderRail(); renderSidebar();
     }
-    if(ch && ch.kind === 'dm' && S.route.kind === 'home') renderSidebar();
+    if(isPriv(ch) && S.route.kind === 'home') renderSidebar();
   } else if(p.eventType === 'UPDATE'){
     App.onMsgUpdate(p.new);
   } else if(p.eventType === 'DELETE'){
     App.onMsgDelete(p.old.id);
   }
 }
+async function onGroupMembersEvent(){
+  clearTimeout(S._grpT);
+  return new Promise(res => { S._grpT = setTimeout(async () => {
+    await loadGroups(); renderRail();
+    if(S.route.kind === 'home'){
+      renderSidebar();
+      if(S.route.dm && S.route.dm.length && !privOf(S.route.dm)){ if(Voice.channel && Voice.channel.id === S.route.dm) leaveVoice(); go({ kind:'home', dm:null }); }
+      else if(S.route.dm && S.groups.find(g => g.id === S.route.dm)) renderMain(true);
+    }
+    res();
+  }, 250); });
+}
 async function onChannelEvent(p){
   const row = p.new && p.new.id ? p.new : p.old;
+  if(row.kind === 'group' || S.groups.find(g => g.id === row.id)){ await onGroupMembersEvent(); return; }
   if(row.kind === 'dm' || (!row.server_id && S.dms.find(d => d.id === row.id))){ await loadDms(); renderSidebar(); return; }
   let sid = row.server_id;
   if(!sid) for(const [k, list] of S.channels) if(list.find(c => c.id === row.id)) sid = k;
@@ -596,7 +632,7 @@ async function go(route, first){
   renderAll();
 }
 function openChannel(ch){
-  if(ch.kind === 'dm') go({ kind:'home', dm: ch.id });
+  if(isPriv(ch)) go({ kind:'home', dm: ch.id });
   else go({ kind:'server', sid: ch.server_id, cid: ch.id });
 }
 function renderAll(){ renderRail(); renderSidebar(); renderUserPanel(); renderVoicePanel(); renderMain(); renderMembers(); }
@@ -610,7 +646,7 @@ function serverIcon(s, size){
 }
 function renderRail(){
   const pend = S.friends.filter(f => f.status === 'pending' && f.incoming).length;
-  const dmUnread = S.dms.filter(d => S.unread.has(d.id)).length;
+  const dmUnread = S.dms.filter(d => S.unread.has(d.id)).length + S.groups.filter(g => S.unread.has(g.id)).length;
   const homeBadge = pend + dmUnread;
   if(window.telaoDesktop){ const tot = homeBadge + S.servers.filter(s => (S.channels.get(s.id) || []).some(c => S.unread.has(c.id))).length; if(tot !== S._deskBadge){ S._deskBadge = tot; window.telaoDesktop.badge(tot); } }
   let h = `<button class="ricon home ${S.route.kind==='home'?'on':''}" id="rHome" data-tip="Início · amigos e conversas" data-tipside="r">${ic('chat',22)}
@@ -619,6 +655,9 @@ function renderRail(){
   S.dms.filter(d => S.unread.has(d.id)).slice(0, 4).forEach(d => {
     const p = prof(dmOther(d));
     h += `<button class="ricon dmr" data-dmr="${d.id}" data-tip="${esc(p.display_name)}" data-tipside="r">${avatar(p)}<span class="badge">●</span></button>`;
+  });
+  S.groups.filter(g => S.unread.has(g.id)).slice(0, 3).forEach(g => {
+    h += `<button class="ricon dmr" data-dmr="${g.id}" data-tip="${esc(groupName(g))}" data-tipside="r">${groupIcon(g)}<span class="badge">●</span></button>`;
   });
   h += `<div class="rsep"></div>`;
   S.servers.forEach(s => {
@@ -658,20 +697,23 @@ function renderSidebar(){
     head.innerHTML = `<div class="brandrow"><span class="logo">${LOGO}</span><b class="tagw">telão</b></div><button class="findbtn" id="sbFind">${ic('search',15)}<span>Buscar ou ir para…</span><kbd>Ctrl K</kbd></button>`; head.onclick = null;
     $('#sbFind').onclick = quickSwitcher;
     const pend = S.friends.filter(f => f.status === 'pending' && f.incoming).length;
-    const dms = [...S.dms].sort((a,b) => (S.dmActivity[b.id] || b.created_at).localeCompare(S.dmActivity[a.id] || a.created_at));
+    const dms = [...S.dms, ...S.groups].sort((a,b) => (S.dmActivity[b.id] || b.created_at).localeCompare(S.dmActivity[a.id] || a.created_at));
     body.innerHTML = `
       <div class="ch big ${!S.route.dm?'on':''}" id="sbFriends"><span class="ic">${ic('users',20)}</span><span class="nm">Amigos</span>${pend?`<span class="pill">${pend}</span>`:''}</div>
       <div class="ch big" id="sbPlus"><span class="ic plusic">${ic('star',20)}</span><span class="nm">Telão+</span></div>
-      <div class="cat"><span>Mensagens diretas</span><button id="sbNewDm" data-tip="Nova conversa">${ic('plus',16)}</button></div>
-      ${dms.length ? dms.map(d => { const p = prof(dmOther(d)); const call = voiceUsers(d).length;
+      <div class="cat"><span>Mensagens diretas</span><span class="catb"><button id="sbNewGroup" data-tip="Novo grupo" data-tipsub="de 3 a 10 pessoas">${ic('users',16)}</button><button id="sbNewDm" data-tip="Nova conversa">${ic('plus',16)}</button></span></div>
+      ${dms.length ? dms.map(d => { if(d.kind === 'group'){ const call = voiceUsers(d).length;
+        return `<div class="dmitem grp ${S.route.dm===d.id?'on':''} ${S.unread.has(d.id)?'unread':''}" data-dm="${d.id}">${groupIcon(d)}<div class="dmt"><span class="nm">${esc(groupName(d))}</span><small>${(d.members || []).length} membros</small></div>${call?`<span class="incall" data-tip="Em chamada">${ic('volume',16)}</span>`:''}</div>`; }
+        const p = prof(dmOther(d)); const call = voiceUsers(d).length;
         return `<div class="dmitem ${S.route.dm===d.id?'on':''} ${S.unread.has(d.id)?'unread':''}" data-dm="${d.id}">${avatar(p,'',true)}<div class="dmt"><span class="nm">${esc(p.display_name)}</span>${(App.actLine && App.actLine(p)) || p.custom_status ? `<small>${statusText(p)}</small>` : ''}</div>${call?`<span class="incall" data-tip="Em chamada">${ic('volume',16)}</span>`:''}</div>`; }).join('')
         : `<div class="sbempty">${ic('users',32)}<span>Adicione amigos para conversar</span></div>`}`;
     $('#sbFriends').onclick = () => go({ kind:'home', dm:null });
     $('#sbPlus').onclick = () => openSettings('user','plus');
     $('#sbNewDm').onclick = () => { S.friendTab = 'all'; go({ kind:'home', dm:null }); };
+    $('#sbNewGroup').onclick = () => newGroupModal();
     body.querySelectorAll('[data-dm]').forEach(el => {
       el.onclick = () => go({ kind:'home', dm: el.dataset.dm });
-      el.oncontextmenu = e => { e.preventDefault(); const d = S.dms.find(x => x.id === el.dataset.dm); userMenu(dmOther(d), e.clientX, e.clientY); };
+      el.oncontextmenu = e => { e.preventDefault(); const g = S.groups.find(x => x.id === el.dataset.dm); if(g){ groupSettings(g); return; } const d = S.dms.find(x => x.id === el.dataset.dm); userMenu(dmOther(d), e.clientX, e.clientY); };
     });
     return;
   }
@@ -783,7 +825,7 @@ function renderVoicePanel(){
   const el = $('#voicePanel');
   if(!Voice.channel){ el.classList.add('hidden'); return; }
   const c = Voice.channel;
-  const where = c.kind === 'dm' ? 'Chamada com ' + esc(prof(dmOther(c)).display_name) : esc(c.name) + ' / ' + esc((S.servers.find(s => s.id === c.server_id) || {}).name || '');
+  const where = c.kind === 'dm' ? 'Chamada com ' + esc(prof(dmOther(c)).display_name) : c.kind === 'group' ? 'Grupo · ' + esc(groupName(c)) : esc(c.name) + ' / ' + esc((S.servers.find(s => s.id === c.server_id) || {}).name || '');
   const ping = Voice.quality || 'good';
   el.classList.remove('hidden');
   el.innerHTML = `<div class="vst"><div class="vwhere" id="vpGo"><b class="q-${ping}">${ic('signal',16)} Voz conectada <span class="ctimer" id="cTimer"></span></b><small>${where}</small></div>
@@ -814,13 +856,15 @@ function renderMain(keepMessages){
 
   if(r.kind === 'home' && !r.dm){ unmountMessages(); renderFriends(head, body, back); bindBack(); return; }
 
+  if(r.kind === 'home' && r.dm && S.groups.find(g => g.id === r.dm)){ renderGroupMain(S.groups.find(g => g.id === r.dm), head, body, back, keepMessages); return; }
   if(r.kind === 'home' && r.dm){
     const d = S.dms.find(x => x.id === r.dm); if(!d){ go({kind:'home', dm:null}); return; }
     const p = prof(dmOther(d));
     const inCall = Voice.channel && Voice.channel.id === d.id;
     head.innerHTML = `${back}<div class="htitle" id="hProf">${avatar(p,'sm',true)}<b>${esc(p.display_name)}</b>${p.custom_status ? `<span class="desc">${statusText(p)}</span>` : ''}</div><span class="grow"></span>
       ${inCall ? '' : headBtns([['dmCall','phone','Iniciar chamada de voz'],['dmVideo','video','Iniciar chamada de vídeo']])}
-      ${headBtns([['hPins','pin','Mensagens fixadas'],['hSearch','search','Buscar']])}`;
+      ${headBtns([['dmGroup','userPlus','Criar grupo com essa pessoa'],['hPins','pin','Mensagens fixadas'],['hSearch','search','Buscar']])}`;
+    $('#dmGroup').onclick = () => newGroupModal([p.id]);
     $('#hProf').onclick = e => userMenu(p.id, e.clientX, e.clientY + 20);
     const callBtn = $('#dmCall'); if(callBtn) callBtn.onclick = () => joinVoice(d);
     const vBtn = $('#dmVideo'); if(vBtn) vBtn.onclick = async () => { await joinVoice(d); cameraSetup(); };
@@ -872,6 +916,7 @@ function bindBack(){ const b = $('#mBack'); if(b) b.onclick = () => document.bod
 function quickSwitcher(){
   closeMenu();
   const entries = [];
+  S.groups.forEach(g => entries.push({ k: groupName(g) + ' grupo', html: `${groupIcon(g,'sm')}<b>${esc(groupName(g))}</b><small>grupo · ${(g.members||[]).length} pessoas</small>`, go: () => go({ kind:'home', dm: g.id }) }));
   S.dms.forEach(d => { const p = prof(dmOther(d)); entries.push({ k: p.display_name + ' ' + p.username, html: `${avatar(p,'sm',true)}<b>${esc(p.display_name)}</b><small>@${esc(p.username)}</small>`, go: () => go({ kind:'home', dm: d.id }) }); });
   S.friends.filter(f => f.status === 'accepted' && !S.dms.find(d => dmOther(d) === f.uid)).forEach(f => { const p = prof(f.uid); entries.push({ k: p.display_name + ' ' + p.username, html: `${avatar(p,'sm',true)}<b>${esc(p.display_name)}</b><small>@${esc(p.username)}</small>`, go: () => openDM(f.uid) }); });
   S.servers.forEach(s => {

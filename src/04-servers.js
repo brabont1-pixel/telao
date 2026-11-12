@@ -101,7 +101,7 @@ function renderMembers(){
 function serverMenu(s, e){
   const owner = s.owner_id === S.me.id;
   const r = $('#sbHead').getBoundingClientRect();
-  const items = [{ label:'Impulsionar servidor', icon: BOOST_SVG(18), cls:'boostitem', onClick: () => boostServerModal(s) }, { label:'Convidar pessoas', icon: ic('userPlus',18), onClick: () => inviteModal(s) }];
+  const items = [{ label:'Impulsionar servidor', icon: BOOST_SVG(18), cls:'boostitem', onClick: () => boostServerModal(s) }, { label:'Convidar pessoas', icon: ic('userPlus',18), onClick: () => inviteModal(s) }, { label:'Estatísticas do servidor', icon: ic('poll',18), onClick: () => openSettings('server','stats', s) }];
   if(App.hasPerm(s.id, 2) || App.hasPerm(s.id, 16)) items.push({ label:'Configurações do servidor', icon: ic('gear',18), onClick: () => openSettings('server','overview', s) });
   if(App.hasPerm(s.id, 1)) items.push({ label:'Criar canal', icon: ic('plusCircle',18), onClick: () => createChannelModal(s, 'text') }, { label:'Criar categoria', icon: ic('folder',18), onClick: () => createCategoryModal(s) });
   items.push('-');

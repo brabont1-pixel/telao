@@ -3,7 +3,7 @@
    ===================================================================== */
 const PRICE_TXT = 'R$ 9,90';
 const PDEF = { accent:'#ff2e9a', theme:'dark', fontSize:15, compact:false, inputId:'', outputId:'', echo:true, noise:true, agc:true,
-  mode:'vad', sensitivity:4, pttKey:'Backquote', muteKey:'ctrl+shift+KeyM', deafKey:'ctrl+shift+KeyD', screenKey:'',
+  mode:'vad', sensitivity:4, pttKey:'Backquote', muteKey:'ctrl+shift+KeyM', deafKey:'ctrl+shift+KeyD', screenKey:'', clipKey:'alt+KeyC', clipOn:true,
   notifDM:true, notifMention:true, notifCall:true, soundMsg:true, soundVoice:true, soundPtt:true };
 const P = App.prefs = Object.assign({}, PDEF, ls.get('telao-prefs', {}));
 if(!P.accent || P.accent.toLowerCase() === '#ff6b4a') P.accent = '#ff2e9a';
@@ -193,6 +193,7 @@ window.addEventListener('keydown', e => {
   const combo = comboOf(e), hasMod = e.ctrlKey || e.altKey || e.metaKey;
   if(P.muteKey && combo === P.muteKey && (!typing || hasMod)){ e.preventDefault(); Voice.toggleMute(); ls.set('telao-muted', Voice.muted); renderUserPanel(); renderStage(); return; }
   if(P.deafKey && combo === P.deafKey && (!typing || hasMod)){ e.preventDefault(); Voice.toggleDeafen(); renderUserPanel(); renderStage(); return; }
+  if(P.clipKey && combo === P.clipKey && (!typing || hasMod)){ e.preventDefault(); App.takeClip && App.takeClip(); return; }
   if(P.screenKey && combo === P.screenKey && (!typing || hasMod) && Voice.channel){ e.preventDefault(); Voice.screenStream ? Voice.stopScreen() : Voice.startScreen(); return; }
   if(P.mode === 'ptt' && !typing && e.code === P.pttKey && !e.repeat){ e.preventDefault(); Voice.setPtt(true); }
 }, true);
@@ -238,7 +239,7 @@ function renderSettings(){
     if(App.hasPerm(s.id, 2)) nav.push(['overview','Visão geral']);
     if(App.hasPerm(s.id, 16)) nav.push(['roles','Cargos']);
     if(App.hasPerm(s.id, 1)) nav.push(['channels','Canais']);
-    nav.push(['emojis','Emojis'], ['tag','Tag do servidor'], ['members','Membros'], ['boost', `<span style="display:inline-flex">${BOOST_SVG(16)}</span> Impulsos`]);
+    nav.push(['emojis','Emojis'], ['tag','Tag do servidor'], ['members','Membros'], ['stats','Estatísticas'], ['boost', `<span style="display:inline-flex">${BOOST_SVG(16)}</span> Impulsos`]);
     if(App.hasPerm(s.id, 2)) nav.push(['invites','Convites']);
     if(App.hasPerm(s.id, 128) || App.hasPerm(s.id, 4)) nav.push(['bans','Banimentos']);
     if(App.hasPerm(s.id, 2) || App.hasPerm(s.id, 64)) nav.push(['safety','Segurança']);
@@ -263,7 +264,7 @@ function renderSettings(){
   const back = isMobile() ? `<button class="btn sec sm mobileback" id="sBack">← Voltar</button>` : '';
   const fn = SET.kind === 'user'
     ? { account: secAccount, profile: secProfile, plus: secPlus, shop: secShop, connections: secConnections, security: secSecurity, privacy: secPrivacy, boosts: secMyBoosts, appearance: secAppearance, perf: secPerf, a11y: secA11y, lang: secLang, voice: secVoice, notif: secNotif, keys: secKeys, app: secApp, admin: secAdmin }[SET.sec]
-    : { overview: secSrvOverview, roles: secSrvRoles, channels: secSrvChannels, members: secSrvMembers, boost: secSrvBoost, bans: secSrvBans, safety: secSrvSafety, emojis: secSrvEmojis, tag: secSrvTag, community: secSrvCommunity, invites: secSrvInvites }[SET.sec];
+    : { overview: secSrvOverview, roles: secSrvRoles, channels: secSrvChannels, members: secSrvMembers, boost: secSrvBoost, bans: secSrvBans, safety: secSrvSafety, emojis: secSrvEmojis, tag: secSrvTag, community: secSrvCommunity, invites: secSrvInvites, stats: secSrvStats }[SET.sec];
   if(fn) fn(box, back);
   const b = box.querySelector('#sBack'); if(b) b.onclick = () => { SET.mobileOpen = false; renderSettings(); };
 }
@@ -725,12 +726,13 @@ function secNotif(box, back){
 
 /* ---------- Teclas de atalho ---------- */
 function secKeys(box, back){
-  const items = [['muteKey','Silenciar / ativar microfone',false],['deafKey','Ensurdecer / ativar áudio',false],['screenKey','Compartilhar / parar tela',false],['pttKey','Pressionar para falar',true]];
+  const items = [['muteKey','Silenciar / ativar microfone',false],['deafKey','Ensurdecer / ativar áudio',false],['screenKey','Compartilhar / parar tela',false],['clipKey','Clipe dos últimos 30 segundos',false],['pttKey','Pressionar para falar',true]];
   box.innerHTML = `${back}<h2>Teclas de atalho</h2>
     <p style="color:var(--txt2);font-size:14px;margin-bottom:10px">Os atalhos funcionam com o Telão aberto e em foco (é uma limitação dos navegadores). Use Ctrl/Alt nos atalhos para funcionarem até enquanto você digita.</p>
     ${items.map(([k,l,single]) => row(l, single ? (P.mode==='ptt' ? 'Segure a tecla para falar.' : 'Ative o modo “Pressionar para falar” em Voz e vídeo.') : '',
       `<div style="display:flex;gap:8px;align-items:center"><span class="keycap">${P[k] ? keyLabel(P[k]) : '<span style="color:var(--mut);font-size:13px">Nenhum</span>'}</span>
        <button class="btn sec sm keybtn" data-k="${k}" data-s="${single?1:0}">Editar atalho</button>${P[k] ? `<button class="ibtn" data-clr="${k}" title="Remover">✕</button>` : ''}</div>`)).join('')}
+    <hr class="sdiv"><h3>Clipes</h3>${row('Guardar os últimos 30 segundos da call', 'Enquanto você está numa call, o Telão guarda sempre os últimos segundos da tela (ou só do áudio, se ninguém está transmitindo). Aperte o atalho para virar um clipe. Nada sai do seu computador até você enviar.', toggle('kClip', P.clipOn !== false))}
     <hr class="sdiv">${row('Restaurar padrões', '', '<button class="btn sec sm" id="kRst">Restaurar</button>')}`;
   box.querySelectorAll('[data-k]').forEach(b => b.onclick = () => {
     box.querySelectorAll('.keybtn').forEach(x => x.classList.remove('rec'));
@@ -738,7 +740,8 @@ function secKeys(box, back){
     recordingKey = { single: b.dataset.s === '1', done: code => { if(code){ P[b.dataset.k] = code; savePrefs(); } renderSettings(); } };
   });
   box.querySelectorAll('[data-clr]').forEach(b => b.onclick = () => { P[b.dataset.clr] = ''; savePrefs(); renderSettings(); });
-  box.querySelector('#kRst').onclick = () => { ['muteKey','deafKey','screenKey','pttKey'].forEach(k => P[k] = PDEF[k]); savePrefs(); renderSettings(); };
+  box.querySelector('#kRst').onclick = () => { ['muteKey','deafKey','screenKey','pttKey','clipKey'].forEach(k => P[k] = PDEF[k]); savePrefs(); renderSettings(); };
+  box.querySelector('#kClip').onchange = e => { P.clipOn = e.target.checked; savePrefs(); App.clipRefresh && App.clipRefresh(); renderStage(); };
   SET.cleanups.push(() => { recordingKey = null; });
 }
 

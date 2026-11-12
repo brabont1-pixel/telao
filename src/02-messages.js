@@ -135,7 +135,7 @@ async function mountMessages(ch, container, welcome){
   Object.assign(M, { cid:ch.id, ch, list:[], done:false, loading:false, welcome, editing:null, replyTo:null, files:[], detached:false, newWhileAway:0 });
   M.reacts = new Map(); M.typing = new Map();
   M.readAt = READ[ch.id] || null;
-  const ph = ch.kind === 'dm' ? '@' + prof(dmOther(ch)).display_name : '#' + ch.name;
+  const ph = ch.kind === 'dm' ? '@' + prof(dmOther(ch)).display_name : ch.kind === 'group' ? groupName(ch) : '#' + ch.name;
   container.insertAdjacentHTML('beforeend', `
     <div class="msgwrap" id="msgWrapIn">
       <div class="msgs" id="msgs"><div class="skel">${'<div class="sk"><i></i><div><b></b><span></span></div></div>'.repeat(5)}</div></div>
@@ -284,7 +284,7 @@ function attHtml(m){
       const ratio = a.w && a.h ? `aspect-ratio:${a.w}/${a.h};` : '';
       const ph = a.thumb ? `background-image:url('${a.thumb}');` : '';
       const single = imgs.length === 1 ? `max-width:${Math.min(a.w || 400, 520)}px;` : '';
-      if(isVid(a)) return `<div class="mitem vid" style="${single}${imgs.length===1?ratio:''}"><video src="${esc(a.url)}" preload="metadata" controls playsinline></video></div>`;
+      if(isVid(a)) return `<div class="mitem vid" style="${single}${imgs.length===1?ratio:''}"><video src="${esc(a.url)}${a.start > 0 ? '#t=' + (+a.start).toFixed(1) : ''}" preload="metadata" controls playsinline></video>${a.clip ? `<span class="cliptag">${ic('zap', 12)} Clipe</span>` : ''}</div>`;
       return `<div class="mitem ${m._sending?'sending':''}" style="${single}${imgs.length===1?ratio:''}${ph}" data-lightbox="${m.id}" data-idx="${i}">
         <img src="${esc(a.url)}" ${a.w?`width="${a.w}" height="${a.h}"`:''} loading="lazy" decoding="async" alt="" onload="this.parentNode.classList.add('ok')">
         ${a.spoiler ? '<span class="spoilimg" data-spoiler>SPOILER</span>' : ''}</div>`;
@@ -442,6 +442,7 @@ function rerenderOne(id){ renderMsgList(false); }
 function canModerate(){
   const ch = M.ch; if(!ch) return false;
   if(ch.kind === 'dm') return true;
+  if(ch.kind === 'group') return ch.owner_id === S.me.id;
   return App.hasPerm ? App.hasPerm(ch.server_id, 8) : (curServer() && curServer().owner_id === S.me.id);
 }
 function msgMenu(mid, x, y){
@@ -699,7 +700,7 @@ async function sendMessage(extraFiles){
     const { data, error } = await App.sb.from('messages').insert({ channel_id: ch.id, content, attachments, reply_to }).select().single();
     if(error) throw error;
     data._tmpOf = tmpId; addMessage(data);
-    if(ch.kind === 'dm'){ S.dmActivity[ch.id] = data.created_at; ls.set('telao-dmact', S.dmActivity); }
+    if(isPriv(ch)){ S.dmActivity[ch.id] = data.created_at; ls.set('telao-dmact', S.dmActivity); }
   }catch(err){
     const i = M.list.findIndex(x => x.id === tmpId); if(i >= 0) M.list.splice(i, 1);
     renderMsgList(false);
@@ -766,10 +767,10 @@ function autocomplete(){
     items = CMDS.filter(c => c[0].startsWith(q)).map(c => ({ html: `<span class="acem">${c[3]}</span><b>/${c[0]}</b> <small>${esc(c[1])}</small><small class="acd">${esc(c[2])}</small>`, ins: '/' + c[0] + ' ', len: m[1].length + 1, cmd: true }));
   } else if((m = before.match(/(?:^|\s)@([a-z0-9_]{0,24})$/i))){
     const q = m[1].toLowerCase();
-    const pool = M.ch.kind === 'dm' ? [S.me.id, dmOther(M.ch)] : (S.members.get(M.ch.server_id) || []).map(x => x.user_id);
+    const pool = M.ch.kind === 'dm' ? [S.me.id, dmOther(M.ch)] : M.ch.kind === 'group' ? (M.ch.members || []) : (S.members.get(M.ch.server_id) || []).map(x => x.user_id);
     items = pool.map(prof).filter(p => p.username.includes(q) || p.display_name.toLowerCase().includes(q)).slice(0, 8)
       .map(p => ({ html: `${avatar(p,'xs')}<b>${esc(p.display_name)}</b><small>@${esc(p.username)}</small>`, ins: '@' + p.username + ' ', len: m[1].length + 1 }));
-    if(M.ch.kind !== 'dm' && 'todos'.startsWith(q)) items.push({ html: `<span class="acic">${ic('at',16)}</span><b>@todos</b><small>Notifica todo mundo</small>`, ins: '@todos ', len: m[1].length + 1 });
+    if(M.ch.kind !== 'dm' && M.ch.kind !== 'group' && 'todos'.startsWith(q)) items.push({ html: `<span class="acic">${ic('at',16)}</span><b>@todos</b><small>Notifica todo mundo</small>`, ins: '@todos ', len: m[1].length + 1 });
   } else if((m = before.match(/:([a-z0-9_]{2,30})$/i))){
     const q = m[1].toLowerCase();
     items = EMOJI.LIST.filter(e => e.names.some(n => n.startsWith(q))).slice(0, 8)

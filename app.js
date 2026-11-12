@@ -9,7 +9,7 @@ const esc = s => String(s ?? '').replace(/[&<>"']/g, c => ({'&':'&amp;','<':'&lt
 const COLORS = ['#5865f2','#eb459e','#3ba55c','#faa61a','#ed4245','#f47b67','#1abc9c','#9b59b6','#e67e22','#607d8b'];
 const ls = { get(k,d){ try{ const v=localStorage.getItem(k); return v==null?d:JSON.parse(v); }catch(e){ return d; } }, set(k,v){ try{ localStorage.setItem(k, JSON.stringify(v)); }catch(e){} } };
 
-const APP_VERSION = '6.7';
+const APP_VERSION = '6.8';
 const S = {
   me: null, profiles: new Map(), servers: [], channels: new Map(), members: new Map(),
   friends: [], dms: [], dmActivity: ls.get('telao-dmact', {}), online: new Set(),
@@ -302,12 +302,12 @@ async function start(session){
   App.sb.auth.getUser().then(({ data }) => { S.authUser = data && data.user; });
   Voice.muted = ls.get('telao-muted', false);
 
-  await Promise.all([loadServers(), loadFriends(), loadDms()]);
+  await Promise.all([loadServers(), loadFriends(), loadDms(), loadGroups()]);
   subscribeRealtime();
 
   const saved = ls.get('telao-route', null);
   if(saved && saved.kind === 'server' && S.servers.find(s => s.id === saved.sid)) S.route = saved;
-  else if(saved && saved.kind === 'home' && (!saved.dm || S.dms.find(d => d.id === saved.dm))) S.route = saved;
+  else if(saved && saved.kind === 'home' && (!saved.dm || privOf(saved.dm))) S.route = saved;
   await go(S.route, true);
   if(S.pendingInvite) inviteJoinPrompt(S.pendingInvite);
   if(S.plusReturn) handlePlusReturn(S.plusReturn);
@@ -362,11 +362,33 @@ async function loadDms(){
   S.dms.forEach(d => vpChannel(topicFor(d)));
 }
 const dmOther = d => d.dm_a === S.me.id ? d.dm_b : d.dm_a;
+/* grupos de DM (3 a 10 pessoas): funcionam como uma conversa, com chamada e tela */
+S.groups = [];
+async function loadGroups(){
+  const { data } = await App.sb.from('channels').select('*').eq('kind', 'group');
+  const list = data || [];
+  if(list.length){
+    const { data: mem } = await App.sb.from('group_members').select('channel_id, user_id, joined_at').in('channel_id', list.map(g => g.id));
+    list.forEach(g => { g.members = (mem || []).filter(m => m.channel_id === g.id).sort((a, b) => (a.joined_at || '').localeCompare(b.joined_at || '')).map(m => m.user_id); });
+    await ensureProfiles([...new Set((mem || []).map(m => m.user_id))]);
+  }
+  S.groups = list;
+  list.forEach(g => vpChannel(topicFor(g)));
+}
+const isPriv = ch => !!ch && (ch.kind === 'dm' || ch.kind === 'group');
+const privOf = id => S.dms.find(d => d.id === id) || S.groups.find(g => g.id === id) || null;
+const groupOthers = g => (g.members || []).filter(u => u !== S.me.id);
+const groupName = g => g.name && g.name !== 'Grupo' ? g.name : (groupOthers(g).map(u => prof(u).display_name).join(', ') || 'Grupo');
+function groupIcon(g, cls=''){
+  if(g.icon_url) return `<div class="av ${cls}"><img src="${esc(g.icon_url)}" alt="" loading="lazy" decoding="async"></div>`;
+  const o = groupOthers(g).slice(0, 2);
+  return `<div class="gav ${cls}">${o.map(u => avatar(prof(u), 'gsub')).join('')}${o.length < 2 ? `<div class="av gsub"><span class="ini">${ic('users', 12)}</span></div>` : ''}</div>`;
+}
 function findChannel(cid){
   for(const [, list] of S.channels){ const c = list.find(x => x.id === cid); if(c) return c; }
-  return S.dms.find(d => d.id === cid) || null;
+  return privOf(cid);
 }
-const topicFor = ch => ch.kind === 'dm' ? 'vp:dm:' + ch.id : 'vp:' + ch.server_id;
+const topicFor = ch => isPriv(ch) ? 'vp:dm:' + ch.id : 'vp:' + ch.server_id;
 const curServer = () => S.route.kind === 'server' ? S.servers.find(s => s.id === S.route.sid) : null;
 
 /* ---------------- tempo real ---------------- */
@@ -378,6 +400,7 @@ function subscribeRealtime(){
     .on('postgres_changes', { event:'*', schema:'public', table:'server_roles' }, p => App.onRolesChange && App.onRolesChange(p))
     .on('postgres_changes', { event:'*', schema:'public', table:'member_roles' }, p => App.onRolesChange && App.onRolesChange(p))
     .on('postgres_changes', { event:'*', schema:'public', table:'channels' }, onChannelEvent)
+    .on('postgres_changes', { event:'*', schema:'public', table:'group_members' }, onGroupMembersEvent)
     .on('postgres_changes', { event:'*', schema:'public', table:'friendships' }, async () => { await loadFriends(); renderRail(); if(S.route.kind==='home'){ renderSidebar(); refreshFriends(); } })
     .on('postgres_changes', { event:'*', schema:'public', table:'server_members' }, onMemberEvent)
     .on('postgres_changes', { event:'UPDATE', schema:'public', table:'profiles' }, p => { S.profiles.set(p.new.id, p.new); if(p.new.id===S.me.id) S.me=p.new; renderLight(); })
@@ -433,7 +456,7 @@ function liveWatch(topic, prev, metas){
       S.liveSeen.add(key);
       if(mine === m.voice || isDnd()) return;
       const ch = findChannel(m.voice); if(!ch) return;
-      const where = ch.kind === 'dm' ? 'numa chamada com você' : 'em ' + ch.name;
+      const where = ch.kind === 'dm' ? 'numa chamada com você' : ch.kind === 'group' ? 'no grupo ' + groupName(ch) : 'em ' + ch.name;
       App.toast(`${prof(m.user_id).display_name} está transmitindo ${where}`, false, { label: 'Assistir', fn: () => watchLive(m.voice, sess) });
     }
   });
@@ -476,27 +499,40 @@ async function onMsgEvent(p){
     const m = p.new;
     await ensureProfiles([m.author_id]);
     const ch = findChannel(m.channel_id);
-    if(ch && ch.kind === 'dm'){ S.dmActivity[ch.id] = m.created_at; ls.set('telao-dmact', S.dmActivity); }
+    if(isPriv(ch)){ S.dmActivity[ch.id] = m.created_at; ls.set('telao-dmact', S.dmActivity); }
     const viewing = M.cid === m.channel_id && !document.hidden;
     if(M.cid === m.channel_id) addMessage(m);
     if(m.author_id !== S.me.id && !viewing){
       S.unread.add(m.channel_id); saveUnread();
       const mention = S.me && (m.content.includes('@'+S.me.username) || /@(todos|everyone)\b/.test(m.content));
-      if((ch && ch.kind === 'dm' && P.notifDM) || (mention && P.notifMention)){
+      if((isPriv(ch) && P.notifDM) || (mention && P.notifMention)){
         if(!isDnd()) App.sfx('msg');
-        notify(prof(m.author_id).display_name + (ch && ch.kind!=='dm' ? ' em #'+ch.name : ''), m.content || '📎 Enviou um anexo', m.channel_id);
+        notify(prof(m.author_id).display_name + (ch && ch.kind === 'group' ? ' em ' + groupName(ch) : ch && ch.kind!=='dm' ? ' em #'+ch.name : ''), m.content || '📎 Enviou um anexo', m.channel_id);
       }
       renderRail(); renderSidebar();
     }
-    if(ch && ch.kind === 'dm' && S.route.kind === 'home') renderSidebar();
+    if(isPriv(ch) && S.route.kind === 'home') renderSidebar();
   } else if(p.eventType === 'UPDATE'){
     App.onMsgUpdate(p.new);
   } else if(p.eventType === 'DELETE'){
     App.onMsgDelete(p.old.id);
   }
 }
+async function onGroupMembersEvent(){
+  clearTimeout(S._grpT);
+  return new Promise(res => { S._grpT = setTimeout(async () => {
+    await loadGroups(); renderRail();
+    if(S.route.kind === 'home'){
+      renderSidebar();
+      if(S.route.dm && S.route.dm.length && !privOf(S.route.dm)){ if(Voice.channel && Voice.channel.id === S.route.dm) leaveVoice(); go({ kind:'home', dm:null }); }
+      else if(S.route.dm && S.groups.find(g => g.id === S.route.dm)) renderMain(true);
+    }
+    res();
+  }, 250); });
+}
 async function onChannelEvent(p){
   const row = p.new && p.new.id ? p.new : p.old;
+  if(row.kind === 'group' || S.groups.find(g => g.id === row.id)){ await onGroupMembersEvent(); return; }
   if(row.kind === 'dm' || (!row.server_id && S.dms.find(d => d.id === row.id))){ await loadDms(); renderSidebar(); return; }
   let sid = row.server_id;
   if(!sid) for(const [k, list] of S.channels) if(list.find(c => c.id === row.id)) sid = k;
@@ -596,7 +632,7 @@ async function go(route, first){
   renderAll();
 }
 function openChannel(ch){
-  if(ch.kind === 'dm') go({ kind:'home', dm: ch.id });
+  if(isPriv(ch)) go({ kind:'home', dm: ch.id });
   else go({ kind:'server', sid: ch.server_id, cid: ch.id });
 }
 function renderAll(){ renderRail(); renderSidebar(); renderUserPanel(); renderVoicePanel(); renderMain(); renderMembers(); }
@@ -610,7 +646,7 @@ function serverIcon(s, size){
 }
 function renderRail(){
   const pend = S.friends.filter(f => f.status === 'pending' && f.incoming).length;
-  const dmUnread = S.dms.filter(d => S.unread.has(d.id)).length;
+  const dmUnread = S.dms.filter(d => S.unread.has(d.id)).length + S.groups.filter(g => S.unread.has(g.id)).length;
   const homeBadge = pend + dmUnread;
   if(window.telaoDesktop){ const tot = homeBadge + S.servers.filter(s => (S.channels.get(s.id) || []).some(c => S.unread.has(c.id))).length; if(tot !== S._deskBadge){ S._deskBadge = tot; window.telaoDesktop.badge(tot); } }
   let h = `<button class="ricon home ${S.route.kind==='home'?'on':''}" id="rHome" data-tip="Início · amigos e conversas" data-tipside="r">${ic('chat',22)}
@@ -619,6 +655,9 @@ function renderRail(){
   S.dms.filter(d => S.unread.has(d.id)).slice(0, 4).forEach(d => {
     const p = prof(dmOther(d));
     h += `<button class="ricon dmr" data-dmr="${d.id}" data-tip="${esc(p.display_name)}" data-tipside="r">${avatar(p)}<span class="badge">●</span></button>`;
+  });
+  S.groups.filter(g => S.unread.has(g.id)).slice(0, 3).forEach(g => {
+    h += `<button class="ricon dmr" data-dmr="${g.id}" data-tip="${esc(groupName(g))}" data-tipside="r">${groupIcon(g)}<span class="badge">●</span></button>`;
   });
   h += `<div class="rsep"></div>`;
   S.servers.forEach(s => {
@@ -658,20 +697,23 @@ function renderSidebar(){
     head.innerHTML = `<div class="brandrow"><span class="logo">${LOGO}</span><b class="tagw">telão</b></div><button class="findbtn" id="sbFind">${ic('search',15)}<span>Buscar ou ir para…</span><kbd>Ctrl K</kbd></button>`; head.onclick = null;
     $('#sbFind').onclick = quickSwitcher;
     const pend = S.friends.filter(f => f.status === 'pending' && f.incoming).length;
-    const dms = [...S.dms].sort((a,b) => (S.dmActivity[b.id] || b.created_at).localeCompare(S.dmActivity[a.id] || a.created_at));
+    const dms = [...S.dms, ...S.groups].sort((a,b) => (S.dmActivity[b.id] || b.created_at).localeCompare(S.dmActivity[a.id] || a.created_at));
     body.innerHTML = `
       <div class="ch big ${!S.route.dm?'on':''}" id="sbFriends"><span class="ic">${ic('users',20)}</span><span class="nm">Amigos</span>${pend?`<span class="pill">${pend}</span>`:''}</div>
       <div class="ch big" id="sbPlus"><span class="ic plusic">${ic('star',20)}</span><span class="nm">Telão+</span></div>
-      <div class="cat"><span>Mensagens diretas</span><button id="sbNewDm" data-tip="Nova conversa">${ic('plus',16)}</button></div>
-      ${dms.length ? dms.map(d => { const p = prof(dmOther(d)); const call = voiceUsers(d).length;
+      <div class="cat"><span>Mensagens diretas</span><span class="catb"><button id="sbNewGroup" data-tip="Novo grupo" data-tipsub="de 3 a 10 pessoas">${ic('users',16)}</button><button id="sbNewDm" data-tip="Nova conversa">${ic('plus',16)}</button></span></div>
+      ${dms.length ? dms.map(d => { if(d.kind === 'group'){ const call = voiceUsers(d).length;
+        return `<div class="dmitem grp ${S.route.dm===d.id?'on':''} ${S.unread.has(d.id)?'unread':''}" data-dm="${d.id}">${groupIcon(d)}<div class="dmt"><span class="nm">${esc(groupName(d))}</span><small>${(d.members || []).length} membros</small></div>${call?`<span class="incall" data-tip="Em chamada">${ic('volume',16)}</span>`:''}</div>`; }
+        const p = prof(dmOther(d)); const call = voiceUsers(d).length;
         return `<div class="dmitem ${S.route.dm===d.id?'on':''} ${S.unread.has(d.id)?'unread':''}" data-dm="${d.id}">${avatar(p,'',true)}<div class="dmt"><span class="nm">${esc(p.display_name)}</span>${(App.actLine && App.actLine(p)) || p.custom_status ? `<small>${statusText(p)}</small>` : ''}</div>${call?`<span class="incall" data-tip="Em chamada">${ic('volume',16)}</span>`:''}</div>`; }).join('')
         : `<div class="sbempty">${ic('users',32)}<span>Adicione amigos para conversar</span></div>`}`;
     $('#sbFriends').onclick = () => go({ kind:'home', dm:null });
     $('#sbPlus').onclick = () => openSettings('user','plus');
     $('#sbNewDm').onclick = () => { S.friendTab = 'all'; go({ kind:'home', dm:null }); };
+    $('#sbNewGroup').onclick = () => newGroupModal();
     body.querySelectorAll('[data-dm]').forEach(el => {
       el.onclick = () => go({ kind:'home', dm: el.dataset.dm });
-      el.oncontextmenu = e => { e.preventDefault(); const d = S.dms.find(x => x.id === el.dataset.dm); userMenu(dmOther(d), e.clientX, e.clientY); };
+      el.oncontextmenu = e => { e.preventDefault(); const g = S.groups.find(x => x.id === el.dataset.dm); if(g){ groupSettings(g); return; } const d = S.dms.find(x => x.id === el.dataset.dm); userMenu(dmOther(d), e.clientX, e.clientY); };
     });
     return;
   }
@@ -783,7 +825,7 @@ function renderVoicePanel(){
   const el = $('#voicePanel');
   if(!Voice.channel){ el.classList.add('hidden'); return; }
   const c = Voice.channel;
-  const where = c.kind === 'dm' ? 'Chamada com ' + esc(prof(dmOther(c)).display_name) : esc(c.name) + ' / ' + esc((S.servers.find(s => s.id === c.server_id) || {}).name || '');
+  const where = c.kind === 'dm' ? 'Chamada com ' + esc(prof(dmOther(c)).display_name) : c.kind === 'group' ? 'Grupo · ' + esc(groupName(c)) : esc(c.name) + ' / ' + esc((S.servers.find(s => s.id === c.server_id) || {}).name || '');
   const ping = Voice.quality || 'good';
   el.classList.remove('hidden');
   el.innerHTML = `<div class="vst"><div class="vwhere" id="vpGo"><b class="q-${ping}">${ic('signal',16)} Voz conectada <span class="ctimer" id="cTimer"></span></b><small>${where}</small></div>
@@ -814,13 +856,15 @@ function renderMain(keepMessages){
 
   if(r.kind === 'home' && !r.dm){ unmountMessages(); renderFriends(head, body, back); bindBack(); return; }
 
+  if(r.kind === 'home' && r.dm && S.groups.find(g => g.id === r.dm)){ renderGroupMain(S.groups.find(g => g.id === r.dm), head, body, back, keepMessages); return; }
   if(r.kind === 'home' && r.dm){
     const d = S.dms.find(x => x.id === r.dm); if(!d){ go({kind:'home', dm:null}); return; }
     const p = prof(dmOther(d));
     const inCall = Voice.channel && Voice.channel.id === d.id;
     head.innerHTML = `${back}<div class="htitle" id="hProf">${avatar(p,'sm',true)}<b>${esc(p.display_name)}</b>${p.custom_status ? `<span class="desc">${statusText(p)}</span>` : ''}</div><span class="grow"></span>
       ${inCall ? '' : headBtns([['dmCall','phone','Iniciar chamada de voz'],['dmVideo','video','Iniciar chamada de vídeo']])}
-      ${headBtns([['hPins','pin','Mensagens fixadas'],['hSearch','search','Buscar']])}`;
+      ${headBtns([['dmGroup','userPlus','Criar grupo com essa pessoa'],['hPins','pin','Mensagens fixadas'],['hSearch','search','Buscar']])}`;
+    $('#dmGroup').onclick = () => newGroupModal([p.id]);
     $('#hProf').onclick = e => userMenu(p.id, e.clientX, e.clientY + 20);
     const callBtn = $('#dmCall'); if(callBtn) callBtn.onclick = () => joinVoice(d);
     const vBtn = $('#dmVideo'); if(vBtn) vBtn.onclick = async () => { await joinVoice(d); cameraSetup(); };
@@ -872,6 +916,7 @@ function bindBack(){ const b = $('#mBack'); if(b) b.onclick = () => document.bod
 function quickSwitcher(){
   closeMenu();
   const entries = [];
+  S.groups.forEach(g => entries.push({ k: groupName(g) + ' grupo', html: `${groupIcon(g,'sm')}<b>${esc(groupName(g))}</b><small>grupo · ${(g.members||[]).length} pessoas</small>`, go: () => go({ kind:'home', dm: g.id }) }));
   S.dms.forEach(d => { const p = prof(dmOther(d)); entries.push({ k: p.display_name + ' ' + p.username, html: `${avatar(p,'sm',true)}<b>${esc(p.display_name)}</b><small>@${esc(p.username)}</small>`, go: () => go({ kind:'home', dm: d.id }) }); });
   S.friends.filter(f => f.status === 'accepted' && !S.dms.find(d => dmOther(d) === f.uid)).forEach(f => { const p = prof(f.uid); entries.push({ k: p.display_name + ' ' + p.username, html: `${avatar(p,'sm',true)}<b>${esc(p.display_name)}</b><small>@${esc(p.username)}</small>`, go: () => openDM(f.uid) }); });
   S.servers.forEach(s => {
@@ -1118,7 +1163,7 @@ async function mountMessages(ch, container, welcome){
   Object.assign(M, { cid:ch.id, ch, list:[], done:false, loading:false, welcome, editing:null, replyTo:null, files:[], detached:false, newWhileAway:0 });
   M.reacts = new Map(); M.typing = new Map();
   M.readAt = READ[ch.id] || null;
-  const ph = ch.kind === 'dm' ? '@' + prof(dmOther(ch)).display_name : '#' + ch.name;
+  const ph = ch.kind === 'dm' ? '@' + prof(dmOther(ch)).display_name : ch.kind === 'group' ? groupName(ch) : '#' + ch.name;
   container.insertAdjacentHTML('beforeend', `
     <div class="msgwrap" id="msgWrapIn">
       <div class="msgs" id="msgs"><div class="skel">${'<div class="sk"><i></i><div><b></b><span></span></div></div>'.repeat(5)}</div></div>
@@ -1267,7 +1312,7 @@ function attHtml(m){
       const ratio = a.w && a.h ? `aspect-ratio:${a.w}/${a.h};` : '';
       const ph = a.thumb ? `background-image:url('${a.thumb}');` : '';
       const single = imgs.length === 1 ? `max-width:${Math.min(a.w || 400, 520)}px;` : '';
-      if(isVid(a)) return `<div class="mitem vid" style="${single}${imgs.length===1?ratio:''}"><video src="${esc(a.url)}" preload="metadata" controls playsinline></video></div>`;
+      if(isVid(a)) return `<div class="mitem vid" style="${single}${imgs.length===1?ratio:''}"><video src="${esc(a.url)}${a.start > 0 ? '#t=' + (+a.start).toFixed(1) : ''}" preload="metadata" controls playsinline></video>${a.clip ? `<span class="cliptag">${ic('zap', 12)} Clipe</span>` : ''}</div>`;
       return `<div class="mitem ${m._sending?'sending':''}" style="${single}${imgs.length===1?ratio:''}${ph}" data-lightbox="${m.id}" data-idx="${i}">
         <img src="${esc(a.url)}" ${a.w?`width="${a.w}" height="${a.h}"`:''} loading="lazy" decoding="async" alt="" onload="this.parentNode.classList.add('ok')">
         ${a.spoiler ? '<span class="spoilimg" data-spoiler>SPOILER</span>' : ''}</div>`;
@@ -1425,6 +1470,7 @@ function rerenderOne(id){ renderMsgList(false); }
 function canModerate(){
   const ch = M.ch; if(!ch) return false;
   if(ch.kind === 'dm') return true;
+  if(ch.kind === 'group') return ch.owner_id === S.me.id;
   return App.hasPerm ? App.hasPerm(ch.server_id, 8) : (curServer() && curServer().owner_id === S.me.id);
 }
 function msgMenu(mid, x, y){
@@ -1682,7 +1728,7 @@ async function sendMessage(extraFiles){
     const { data, error } = await App.sb.from('messages').insert({ channel_id: ch.id, content, attachments, reply_to }).select().single();
     if(error) throw error;
     data._tmpOf = tmpId; addMessage(data);
-    if(ch.kind === 'dm'){ S.dmActivity[ch.id] = data.created_at; ls.set('telao-dmact', S.dmActivity); }
+    if(isPriv(ch)){ S.dmActivity[ch.id] = data.created_at; ls.set('telao-dmact', S.dmActivity); }
   }catch(err){
     const i = M.list.findIndex(x => x.id === tmpId); if(i >= 0) M.list.splice(i, 1);
     renderMsgList(false);
@@ -1749,10 +1795,10 @@ function autocomplete(){
     items = CMDS.filter(c => c[0].startsWith(q)).map(c => ({ html: `<span class="acem">${c[3]}</span><b>/${c[0]}</b> <small>${esc(c[1])}</small><small class="acd">${esc(c[2])}</small>`, ins: '/' + c[0] + ' ', len: m[1].length + 1, cmd: true }));
   } else if((m = before.match(/(?:^|\s)@([a-z0-9_]{0,24})$/i))){
     const q = m[1].toLowerCase();
-    const pool = M.ch.kind === 'dm' ? [S.me.id, dmOther(M.ch)] : (S.members.get(M.ch.server_id) || []).map(x => x.user_id);
+    const pool = M.ch.kind === 'dm' ? [S.me.id, dmOther(M.ch)] : M.ch.kind === 'group' ? (M.ch.members || []) : (S.members.get(M.ch.server_id) || []).map(x => x.user_id);
     items = pool.map(prof).filter(p => p.username.includes(q) || p.display_name.toLowerCase().includes(q)).slice(0, 8)
       .map(p => ({ html: `${avatar(p,'xs')}<b>${esc(p.display_name)}</b><small>@${esc(p.username)}</small>`, ins: '@' + p.username + ' ', len: m[1].length + 1 }));
-    if(M.ch.kind !== 'dm' && 'todos'.startsWith(q)) items.push({ html: `<span class="acic">${ic('at',16)}</span><b>@todos</b><small>Notifica todo mundo</small>`, ins: '@todos ', len: m[1].length + 1 });
+    if(M.ch.kind !== 'dm' && M.ch.kind !== 'group' && 'todos'.startsWith(q)) items.push({ html: `<span class="acic">${ic('at',16)}</span><b>@todos</b><small>Notifica todo mundo</small>`, ins: '@todos ', len: m[1].length + 1 });
   } else if((m = before.match(/:([a-z0-9_]{2,30})$/i))){
     const q = m[1].toLowerCase();
     items = EMOJI.LIST.filter(e => e.names.some(n => n.startsWith(q))).slice(0, 8)
@@ -1877,10 +1923,17 @@ async function joinVoice(ch){
     if(!there) sendToUser(other, 'ring', { channel_id: ch.id, from: S.me.id });
     if(S.route.kind === 'home' && S.route.dm === ch.id) renderMain(true);
   }
+  if(ch.kind === 'group'){
+    const there = new Set(voiceUsers(ch).map(m => m.user_id));
+    // só toca para todo mundo se a chamada está começando agora
+    if(![...there].some(u => u !== S.me.id)) groupOthers(ch).forEach(u => sendToUser(u, 'ring', { channel_id: ch.id, from: S.me.id, group: true }));
+    if(S.route.kind === 'home' && S.route.dm === ch.id) renderMain(true);
+  }
 }
 async function leaveVoice(){
   const ch = Voice.channel; if(!ch) return;
   if(ch.kind === 'dm') sendToUser(dmOther(ch), 'ring-cancel', { channel_id: ch.id, from: S.me.id });
+  if(ch.kind === 'group' && !voiceUsers(ch).some(m => m.user_id !== S.me.id)) groupOthers(ch).forEach(u => sendToUser(u, 'ring-cancel', { channel_id: ch.id, from: S.me.id }));
   await Voice.leave();
   App.sfx('leave');
   S.videoEls.forEach(v => { v.srcObject = null; }); S.videoEls.clear();
@@ -1902,17 +1955,18 @@ function sendToUser(uid, event, payload){
 let ringTimer = null;
 async function onRing(pl){
   if(Voice.channel && Voice.channel.id === pl.channel_id) return;
-  if(!S.dms.find(d => d.id === pl.channel_id)) await loadDms();
+  if(!privOf(pl.channel_id)) await (pl.group ? loadGroups() : loadDms());
   await ensureProfiles([pl.from]);
-  const d = S.dms.find(x => x.id === pl.channel_id); if(!d) return;
+  const d = privOf(pl.channel_id); if(!d) return;
   const p = prof(pl.from);
   S.ringing = pl;
   const el = $('#ring');
-  el.innerHTML = `${avatar(p,'xl')}<b class="rgname">${esc(p.display_name)}</b><div class="rgsub">está te ligando…</div>
+  const isG = d.kind === 'group';
+  el.innerHTML = `${isG ? groupIcon(d, 'xl') : avatar(p,'xl')}<b class="rgname">${esc(isG ? groupName(d) : p.display_name)}</b><div class="rgsub">${isG ? esc(p.display_name) + ' começou uma chamada no grupo' : 'está te ligando…'}</div>
     <div class="bt"><button class="rgb no" id="rgNo" data-tip="Recusar">${ic('phoneOff',24)}</button><button class="rgb yes" id="rgYes" data-tip="Atender">${ic('phone',24)}</button></div>`;
   el.classList.remove('hidden');
   $('#rgYes').onclick = () => { stopRing(); go({ kind:'home', dm: d.id }); joinVoice(d); };
-  $('#rgNo').onclick = () => { stopRing(); sendToUser(pl.from, 'ring-decline', { channel_id: d.id, from: S.me.id }); };
+  $('#rgNo').onclick = () => { stopRing(); if(!isG) sendToUser(pl.from, 'ring-decline', { channel_id: d.id, from: S.me.id }); };
   clearInterval(ringTimer); App.sfx('ring'); ringTimer = setInterval(() => App.sfx('ring'), 2200);
   setTimeout(() => { if(S.ringing === pl) stopRing(); }, 35000);
   if(P.notifCall) notify(p.display_name + ' está te ligando', 'Abra o Telão para atender', d.id);
@@ -1928,7 +1982,7 @@ function onSpeaking(){
 let statTimer = null;
 function stageChannel(){
   const r = S.route;
-  if(r.kind === 'home' && r.dm) return { ch: S.dms.find(d => d.id === r.dm), compact: true };
+  if(r.kind === 'home' && r.dm) return { ch: privOf(r.dm), compact: true };
   if(r.kind === 'server') return { ch: (S.channels.get(r.sid) || []).find(c => c.id === r.cid && c.kind === 'voice'), compact: false };
   return {};
 }
@@ -1950,11 +2004,11 @@ function renderStage(){
 
   if(!inThis){
     wrap.innerHTML = `<div class="stage ${compact?'compact':''}"><div class="joincard">
-      <div class="jicon">${ic(ch.kind==='dm'?'phone':'volume',34)}</div>
-      <h2>${ch.kind==='dm' ? 'Chamada em andamento' : esc(ch.name)}</h2>
+      <div class="jicon">${ic(isPriv(ch)?'phone':'volume',34)}</div>
+      <h2>${isPriv(ch) ? 'Chamada em andamento' : esc(ch.name)}</h2>
       <div class="avs">${users.map(u => avatar(prof(u.user_id),'lg')).join('')}</div>
       <p>${users.length ? users.map(u => esc(prof(u.user_id).display_name)).join(', ') + (users.length>1?' estão':' está') + ' aqui' : 'Ninguém aqui ainda. Entre e chame a galera!'}</p>
-      <div class="jbtns"><button class="btn ok big" id="stJoin">${ic('phone',18)} ${ch.kind==='dm' ? 'Entrar na chamada' : 'Entrar no canal de voz'}</button></div></div></div>`;
+      <div class="jbtns"><button class="btn ok big" id="stJoin">${ic('phone',18)} ${isPriv(ch) ? 'Entrar na chamada' : 'Entrar no canal de voz'}</button></div></div></div>`;
     $('#stJoin').onclick = () => joinVoice(ch);
     return;
   }
@@ -2009,6 +2063,7 @@ function renderStage(){
         <button class="cbtn" id="sbAct" data-tip="Atividades">${ic('gamepad',22)}</button>
         <button class="cbtn" id="sbFx" data-tip="Reagir">${ic('smile',22)}</button>
         <button class="cbtn" id="sbQ" data-tip="Qualidade">${ic('sliders',22)}</button>
+        ${P.clipOn !== false && window.MediaRecorder ? `<button class="cbtn" id="sbClip" data-tip="Clipe dos últimos 30 s" data-tipsub="${P.clipKey ? 'atalho: ' + P.clipKey.replace(/Key|Digit/g, '').replace(/\+/g, ' + ').replace(/\b\w/g, c => c.toUpperCase()) : 'grava o que acabou de acontecer'}">${ic('zap',22)}</button>` : ''}
       </div>
       <button class="cbtn red wide" id="sbLeave" data-tip="Sair da chamada">${ic('phoneOff',22)}</button>
     </div></div>`;
@@ -2037,6 +2092,7 @@ function renderStage(){
   $w('#sbFx').onclick = e => { const r = e.currentTarget.getBoundingClientRect(); emojiPicker(r.left - 150, r.top, em => Voice.sendFx({ t:'react', e: em })); };
   $w('#sbQ').onclick = () => openSettings('user','voice');
   $w('#sbLeave').onclick = leaveVoice;
+  if($w('#sbClip')) $w('#sbClip').onclick = () => App.takeClip && App.takeClip();
   if(focused && focused.id !== 'wt'){
     const vid = () => $w('#focusBox video');
     $w('#stFs').onclick = () => { const el = $w('#focusBox'); (el.requestFullscreen || el.webkitRequestFullscreen || (()=>{})).call(el); };
@@ -2469,7 +2525,7 @@ function renderMembers(){
 function serverMenu(s, e){
   const owner = s.owner_id === S.me.id;
   const r = $('#sbHead').getBoundingClientRect();
-  const items = [{ label:'Impulsionar servidor', icon: BOOST_SVG(18), cls:'boostitem', onClick: () => boostServerModal(s) }, { label:'Convidar pessoas', icon: ic('userPlus',18), onClick: () => inviteModal(s) }];
+  const items = [{ label:'Impulsionar servidor', icon: BOOST_SVG(18), cls:'boostitem', onClick: () => boostServerModal(s) }, { label:'Convidar pessoas', icon: ic('userPlus',18), onClick: () => inviteModal(s) }, { label:'Estatísticas do servidor', icon: ic('poll',18), onClick: () => openSettings('server','stats', s) }];
   if(App.hasPerm(s.id, 2) || App.hasPerm(s.id, 16)) items.push({ label:'Configurações do servidor', icon: ic('gear',18), onClick: () => openSettings('server','overview', s) });
   if(App.hasPerm(s.id, 1)) items.push({ label:'Criar canal', icon: ic('plusCircle',18), onClick: () => createChannelModal(s, 'text') }, { label:'Criar categoria', icon: ic('folder',18), onClick: () => createCategoryModal(s) });
   items.push('-');
@@ -2652,7 +2708,7 @@ async function leaveServer(s){
    ===================================================================== */
 const PRICE_TXT = 'R$ 9,90';
 const PDEF = { accent:'#ff2e9a', theme:'dark', fontSize:15, compact:false, inputId:'', outputId:'', echo:true, noise:true, agc:true,
-  mode:'vad', sensitivity:4, pttKey:'Backquote', muteKey:'ctrl+shift+KeyM', deafKey:'ctrl+shift+KeyD', screenKey:'',
+  mode:'vad', sensitivity:4, pttKey:'Backquote', muteKey:'ctrl+shift+KeyM', deafKey:'ctrl+shift+KeyD', screenKey:'', clipKey:'alt+KeyC', clipOn:true,
   notifDM:true, notifMention:true, notifCall:true, soundMsg:true, soundVoice:true, soundPtt:true };
 const P = App.prefs = Object.assign({}, PDEF, ls.get('telao-prefs', {}));
 if(!P.accent || P.accent.toLowerCase() === '#ff6b4a') P.accent = '#ff2e9a';
@@ -2842,6 +2898,7 @@ window.addEventListener('keydown', e => {
   const combo = comboOf(e), hasMod = e.ctrlKey || e.altKey || e.metaKey;
   if(P.muteKey && combo === P.muteKey && (!typing || hasMod)){ e.preventDefault(); Voice.toggleMute(); ls.set('telao-muted', Voice.muted); renderUserPanel(); renderStage(); return; }
   if(P.deafKey && combo === P.deafKey && (!typing || hasMod)){ e.preventDefault(); Voice.toggleDeafen(); renderUserPanel(); renderStage(); return; }
+  if(P.clipKey && combo === P.clipKey && (!typing || hasMod)){ e.preventDefault(); App.takeClip && App.takeClip(); return; }
   if(P.screenKey && combo === P.screenKey && (!typing || hasMod) && Voice.channel){ e.preventDefault(); Voice.screenStream ? Voice.stopScreen() : Voice.startScreen(); return; }
   if(P.mode === 'ptt' && !typing && e.code === P.pttKey && !e.repeat){ e.preventDefault(); Voice.setPtt(true); }
 }, true);
@@ -2887,7 +2944,7 @@ function renderSettings(){
     if(App.hasPerm(s.id, 2)) nav.push(['overview','Visão geral']);
     if(App.hasPerm(s.id, 16)) nav.push(['roles','Cargos']);
     if(App.hasPerm(s.id, 1)) nav.push(['channels','Canais']);
-    nav.push(['emojis','Emojis'], ['tag','Tag do servidor'], ['members','Membros'], ['boost', `<span style="display:inline-flex">${BOOST_SVG(16)}</span> Impulsos`]);
+    nav.push(['emojis','Emojis'], ['tag','Tag do servidor'], ['members','Membros'], ['stats','Estatísticas'], ['boost', `<span style="display:inline-flex">${BOOST_SVG(16)}</span> Impulsos`]);
     if(App.hasPerm(s.id, 2)) nav.push(['invites','Convites']);
     if(App.hasPerm(s.id, 128) || App.hasPerm(s.id, 4)) nav.push(['bans','Banimentos']);
     if(App.hasPerm(s.id, 2) || App.hasPerm(s.id, 64)) nav.push(['safety','Segurança']);
@@ -2912,7 +2969,7 @@ function renderSettings(){
   const back = isMobile() ? `<button class="btn sec sm mobileback" id="sBack">← Voltar</button>` : '';
   const fn = SET.kind === 'user'
     ? { account: secAccount, profile: secProfile, plus: secPlus, shop: secShop, connections: secConnections, security: secSecurity, privacy: secPrivacy, boosts: secMyBoosts, appearance: secAppearance, perf: secPerf, a11y: secA11y, lang: secLang, voice: secVoice, notif: secNotif, keys: secKeys, app: secApp, admin: secAdmin }[SET.sec]
-    : { overview: secSrvOverview, roles: secSrvRoles, channels: secSrvChannels, members: secSrvMembers, boost: secSrvBoost, bans: secSrvBans, safety: secSrvSafety, emojis: secSrvEmojis, tag: secSrvTag, community: secSrvCommunity, invites: secSrvInvites }[SET.sec];
+    : { overview: secSrvOverview, roles: secSrvRoles, channels: secSrvChannels, members: secSrvMembers, boost: secSrvBoost, bans: secSrvBans, safety: secSrvSafety, emojis: secSrvEmojis, tag: secSrvTag, community: secSrvCommunity, invites: secSrvInvites, stats: secSrvStats }[SET.sec];
   if(fn) fn(box, back);
   const b = box.querySelector('#sBack'); if(b) b.onclick = () => { SET.mobileOpen = false; renderSettings(); };
 }
@@ -3374,12 +3431,13 @@ function secNotif(box, back){
 
 /* ---------- Teclas de atalho ---------- */
 function secKeys(box, back){
-  const items = [['muteKey','Silenciar / ativar microfone',false],['deafKey','Ensurdecer / ativar áudio',false],['screenKey','Compartilhar / parar tela',false],['pttKey','Pressionar para falar',true]];
+  const items = [['muteKey','Silenciar / ativar microfone',false],['deafKey','Ensurdecer / ativar áudio',false],['screenKey','Compartilhar / parar tela',false],['clipKey','Clipe dos últimos 30 segundos',false],['pttKey','Pressionar para falar',true]];
   box.innerHTML = `${back}<h2>Teclas de atalho</h2>
     <p style="color:var(--txt2);font-size:14px;margin-bottom:10px">Os atalhos funcionam com o Telão aberto e em foco (é uma limitação dos navegadores). Use Ctrl/Alt nos atalhos para funcionarem até enquanto você digita.</p>
     ${items.map(([k,l,single]) => row(l, single ? (P.mode==='ptt' ? 'Segure a tecla para falar.' : 'Ative o modo “Pressionar para falar” em Voz e vídeo.') : '',
       `<div style="display:flex;gap:8px;align-items:center"><span class="keycap">${P[k] ? keyLabel(P[k]) : '<span style="color:var(--mut);font-size:13px">Nenhum</span>'}</span>
        <button class="btn sec sm keybtn" data-k="${k}" data-s="${single?1:0}">Editar atalho</button>${P[k] ? `<button class="ibtn" data-clr="${k}" title="Remover">✕</button>` : ''}</div>`)).join('')}
+    <hr class="sdiv"><h3>Clipes</h3>${row('Guardar os últimos 30 segundos da call', 'Enquanto você está numa call, o Telão guarda sempre os últimos segundos da tela (ou só do áudio, se ninguém está transmitindo). Aperte o atalho para virar um clipe. Nada sai do seu computador até você enviar.', toggle('kClip', P.clipOn !== false))}
     <hr class="sdiv">${row('Restaurar padrões', '', '<button class="btn sec sm" id="kRst">Restaurar</button>')}`;
   box.querySelectorAll('[data-k]').forEach(b => b.onclick = () => {
     box.querySelectorAll('.keybtn').forEach(x => x.classList.remove('rec'));
@@ -3387,7 +3445,8 @@ function secKeys(box, back){
     recordingKey = { single: b.dataset.s === '1', done: code => { if(code){ P[b.dataset.k] = code; savePrefs(); } renderSettings(); } };
   });
   box.querySelectorAll('[data-clr]').forEach(b => b.onclick = () => { P[b.dataset.clr] = ''; savePrefs(); renderSettings(); });
-  box.querySelector('#kRst').onclick = () => { ['muteKey','deafKey','screenKey','pttKey'].forEach(k => P[k] = PDEF[k]); savePrefs(); renderSettings(); };
+  box.querySelector('#kRst').onclick = () => { ['muteKey','deafKey','screenKey','pttKey','clipKey'].forEach(k => P[k] = PDEF[k]); savePrefs(); renderSettings(); };
+  box.querySelector('#kClip').onchange = e => { P.clipOn = e.target.checked; savePrefs(); App.clipRefresh && App.clipRefresh(); renderStage(); };
   SET.cleanups.push(() => { recordingKey = null; });
 }
 
@@ -6094,6 +6153,436 @@ function secPerf(box, back){
   box.querySelectorAll('[data-perf]').forEach(b => b.onclick = () => { P.perf = b.dataset.perf; savePrefs(); applyPerf(); renderSettings(); });
   box.querySelector('#pfAuto').onchange = e => { P.perfAuto = e.target.checked; savePrefs(); perfAutoCheck(); };
   box.querySelector('#pfShare').onchange = e => { P.perfShare = e.target.checked; savePrefs(); perfAutoCheck(); };
+}
+/* =====================================================================
+   v6.8: GRUPOS DE DM — 3 a 10 pessoas, com chamada e transmissão de tela, sem precisar de servidor
+   ===================================================================== */
+const GROUP_MAX = 10;
+const friendIds = () => S.friends.filter(f => f.status === 'accepted').map(f => f.uid);
+
+function friendPicker(m, opts){
+  // opts: { pre: [uid], exclude: [uid], max, onChange(sel) }
+  const sel = new Set(opts.pre || []);
+  const list = friendIds().filter(u => !(opts.exclude || []).includes(u)).map(prof).sort((a, b) => a.display_name.localeCompare(b.display_name));
+  const box = m.querySelector('.gpick'), q = m.querySelector('.gq');
+  const draw = () => {
+    const t = (q.value || '').toLowerCase().trim();
+    box.innerHTML = list.filter(p => !t || p.display_name.toLowerCase().includes(t) || p.username.includes(t)).map(p => `
+      <label class="gp ${sel.has(p.id) ? 'on' : ''}"><input type="checkbox" value="${p.id}" ${sel.has(p.id) ? 'checked' : ''} ${!sel.has(p.id) && sel.size >= opts.max ? 'disabled' : ''}>
+        ${avatar(p, 'sm', true)}<span class="t"><b>${esc(p.display_name)}</b><small>@${esc(p.username)}</small></span><span class="ck">${ic('check', 14)}</span></label>`).join('')
+      || `<div class="empty">${list.length ? 'Ninguém com esse nome.' : 'Você ainda não tem amigos para chamar. Adicione amigos primeiro.'}</div>`;
+    box.querySelectorAll('input').forEach(i => i.onchange = () => { i.checked ? sel.add(i.value) : sel.delete(i.value); draw(); opts.onChange && opts.onChange(sel); });
+  };
+  q.oninput = draw; draw(); opts.onChange && opts.onChange(sel);
+  return sel;
+}
+
+function newGroupModal(pre){
+  modal(`<div class="mh"><h2>Novo grupo</h2><p>Escolha de 2 a 9 amigos. O grupo tem conversa, chamada de voz, vídeo e transmissão de tela, sem precisar criar servidor.</p></div>
+    <div class="mc">
+      <label class="field"><span>Nome do grupo (opcional)</span><input class="inp" id="gName" maxlength="40" placeholder="Ex.: Turma do fim de semana"></label>
+      <div class="gsearch">${ic('search', 15)}<input class="gq" placeholder="Buscar amigos"></div>
+      <div class="gpick"></div>
+    </div>
+    <div class="mf"><span class="mut small grow" id="gCount"></span><button class="btn sec" data-close>Cancelar</button><button class="btn" id="gGo" disabled>Criar grupo</button></div>`, m => {
+    const sel = friendPicker(m, { pre, max: GROUP_MAX - 1, onChange: s => {
+      m.querySelector('#gCount').textContent = `${s.size + 1} de ${GROUP_MAX} pessoas`;
+      m.querySelector('#gGo').disabled = s.size < 2;
+      m.querySelector('#gGo').textContent = s.size === 1 ? 'Escolha mais 1' : 'Criar grupo';
+    } });
+    m.querySelector('#gGo').onclick = async () => {
+      const name = m.querySelector('#gName').value.trim();
+      const users = [...sel];
+      const btn = m.querySelector('#gGo'); btn.disabled = true;
+      const { data: cid, error } = await App.sb.rpc('create_group', { p_users: users, p_name: name || null });
+      if(error){ btn.disabled = false; App.toast(error.message, true); return; }
+      closeModal();
+      await loadGroups();
+      go({ kind: 'home', dm: cid });
+      App.toast('Grupo criado!');
+    };
+  });
+}
+
+function groupSettings(g){
+  const own = g.owner_id === S.me.id;
+  const mem = (g.members || []).map(prof);
+  modal(`<div class="mh"><h2>${esc(groupName(g))}</h2><p>${mem.length} de ${GROUP_MAX} pessoas${own ? ' · você é o dono' : ''}</p></div>
+    <div class="mc">
+      <label class="field"><span>Nome do grupo</span></label>
+      <div class="gsrow" style="margin-top:-10px"><input class="inp" id="gsName" maxlength="40" value="${esc(g.name && g.name !== 'Grupo' ? g.name : '')}" placeholder="${esc(groupName(g))}"><button class="btn sm" id="gsSave">Salvar</button></div>
+      <div class="gsrow" style="margin-top:8px"><button class="btn sec sm" id="gsIcon">${ic('image', 15)} ${g.icon_url ? 'Trocar foto' : 'Colocar foto'}</button>${g.icon_url ? `<button class="btn sec sm" id="gsIconX">Tirar foto</button>` : ''}</div>
+      <h3 style="margin-top:18px">Pessoas</h3>
+      <div class="gmem">${mem.map(p => `<div class="gm">${avatar(p, 'sm', true)}<span class="t"><b>${esc(p.display_name)}</b><small>@${esc(p.username)}${p.id === g.owner_id ? ' · dono' : ''}</small></span>
+        ${own && p.id !== S.me.id ? `<button class="btn sec sm" data-kick="${p.id}">Tirar</button>` : ''}</div>`).join('')}</div>
+      ${mem.length < GROUP_MAX ? `<button class="btn sec" id="gsAdd" style="margin-top:10px">${ic('userPlus', 16)} Adicionar amigos</button>` : ''}
+    </div>
+    <div class="mf"><button class="btn red" id="gsLeave">${ic('logout', 15)} Sair do grupo</button><span class="grow"></span><button class="btn sec" data-close>Fechar</button></div>`, m => {
+    m.querySelector('#gsSave').onclick = async () => {
+      const { error } = await App.sb.rpc('group_update', { p_channel: g.id, p_name: m.querySelector('#gsName').value.trim() || 'Grupo', p_icon: null });
+      if(error){ App.toast(error.message, true); return; }
+      closeModal(); await onGroupMembersEvent(); App.toast('Nome salvo');
+    };
+    m.querySelector('#gsIcon').onclick = () => {
+      const inp = document.createElement('input'); inp.type = 'file'; inp.accept = 'image/png,image/jpeg,image/webp,image/gif';
+      inp.onchange = async () => {
+        const f = inp.files[0]; if(!f) return;
+        if(f.size > 4 * 1024 * 1024){ App.toast('A foto pode ter até 4 MB.', true); return; }
+        try{
+          const meta = await uploadOne({ file: f });
+          const { error } = await App.sb.rpc('group_update', { p_channel: g.id, p_name: g.name, p_icon: meta.url });
+          if(error) throw error;
+          closeModal(); await onGroupMembersEvent(); App.toast('Foto do grupo atualizada');
+        }catch(e){ App.toast('Não deu para enviar: ' + (e.message || e), true); }
+      };
+      inp.click();
+    };
+    const ix = m.querySelector('#gsIconX'); if(ix) ix.onclick = async () => {
+      const { error } = await App.sb.rpc('group_update', { p_channel: g.id, p_name: g.name, p_icon: '' });
+      if(error){ App.toast(error.message, true); return; }
+      closeModal(); await onGroupMembersEvent();
+    };
+    m.querySelectorAll('[data-kick]').forEach(b => b.onclick = async () => {
+      if(!await confirmBox('Tirar do grupo', `${esc(prof(b.dataset.kick).display_name)} vai sair do grupo e não vai ver mais as mensagens.`, 'Tirar')) return;
+      const { error } = await App.sb.rpc('group_remove', { p_channel: g.id, p_user: b.dataset.kick });
+      if(error){ App.toast(error.message, true); return; }
+      await onGroupMembersEvent(); const ng = S.groups.find(x => x.id === g.id); if(ng) groupSettings(ng);
+    });
+    const add = m.querySelector('#gsAdd'); if(add) add.onclick = () => groupAddModal(g);
+    m.querySelector('#gsLeave').onclick = async () => {
+      if(!await confirmBox('Sair do grupo', own && mem.length > 1 ? 'Você é o dono: quem entrou primeiro depois de você vira o dono.' : 'Você não vai ver mais as mensagens desse grupo.', 'Sair')) return;
+      if(Voice.channel && Voice.channel.id === g.id) await leaveVoice();
+      const { error } = await App.sb.rpc('group_remove', { p_channel: g.id, p_user: S.me.id });
+      if(error){ App.toast(error.message, true); return; }
+      S.groups = S.groups.filter(x => x.id !== g.id);
+      go({ kind: 'home', dm: null });
+      App.toast('Você saiu do grupo');
+    };
+  });
+}
+
+function groupAddModal(g){
+  const room = GROUP_MAX - (g.members || []).length;
+  modal(`<div class="mh"><h2>Adicionar ao grupo</h2><p>Cabem mais ${room} pessoa${room > 1 ? 's' : ''}. Quem entrar vê as mensagens antigas também.</p></div>
+    <div class="mc"><div class="gsearch">${ic('search', 15)}<input class="gq" placeholder="Buscar amigos"></div><div class="gpick"></div></div>
+    <div class="mf"><button class="btn sec" id="gaBack">Voltar</button><button class="btn" id="gaGo" disabled>Adicionar</button></div>`, m => {
+    const sel = friendPicker(m, { exclude: g.members || [], max: room, onChange: s => { m.querySelector('#gaGo').disabled = !s.size; } });
+    m.querySelector('#gaBack').onclick = () => groupSettings(g);
+    m.querySelector('#gaGo').onclick = async () => {
+      for(const u of sel){
+        const { error } = await App.sb.rpc('group_add', { p_channel: g.id, p_user: u });
+        if(error){ App.toast(error.message, true); break; }
+      }
+      await onGroupMembersEvent();
+      const ng = S.groups.find(x => x.id === g.id); if(ng) groupSettings(ng); else closeModal();
+    };
+  });
+}
+
+function renderGroupMain(g, head, body, back, keepMessages){
+  const inCall = Voice.channel && Voice.channel.id === g.id;
+  const n = (g.members || []).length;
+  head.innerHTML = `${back}<div class="htitle" id="hGroup">${groupIcon(g, 'sm')}<b>${esc(groupName(g))}</b><span class="desc">${n} membros</span></div><span class="grow"></span>
+    ${inCall ? '' : headBtns([['dmCall', 'phone', 'Iniciar chamada de voz'], ['dmVideo', 'video', 'Iniciar chamada de vídeo']])}
+    ${headBtns([['gAdd', 'userPlus', 'Adicionar amigos ao grupo'], ['hPins', 'pin', 'Mensagens fixadas'], ['hSearch', 'search', 'Buscar'], ['gSet', 'gear', 'Configurações do grupo']])}`;
+  $('#hGroup').onclick = () => groupSettings(g);
+  $('#gSet').onclick = () => groupSettings(g);
+  $('#gAdd').onclick = () => n >= GROUP_MAX ? App.toast('O grupo já tem 10 pessoas.', true) : groupAddModal(g);
+  const callBtn = $('#dmCall'); if(callBtn) callBtn.onclick = () => joinVoice(g);
+  const vBtn = $('#dmVideo'); if(vBtn) vBtn.onclick = async () => { await joinVoice(g); cameraSetup(); };
+  $('#hPins').onclick = e => showPins(e.currentTarget); $('#hSearch').onclick = e => showSearch(e.currentTarget);
+  bindBack();
+  if(keepMessages && M.cid === g.id && body.querySelector('.msgs')){ M.ch = g; renderStage(); return; }
+  body.innerHTML = `<div id="stageWrap"></div><div id="msgWrap" class="msgcol"></div>`;
+  renderStage();
+  const avs = (g.members || []).slice(0, 6).map(u => avatar(prof(u), 'lg')).join('');
+  mountMessages(g, $('#msgWrap'), `<div class="welcome"><div class="gwel">${avs}</div><h1>${esc(groupName(g))}</h1><p>Este é o começo do grupo. ${n} pessoas: ${(g.members || []).map(u => '<b>' + esc(prof(u).display_name) + '</b>').join(', ')}.</p><p class="mut">Dá para ligar, abrir a câmera e transmitir a tela aqui mesmo.</p></div>`);
+}
+App.newGroupModal = newGroupModal;
+/* =====================================================================
+   v6.8: TEMPO EM CALL + ESTATÍSTICAS DO SERVIDOR
+   ===================================================================== */
+
+/* ---------- tempo em call: avisa o banco a cada minuto enquanto estou numa call de servidor ---------- */
+const VS = { id: null, timer: null, cid: null };
+async function voicePing(){
+  if(!Voice.channel || !Voice.channel.server_id){ voiceStop(); return; }
+  if(VS.cid !== Voice.channel.id){ VS.id = null; VS.cid = Voice.channel.id; }
+  try{
+    const { data } = await App.sb.rpc('voice_ping', { p_session: VS.id, p_channel: Voice.channel.id });
+    if(data) VS.id = data;
+  }catch(e){}
+}
+function voiceStop(){ clearInterval(VS.timer); VS.timer = null; if(VS.id && VS.cid) App.sb.rpc('voice_ping', { p_session: VS.id, p_channel: VS.cid }).then(() => {}, () => {}); VS.id = null; VS.cid = null; }
+const _joinVoiceT = joinVoice;
+joinVoice = async function(ch){
+  const r = await _joinVoiceT.apply(this, arguments);
+  if(Voice.channel && Voice.channel.server_id){ voicePing(); clearInterval(VS.timer); VS.timer = setInterval(voicePing, 60000); }
+  return r;
+};
+const _leaveVoiceT = leaveVoice;
+leaveVoice = async function(){ voiceStop(); return _leaveVoiceT.apply(this, arguments); };
+
+/* ---------- tela de estatísticas ---------- */
+const DOW = ['Dom', 'Seg', 'Ter', 'Qua', 'Qui', 'Sex', 'Sáb'];
+const DOW_FULL = ['domingo', 'segunda', 'terça', 'quarta', 'quinta', 'sexta', 'sábado'];
+const nf = n => Number(n || 0).toLocaleString('pt-BR');
+const fmtMins = m => { m = Math.round(m || 0); if(m < 60) return m + ' min'; const h = Math.floor(m / 60), r = m % 60; return h + 'h' + (r ? ' ' + String(r).padStart(2, '0') : ''); };
+S.statsDays = 30;
+
+async function secSrvStats(box, back){
+  const s = SET.server;
+  box.innerHTML = `${back}<h2>Estatísticas</h2><p class="mut">Como o servidor anda: quem mais conversa, os horários mais movimentados e quanto tempo a galera passa em call. Só membros veem.</p>
+    <div class="stbar"><div class="stseg" role="tablist">${[[7, '7 dias'], [30, '30 dias'], [90, '90 dias']].map(([d, l]) => `<button role="tab" class="${S.statsDays === d ? 'on' : ''}" data-days="${d}">${l}</button>`).join('')}</div></div>
+    <div id="stBody"><div class="stload">${'<div class="sk"></div>'.repeat(4)}</div></div>`;
+  box.querySelectorAll('[data-days]').forEach(b => b.onclick = () => { S.statsDays = +b.dataset.days; secSrvStats(box, back); });
+  const { data, error } = await App.sb.rpc('server_stats', { p_server: s.id, p_days: S.statsDays });
+  const out = box.querySelector('#stBody'); if(!out) return;
+  if(error){ out.innerHTML = `<div class="empty">Não deu para carregar: ${esc(error.message)}</div>`; return; }
+  const st = data || {};
+  await ensureProfiles([...(st.top_chatters || []).map(x => x.uid), ...(st.top_voice || []).map(x => x.uid)]);
+  out.innerHTML = statsHtml(s, st);
+}
+
+function statsHtml(s, st){
+  const days = st.days || S.statsDays;
+  const perDay = new Map((st.per_day || []).map(([d, n]) => [String(d).slice(0, 10), n]));
+  const series = [];
+  const today = new Date(new Date().toLocaleString('en-US', { timeZone: 'America/Sao_Paulo' }));
+  for(let i = days - 1; i >= 0; i--){ const d = new Date(today); d.setDate(today.getDate() - i); const k = d.toLocaleDateString('en-CA'); series.push([k, perDay.get(k) || 0]); }
+  const avg = st.messages ? st.messages / days : 0;
+  const peak = series.reduce((a, b) => b[1] > a[1] ? b : a, ['', 0]);
+
+  // mapa de calor: dia da semana × hora
+  const heat = Array.from({ length: 7 }, () => new Array(24).fill(0));
+  (st.heat || []).forEach(([d, h, n]) => { heat[d][h] = n; });
+  const hMax = Math.max(1, ...heat.flat());
+  let best = [0, 0, 0]; heat.forEach((r, d) => r.forEach((n, h) => { if(n > best[2]) best = [d, h, n]; }));
+
+  const vHeat = new Array(24).fill(0); (st.voice_heat || []).forEach(([h, m]) => { vHeat[h] = m; });
+  const chName = cid => { const c = (S.channels.get(s.id) || []).find(x => x.id === cid); return c ? '#' + c.name : 'canal apagado'; };
+
+  const tiles = `<div class="sttiles">
+    <div class="stt"><small>Mensagens</small><b>${nf(st.messages)}</b><span>${avg >= 1 ? nf(Math.round(avg)) + ' por dia, em média' : 'nos últimos ' + days + ' dias'}</span></div>
+    <div class="stt"><small>Tempo em call</small><b>${fmtMins(st.voice_minutes)}</b><span>somando todo mundo</span></div>
+    <div class="stt"><small>Membros</small><b>${nf(st.members)}</b><span>${st.new_members ? '+' + nf(st.new_members) + ' entraram no período' : 'ninguém novo no período'}</span></div>
+    <div class="stt"><small>Horário de pico</small><b>${best[2] ? DOW[best[0]] + ', ' + best[1] + 'h' : '—'}</b><span>${best[2] ? nf(best[2]) + ' mensagens nesse horário' : 'ainda sem mensagens'}</span></div>
+  </div>`;
+
+  if(!st.messages && !st.voice_minutes) return tiles + `<div class="empty big">${ic('poll', 40)}<h3>Ainda não tem movimento suficiente</h3><p class="mut">Conversem e entrem em call que os números aparecem aqui.</p></div>`;
+
+  const vmax = Math.max(1, ...series.map(x => x[1]));
+  const perDayChart = `<div class="stcard"><h3>Mensagens por dia</h3><p class="mut small">${peak[1] ? 'Dia mais movimentado: ' + new Date(peak[0] + 'T12:00').toLocaleDateString('pt-BR', { day: 'numeric', month: 'short' }) + ', com ' + nf(peak[1]) + ' mensagens' : ''}</p>
+    <div class="stcols ${days > 40 ? 'dense' : ''}">${series.map(([k, n]) => `<div class="stc" data-tip="${nf(n)} mensage${n === 1 ? 'm' : 'ns'}" data-tipsub="${new Date(k + 'T12:00').toLocaleDateString('pt-BR', { weekday: 'short', day: 'numeric', month: 'short' })}"><i style="height:${n ? Math.max(3, n / vmax * 100) : 0}%"></i></div>`).join('')}</div>
+    <div class="staxis"><span>${new Date(series[0][0] + 'T12:00').toLocaleDateString('pt-BR', { day: 'numeric', month: 'short' })}</span><span>hoje</span></div></div>`;
+
+  const heatChart = `<div class="stcard"><h3>Horários mais movimentados</h3><p class="mut small">Mensagens por dia da semana e hora (horário de Brasília). Quanto mais forte o rosa, mais conversa.</p>
+    <div class="stheat">${heat.map((r, d) => `<span class="hl">${DOW[d]}</span>${r.map((n, h) => `<i data-tip="${nf(n)} mensage${n === 1 ? 'm' : 'ns'}" data-tipsub="${DOW_FULL[d]}, ${h}h–${h + 1}h" style="--v:${n ? (12 + 88 * Math.sqrt(n / hMax)).toFixed(0) : 0}%"></i>`).join('')}`).join('')}
+      <span></span>${Array.from({ length: 24 }, (_, h) => `<span class="hx">${h % 3 === 0 ? h + 'h' : ''}</span>`).join('')}</div>
+    <div class="stscale"><span>menos</span><i style="--v:12%"></i><i style="--v:40%"></i><i style="--v:70%"></i><i style="--v:100%"></i><span>mais</span></div></div>`;
+
+  const barList = (title, sub, rows, empty) => {
+    const mx = Math.max(1, ...rows.map(r => r.v));
+    return `<div class="stcard"><h3>${title}</h3>${sub ? `<p class="mut small">${sub}</p>` : ''}${rows.length ? `<div class="stbars">${rows.map((r, i) => `
+      <div class="stb" data-tip="${esc(r.tip)}"><span class="sbk">${i + 1}</span>${r.av || ''}<span class="sbn">${esc(r.name)}</span><span class="sbt"><i style="width:${Math.max(2, r.v / mx * 100)}%"></i></span><span class="sbv">${r.label}</span></div>`).join('')}</div>` : `<p class="mut small">${empty}</p>`}</div>`;
+  };
+  const chatters = barList('Quem mais conversa', '', (st.top_chatters || []).map(x => { const p = prof(x.uid); return { v: x.n, name: p.display_name, av: avatar(p, 'xs'), label: nf(x.n), tip: `${p.display_name}: ${nf(x.n)} mensagens` }; }), 'Ninguém mandou mensagem no período.');
+  const voice = barList('Mais tempo em call', 'Conta a partir desta versão do app.', (st.top_voice || []).map(x => { const p = prof(x.uid); return { v: x.mins, name: p.display_name, av: avatar(p, 'xs'), label: fmtMins(x.mins), tip: `${p.display_name}: ${fmtMins(x.mins)} em call` }; }), 'Ninguém ficou em call no período (ou ainda não estava contando).');
+  const chans = barList('Canais mais ativos', '', (st.top_channels || []).map(x => ({ v: x.n, name: chName(x.cid), label: nf(x.n), tip: `${chName(x.cid)}: ${nf(x.n)} mensagens` })), 'Sem mensagens no período.');
+
+  const vm = Math.max(1, ...vHeat);
+  const voiceHours = vHeat.some(Boolean) ? `<div class="stcard"><h3>Que horas a galera entra em call</h3><p class="mut small">Minutos em call por hora em que a chamada começou.</p>
+    <div class="stcols">${vHeat.map((m, h) => `<div class="stc" data-tip="${fmtMins(m)}" data-tipsub="começando entre ${h}h e ${h + 1}h"><i style="height:${m ? Math.max(3, m / vm * 100) : 0}%"></i></div>`).join('')}</div>
+    <div class="staxis"><span>0h</span><span>6h</span><span>12h</span><span>18h</span><span>23h</span></div></div>` : '';
+
+  return tiles + perDayChart + heatChart + `<div class="stgrid">${chatters}${voice}</div>` + `<div class="stgrid">${chans}${voiceHours}</div>`;
+}
+
+App.secSrvStats = secSrvStats;
+/* =====================================================================
+   v6.8: CLIPES — guarda sempre os últimos segundos da call e vira um clipe com um atalho (Alt+C)
+   Como funciona: alguns gravadores rodam escalonados (um novo a cada 15 s, cada um vive até 45 s).
+   Na hora do clipe sempre existe um que começou há 30–45 s; ele é fechado (arquivo completo e válido)
+   e o clipe abre no ponto certo para mostrar só os últimos 30 segundos.
+   ===================================================================== */
+const CLIP_LEN = 30, CLIP_STEP = 15, CLIP_LIFE = CLIP_LEN + CLIP_STEP + 2;
+const CL = { recs: [], key: '', tick: null, ac: null, dest: null, srcNodes: new Map(), stream: null, who: null, busy: false };
+
+function clipSource(){
+  const screens = Voice.screens();
+  const f = S.focus && S.focus.startsWith('s:') ? screens.find(x => 's:' + x.session === S.focus) : null;
+  return f || screens.find(x => x.mine) || screens[0] || null;
+}
+function clipAudioTracks(src){
+  const out = [];
+  if(Voice.micStream) Voice.micStream.getAudioTracks().forEach(t => out.push(t));
+  Voice.peers.forEach(p => p.streams.forEach(s => s.getAudioTracks().forEach(t => { if(t.readyState === 'live') out.push(t); })));
+  if(Voice.screenStream) Voice.screenStream.getAudioTracks().forEach(t => out.push(t));
+  return out;
+}
+function clipMix(tracks){
+  if(!CL.ac){
+    const AC = window.AudioContext || window.webkitAudioContext; if(!AC) return null;
+    CL.ac = new AC(); CL.dest = CL.ac.createMediaStreamDestination();
+  }
+  if(CL.ac.state === 'suspended') CL.ac.resume().catch(() => {});
+  const want = new Set(tracks.map(t => t.id));
+  CL.srcNodes.forEach((n, id) => { if(!want.has(id)){ try{ n.disconnect(); }catch(e){} CL.srcNodes.delete(id); } });
+  tracks.forEach(t => {
+    if(CL.srcNodes.has(t.id)) return;
+    try{ const n = CL.ac.createMediaStreamSource(new MediaStream([t])); n.connect(CL.dest); CL.srcNodes.set(t.id, n); }catch(e){}
+  });
+  return CL.dest.stream.getAudioTracks()[0] || null;
+}
+function clipMime(video){
+  const list = video ? ['video/webm;codecs=vp9,opus', 'video/webm;codecs=vp8,opus', 'video/webm'] : ['audio/webm;codecs=opus', 'audio/webm'];
+  return list.find(t => MediaRecorder.isTypeSupported(t)) || '';
+}
+function clipNewRec(){
+  if(!CL.stream) return;
+  const video = CL.stream.getVideoTracks().length > 0;
+  const mime = clipMime(video);
+  let mr;
+  try{ mr = new MediaRecorder(CL.stream, { mimeType: mime || undefined, videoBitsPerSecond: App.perf === 'game' ? 1500000 : 3000000, audioBitsPerSecond: 128000 }); }catch(e){ return; }
+  const rec = { mr, chunks: [], t0: Date.now(), video, mime: mr.mimeType || mime };
+  mr.ondataavailable = e => { if(e.data && e.data.size) rec.chunks.push(e.data); };
+  try{ mr.start(1000); }catch(e){ return; }
+  CL.recs.push(rec);
+}
+function clipDrop(rec){ rec.dropped = true; try{ if(rec.mr.state !== 'inactive') rec.mr.stop(); }catch(e){} rec.chunks = []; }
+function clipReset(){ CL.recs.forEach(clipDrop); CL.recs = []; CL.stream = null; CL.key = ''; }
+
+function clipLoop(){
+  const on = P.clipOn !== false && window.MediaRecorder && Voice.channel; // roda mesmo com a janela em segundo plano
+  if(!on){ if(CL.recs.length) clipReset(); return; }
+  const src = clipSource();
+  const vt = src && src.stream.getVideoTracks().find(t => t.readyState === 'live');
+  const tracks = clipAudioTracks(src);
+  const at = clipMix(tracks);
+  // se a fonte de vídeo mudou, recomeça a gravação do zero
+  const key = (vt ? vt.id : 'audio') + '|' + (at ? at.id : '');
+  if(key !== CL.key){
+    clipReset(); CL.key = key; CL.who = src ? src.user_id : null;
+    const t = []; if(vt) t.push(vt); if(at) t.push(at);
+    if(!t.length) return;
+    CL.stream = new MediaStream(t);
+    clipNewRec(); return;
+  }
+  const now = Date.now();
+  CL.recs.filter(r => now - r.t0 > CLIP_LIFE * 1000).forEach(r => { clipDrop(r); });
+  CL.recs = CL.recs.filter(r => !r.dropped);
+  const last = CL.recs[CL.recs.length - 1];
+  if(!last || now - last.t0 >= CLIP_STEP * 1000) clipNewRec();
+}
+function clipRefresh(){
+  clearInterval(CL.tick); CL.tick = null;
+  if(P.clipOn === false || !window.MediaRecorder){ clipReset(); return; }
+  CL.tick = setInterval(clipLoop, 1000); clipLoop();
+}
+App.clipRefresh = clipRefresh;
+clipRefresh();
+
+/* o arquivo do MediaRecorder sai sem duração (e aí não dá para pular no vídeo): escreve a duração no cabeçalho */
+async function webmFixDuration(blob, ms){
+  try{
+    const head = new Uint8Array(await blob.slice(0, Math.min(blob.size, 8192)).arrayBuffer());
+    const vint = i => { const b = head[i]; let len = 1, m = 0x80; while(len <= 8 && !(b & m)){ len++; m >>= 1; } let v = b & (m - 1); for(let k = 1; k < len; k++) v = v * 256 + head[i + k]; return { len, v, unknown: v === Math.pow(2, 7 * len) - 1 }; };
+    const id = i => { const b = head[i]; const len = b & 0x80 ? 1 : b & 0x40 ? 2 : b & 0x20 ? 3 : 4; let v = 0; for(let k = 0; k < len; k++) v = v * 256 + head[i + k]; return { len, v }; };
+    let i = 0; const e1 = id(i); if(e1.v !== 0x1A45DFA3) return blob;
+    const s1 = vint(i + e1.len); i += e1.len + s1.len + s1.v;
+    const seg = id(i); if(seg.v !== 0x18538067) return blob;
+    const segSize = vint(i + seg.len); if(!segSize.unknown) return blob;
+    i += seg.len + segSize.len;
+    while(i < head.length - 12){
+      const el = id(i), sz = vint(i + el.len);
+      if(el.v === 0x1549A966){ // Info
+        const dStart = i + el.len + sz.len, dEnd = dStart + sz.v;
+        if(dEnd > head.length) return blob;
+        for(let k = dStart; k < dEnd - 1; k++) if(head[k] === 0x44 && head[k + 1] === 0x89) return blob; // já tem duração
+        const dur = new Uint8Array(11); dur.set([0x44, 0x89, 0x88]); new DataView(dur.buffer).setFloat64(3, ms);
+        const ns = sz.v + 11, size = new Uint8Array(8); size[0] = 0x01; let x = ns; for(let k = 7; k >= 1; k--){ size[k] = x & 0xff; x = Math.floor(x / 256); }
+        const idBytes = head.slice(i, i + el.len);
+        return new Blob([head.slice(0, i), idBytes, size, head.slice(dStart, dEnd), dur, blob.slice(dEnd)], { type: blob.type });
+      }
+      if(sz.unknown) return blob;
+      i += el.len + sz.len + sz.v;
+    }
+  }catch(e){}
+  return blob;
+}
+
+async function takeClip(){
+  if(P.clipOn === false){ App.toast('Clipes estão desligados. Ligue em Configurações → Teclas de atalho → Clipes.', true); return; }
+  if(!window.MediaRecorder){ App.toast('Seu navegador não consegue gravar clipes.', true); return; }
+  if(!Voice.channel){ App.toast('Entre numa call para gravar clipes.', true); return; }
+  if(CL.busy) return;
+  const now = Date.now();
+  const ready = CL.recs.filter(r => now - r.t0 >= CLIP_LEN * 1000);
+  const rec = ready.length ? ready[ready.length - 1] : CL.recs[0];
+  if(!rec){ App.toast('Ainda não deu tempo de gravar nada. Tente de novo em alguns segundos.', true); return; }
+  CL.busy = true;
+  App.sfx && App.sfx('screen');
+  App.toast('Clipe salvo! Preparando…');
+  const age = now - rec.t0;
+  CL.recs = CL.recs.filter(r => r !== rec);
+  if(!CL.recs.length) clipNewRec(); // continua guardando
+  const blob = await new Promise(res => {
+    rec.mr.onstop = () => res(new Blob(rec.chunks, { type: (rec.mime || 'video/webm').split(';')[0] }));
+    try{ rec.mr.requestData(); rec.mr.stop(); }catch(e){ res(new Blob(rec.chunks, { type: 'video/webm' })); }
+  });
+  const fixed = await webmFixDuration(blob, age);
+  CL.busy = false;
+  if(!fixed.size){ App.toast('Não deu para gravar o clipe.', true); return; }
+  const start = Math.max(0, age / 1000 - CLIP_LEN);
+  clipModal(fixed, start, Math.min(CLIP_LEN, age / 1000), rec.video, CL.who);
+}
+App.takeClip = takeClip;
+
+function clipTargets(){
+  const out = [];
+  if(M.ch && M.cid) out.push(M.ch);
+  const v = Voice.channel;
+  if(v && isPriv(v) && !out.find(c => c.id === v.id)) out.push(v);
+  if(v && v.server_id){
+    const texts = (S.channels.get(v.server_id) || []).filter(c => c.kind === 'text').sort((a, b) => a.position - b.position);
+    const last = texts.find(c => c.id === S.lastChannel[v.server_id]) || texts[0];
+    [last, ...texts].forEach(c => { if(c && !out.find(x => x.id === c.id)) out.push(c); });
+  }
+  return out.slice(0, 12);
+}
+const chLabel = c => c.kind === 'dm' ? '@' + prof(dmOther(c)).display_name : c.kind === 'group' ? groupName(c) : '#' + c.name;
+
+function clipModal(blob, start, len, video, who){
+  const url = URL.createObjectURL(blob);
+  const stamp = new Date().toLocaleString('sv-SE').replace(/[: ]/g, '-').slice(0, 16);
+  const fname = `clipe-telao-${stamp}.webm`;
+  const targets = clipTargets();
+  const mb = (blob.size / 1048576).toFixed(1);
+  const whoTxt = who && who !== S.me.id ? ' da tela de ' + esc(prof(who).display_name) : who === S.me.id ? ' da sua tela' : ' do áudio da call';
+  modal(`<div class="mh"><h2>${ic('zap', 20)} Clipe dos últimos ${Math.round(len)} s</h2><p>Gravado${whoTxt}, com o som da chamada. ${mb} MB.</p></div>
+    <div class="mc">
+      ${video ? `<video class="clipv" src="${url}#t=${start.toFixed(1)}" controls autoplay playsinline></video>` : `<audio class="clipa" src="${url}#t=${start.toFixed(1)}" controls autoplay></audio>`}
+      ${targets.length ? `<label class="field" style="margin-top:12px"><span>Enviar em</span><select class="inp" id="clTo">${targets.map(c => `<option value="${c.id}">${esc(chLabel(c))}</option>`).join('')}</select></label>
+        <label class="field"><span>Mensagem (opcional)</span><input class="inp" id="clTxt" maxlength="500" placeholder="olha isso 😂"></label>` : '<p class="mut small" style="margin-top:10px">Abra uma conversa para enviar o clipe no chat, ou baixe o arquivo.</p>'}
+    </div>
+    <div class="mf"><button class="btn sec" id="clDl">${ic('download', 16)} Baixar</button><span class="grow"></span><button class="btn sec" id="clX">Descartar</button>${targets.length ? `<button class="btn" id="clSend">${ic('send', 16)} Enviar no chat</button>` : ''}</div>`, m => {
+    const done = () => { closeModal(); setTimeout(() => URL.revokeObjectURL(url), 2000); };
+    m.querySelector('#clX').onclick = done;
+    m.onclick = e => { if(e.target === m) done(); };
+    m.querySelector('#clDl').onclick = () => { const a = document.createElement('a'); a.href = url; a.download = fname; document.body.appendChild(a); a.click(); a.remove(); };
+    const sb = m.querySelector('#clSend'); if(sb) sb.onclick = async () => {
+      const cid = m.querySelector('#clTo').value, txt = m.querySelector('#clTxt').value.trim();
+      if(blob.size > 25 * 1048576){ App.toast('O clipe passou de 25 MB. Baixe e envie de outro jeito.', true); return; }
+      sb.disabled = true; sb.textContent = 'Enviando…';
+      try{
+        const meta = await uploadOne({ file: new File([blob], fname, { type: blob.type }) });
+        Object.assign(meta, { clip: true, start: +start.toFixed(1), dur: Math.round(len) });
+        const { error } = await App.sb.from('messages').insert({ channel_id: cid, content: txt, attachments: [meta] });
+        if(error) throw error;
+        done(); App.toast('Clipe enviado!');
+      }catch(e){ sb.disabled = false; sb.innerHTML = `${ic('send', 16)} Enviar no chat`; App.toast('Não foi enviado: ' + (e.message || e), true); }
+    };
+  });
 }
 /* ---------------- PWA ---------------- */
 window.addEventListener('beforeinstallprompt', e => {
