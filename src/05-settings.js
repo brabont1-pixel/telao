@@ -117,7 +117,7 @@ const LINKS = {
   instagram:['Instagram', u => 'https://instagram.com/' + u, '#e1306c'], tiktok:['TikTok', u => 'https://tiktok.com/@' + u, '#25f4ee'],
   youtube:['YouTube', u => 'https://youtube.com/@' + u, '#ff0000'], twitch:['Twitch', u => 'https://twitch.tv/' + u, '#9146ff'],
   x:['X', u => 'https://x.com/' + u, '#e7e9ea'], steam:['Steam', u => 'https://steamcommunity.com/id/' + u, '#66c0f4'],
-  spotify:['Spotify', u => /^https?:/.test(u) ? u : 'https://open.spotify.com/user/' + u, '#1db954'], github:['GitHub', u => 'https://github.com/' + u, '#e6edf3'],
+  spotify:['Spotify', u => /^https?:/.test(u) ? u : 'https://open.spotify.com/user/' + u, '#1db954'], github:['GitHub', u => 'https://github.com/' + u, '#e6edf3'], lastfm:['Last.fm', u => 'https://www.last.fm/user/' + encodeURIComponent(u), '#d51007'],
   riot:['Riot ID', null, '#eb0029'], xbox:['Xbox', u => 'https://www.xbox.com/play/user/' + encodeURIComponent(u), '#107c10'], psn:['PlayStation', u => 'https://psnprofiles.com/' + encodeURIComponent(u), '#0070d1'],
   epic:['Epic Games', null, '#c9c9c9'], battlenet:['Battle.net', null, '#148eff'], site:['Site', u => /^https?:/.test(u) ? u : 'https://' + u, '#9aa0aa'],
 };

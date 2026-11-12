@@ -27,6 +27,7 @@ function actOf(p){
   const a = p && p.activity; if(!a || typeof a !== 'object') return null;
   const online = p.id === (S.me && S.me.id) || S.online.has(p.id);
   if(!online) return null;
+  if(a.type === 'spotify' && a.lf){ if(!a.playing || !a.until || Date.now() > a.until) return null; return a; }
   if(a.type === 'spotify'){ if(!a.playing || !a.end || Date.now() > a.end + 20000) return null; return a; }
   if(!ACT_TYPES[a.type] || !a.name) return null;
   if(a.since && Date.now() - a.since > 24 * 3600e3) return null;
@@ -42,6 +43,14 @@ function actLine(p){
 App.actLine = actLine;
 function actCard(p){
   const a = actOf(p); if(!a) return '';
+  if(a.type === 'spotify' && a.lf){
+    const q = encodeURIComponent(a.track + ' ' + (a.artist || ''));
+    return `<h6>Ouvindo no Spotify</h6><div class="actcard sp">
+      ${a.art ? `<img src="${esc(a.art)}" alt="" loading="lazy">` : `<span class="nart">${ic('music', 22)}</span>`}
+      <div class="at"><b title="${esc(a.track)}">${esc(a.track)}</b><small>${esc(a.artist || '')}</small><small class="mut">${esc(a.album || '')}</small>
+        <small class="mut">${a.since ? 'tocando ' + ago(a.since) : 'tocando agora'}</small></div></div>
+      <div class="actbtns"><a class="btn sm" href="https://open.spotify.com/search/${q}" target="_blank" rel="noopener">${ic('spotify', 15)} Ouvir no Spotify</a></div>`;
+  }
   if(a.type === 'spotify'){
     const pct = Math.min(100, Math.max(0, (Date.now() - a.start) / (a.end - a.start) * 100));
     const mine = p.id === S.me.id;
@@ -92,7 +101,62 @@ async function v6Init(){
   if(S.spReturn) await finishSpotify(S.spReturn);
   S.manualAct = ls.get('telao-act', null);
   if(S.conn && S.conn.refresh_token) startSpotifyPoll();
+  else if(lfUser()) startLastfm();
   else if(S.manualAct && !actOf(S.me)) setActivity(S.manualAct);
+}
+
+/* ---------- Spotify pelo Last.fm: funciona para qualquer pessoa, sem lista de liberação ----------
+   A pessoa liga o Spotify ao Last.fm uma vez (no site do Last.fm) e coloca o usuário dela aqui. */
+const LASTFM_KEY = '';   // chave pública da API do Last.fm (o admin também pode colar em Conexões)
+const lfKey = () => (S.cfg && S.cfg.lastfm_api_key) || LASTFM_KEY;
+const lfUser = () => { const l = (Array.isArray(S.me.links) ? S.me.links : []).find(x => x.t === 'lastfm'); return l ? l.u : null; };
+const LF = { timer: null, busy: false };
+async function lfApi(method, params){
+  const u = new URL('https://ws.audioscrobbler.com/2.0/');
+  u.search = new URLSearchParams({ method, api_key: lfKey(), format: 'json', ...params });
+  const r = await fetch(u); const j = await r.json().catch(() => ({}));
+  if(j.error) { const e = new Error(j.message || 'Last.fm'); e.code = j.error; throw e; }
+  return j;
+}
+function startLastfm(){ clearInterval(LF.timer); if(!lfKey()) return; lfPoll(); LF.timer = setInterval(lfPoll, 20000); }
+async function lfPoll(){
+  const user = lfUser(); if(LF.busy || !user || !lfKey()) return; LF.busy = true;
+  try{
+    const j = await lfApi('user.getrecenttracks', { user, limit: 1, extended: 0 });
+    const t = ((j.recenttracks || {}).track || [])[0];
+    const playing = t && t['@attr'] && t['@attr'].nowplaying === 'true';
+    const cur = S.me.activity && S.me.activity.lf ? S.me.activity : null;
+    if(playing){
+      const id = (t.artist && (t.artist['#text'] || t.artist.name) || '') + '|' + t.name;
+      const art = (t.image || []).map(i => i['#text']).filter(Boolean).slice(-2)[0] || null;
+      const same = cur && cur.id === id;
+      // só grava de novo quando muda a música, ou para avisar que continua tocando
+      if(!same || cur.until - Date.now() < 2.5 * 60e3)
+        await setActivity({ type: 'spotify', lf: true, id, track: t.name, artist: t.artist && (t.artist['#text'] || t.artist.name), album: t.album && t.album['#text'],
+          art: art && !/2a96cbd8b46e442fc41c2b86b821562f/.test(art) ? art : null, url: t.url, playing: true, since: same ? cur.since : Date.now(), until: Date.now() + 5 * 60e3 }, true);
+    } else if(cur) await setActivity(S.manualAct || null, true);
+  }catch(e){
+    if(e.code === 6) { clearInterval(LF.timer); App.toast('Não achei esse usuário do Last.fm. Confira em Configurações → Conexões.', true); }
+  }finally{ LF.busy = false; }
+}
+async function connectLastfm(name){
+  name = (name || '').trim().replace(/^https?:\/\/(www\.)?last\.fm\/(pt\/)?user\//i, '').replace(/\/.*$/, '');
+  if(!name) return false;
+  try{ await lfApi('user.getinfo', { user: name }); }
+  catch(e){ App.toast(e.code === 6 ? 'Esse usuário do Last.fm não existe.' : 'Last.fm: ' + e.message, true); return false; }
+  const links = (Array.isArray(S.me.links) ? S.me.links : []).filter(l => l.t !== 'lastfm').concat([{ t: 'lastfm', u: name }]).slice(-6);
+  const { data, error } = await App.sb.from('profiles').update({ links }).eq('id', S.me.id).select().single();
+  if(error){ App.toast(error.message, true); return false; }
+  S.me = data; S.profiles.set(data.id, data);
+  startLastfm(); App.toast('Pronto. Quando você der play no Spotify, aparece no seu perfil em até 30 segundos.');
+  return true;
+}
+async function disconnectLastfm(){
+  clearInterval(LF.timer);
+  const links = (Array.isArray(S.me.links) ? S.me.links : []).filter(l => l.t !== 'lastfm');
+  const { data } = await App.sb.from('profiles').update({ links, activity: S.manualAct || null }).eq('id', S.me.id).select().single();
+  if(data){ S.me = data; S.profiles.set(data.id, data); }
+  renderSettings(); renderUserPanel();
 }
 
 /* ---------- Spotify: conectar (PKCE) ---------- */
@@ -187,6 +251,7 @@ async function setActivity(act, fromSpotify){
   const { data, error } = await App.sb.from('profiles').update({ activity: value }).eq('id', S.me.id).select().single();
   if(error){ App.toast(error.message, true); return; }
   S.me = data; S.profiles.set(data.id, data); renderUserPanel(); renderMembers(); renderSidebar();
+  if(SET && SET.sec === 'connections') renderSettings();
 }
 async function disconnectSpotify(){
   if(!(await confirmBox('Desconectar Spotify', 'Parar de mostrar o que você ouve e remover a conexão?', 'Desconectar'))) return;
@@ -245,19 +310,37 @@ function secConnections(box, back){
   box.innerHTML = `${back}<h2>Conexões</h2>
     <p class="mut">Vincule suas contas para mostrar no perfil o que você está ouvindo e jogando.</p>
     <div class="conncard">
-      <div class="ch2"><span class="clogo sp">${ic('spotify', 26)}</span><div class="t"><b>Spotify</b><small>${c ? 'Conectado como <b>' + esc(c.account_name || '') + '</b>' : 'Mostre a música que está tocando e deixe os amigos ouvirem junto.'}</small></div>
+      <div class="ch2"><span class="clogo sp">${ic('spotify', 26)}</span><div class="t"><b>Spotify</b><small>${lfUser() ? 'Ligado pelo Last.fm como <b>' + esc(lfUser()) + '</b>' : 'Funciona para qualquer conta do Spotify, grátis ou Premium.'}</small></div>
+        ${lfUser() ? '<button class="btn sec sm" id="lfOff">Desligar</button>' : ''}</div>
+      ${!lfKey() ? `<div class="mut small" style="margin-top:8px">${S.me.is_admin ? 'Cole a chave da API do Last.fm logo abaixo para liberar para todo mundo.' : 'O admin do Telão ainda precisa ativar.'}</div>`
+      : lfUser() ? `<div class="mut small" style="margin-top:8px">${a && a.lf ? `Tocando agora: <b>${esc(a.track)}</b> — ${esc(a.artist || '')}` : 'Nada tocando agora. Dê play no Spotify e espere até 30 segundos.'}</div>`
+      : `<ol class="steps" style="margin-top:10px">
+          <li>Crie uma conta grátis em <a href="https://www.last.fm/join" target="_blank" rel="noopener">last.fm/join</a> (ou entre na sua).</li>
+          <li>Abra <a href="https://www.last.fm/settings/applications" target="_blank" rel="noopener">last.fm/settings/applications</a> e clique em <b>Conectar</b> no Spotify. É só uma vez.</li>
+          <li>Digite aqui seu nome de usuário do Last.fm:</li></ol>
+        <div style="display:flex;gap:8px"><input class="inp" id="lfName" placeholder="seu usuário do Last.fm" autocomplete="off"><button class="btn" id="lfGo">Ligar</button></div>`}
+    </div>
+    ${cid || c ? `<div class="conncard">
+      <div class="ch2"><span class="clogo sp">${ic('spotify', 26)}</span><div class="t"><b>Spotify direto + Ouvir junto</b><small>${c ? 'Conectado como <b>' + esc(c.account_name || '') + '</b>' : 'Mostre a música que está tocando e deixe os amigos ouvirem junto.'}</small></div>
         ${c ? `<button class="btn sec sm" id="spOff">Desconectar</button>` : `<button class="btn sm" id="spOn" ${cid ? '' : 'disabled'}>Conectar</button>`}</div>
       ${c ? `${row('Mostrar no perfil o que estou ouvindo', '', toggle('spShow', c.show_activity !== false))}
         <div class="mut small">${a && a.type === 'spotify' ? `Tocando agora: <b>${esc(a.track)}</b> — ${esc(a.artist)}` : 'Nada tocando agora. Quando você der play no Spotify, aparece aqui em alguns segundos.'}</div>` : ''}
       ${!cid ? `<div class="mut small" style="margin-top:8px">${S.me.is_admin ? 'Configure o Client ID logo abaixo para liberar para todo mundo.' : 'O admin do Telão ainda precisa ativar o Spotify.'}</div>` : ''}
-    </div>
+    </div>` : ''}
     <div class="conncard">
       <div class="ch2"><span class="clogo">${ic('gamepad', 24)}</span><div class="t"><b>Contas de jogo e redes</b><small>Steam, Xbox, PlayStation, Riot ID, Epic, Battle.net, Twitch, GitHub…</small></div><button class="btn sec sm" id="gLinks">Editar no perfil</button></div>
     </div>
     <div class="conncard">
       <div class="ch2"><span class="clogo">${ic('play', 22)}</span><div class="t"><b>Atividade</b><small>${S.manualAct ? `${ACT_TYPES[S.manualAct.type][0]} ${esc(S.manualAct.name)}` : 'Diga o que você está jogando, assistindo ou estudando.'}</small></div><button class="btn sec sm" id="acSet">${S.manualAct ? 'Mudar' : 'Definir'}</button></div>
     </div>
-    ${S.me.is_admin ? `<hr class="sdiv"><h3>Ativar o Spotify (só o admin vê)</h3>
+    ${S.me.is_admin ? `<hr class="sdiv"><h3>Ativar o Spotify pelo Last.fm (só o admin vê)</h3>
+      <ol class="steps">
+        <li>Entre em <a href="https://www.last.fm/api/account/create" target="_blank" rel="noopener">last.fm/api/account/create</a> (com a sua conta do Last.fm).</li>
+        <li>Em <b>Application name</b> coloque Telão e clique em <b>Submit</b>. Os outros campos podem ficar vazios.</li>
+        <li>Copie a <b>API key</b> (o "Shared secret" não é usado) e cole aqui:</li>
+      </ol>
+      <div style="display:flex;gap:8px"><input class="inp" id="lfKey" placeholder="API key do Last.fm" value="${esc((S.cfg && S.cfg.lastfm_api_key) || '')}"><button class="btn" id="lfKeyOk">Salvar</button></div>` : ''}
+    ${S.me.is_admin ? `<hr class="sdiv"><h3>Spotify direto (opcional, até 25 pessoas)</h3>
       <ol class="steps">
         <li>Entre em <a href="https://developer.spotify.com/dashboard" target="_blank" rel="noopener">developer.spotify.com/dashboard</a> e clique em <b>Create app</b>.</li>
         <li>Em <b>Redirect URIs</b> coloque exatamente: <code>${esc(spRedirect())}</code> e marque <b>Web API</b>.</li>
@@ -274,6 +357,14 @@ function secConnections(box, back){
     spPoll();
   };
   $b('#gLinks').onclick = () => setSec('profile');
+  const lg = $b('#lfGo'); if(lg){ const go = async () => { lg.disabled = true; if(await connectLastfm($b('#lfName').value)) renderSettings(); else lg.disabled = false; }; lg.onclick = go; $b('#lfName').onkeydown = e => { if(e.key === 'Enter') go(); }; }
+  const lo = $b('#lfOff'); if(lo) lo.onclick = disconnectLastfm;
+  const lk = $b('#lfKeyOk'); if(lk) lk.onclick = async () => {
+    const v = $b('#lfKey').value.trim();
+    const { error } = await App.sb.from('app_config').upsert({ key: 'lastfm_api_key', value: v || null, updated_at: new Date().toISOString() });
+    if(error){ App.toast(error.message, true); return; }
+    S.cfg.lastfm_api_key = v; App.toast('Chave do Last.fm salva. Agora todo mundo pode ligar o Spotify.'); renderSettings();
+  };
   $b('#acSet').onclick = activityModal;
   const ok = $b('#spCidOk'); if(ok) ok.onclick = async () => {
     const v = $b('#spCid').value.trim();

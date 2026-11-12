@@ -226,3 +226,16 @@ O código fica na pasta `src/`. Depois de editar, rode `./build.sh` para gerar o
   - **Atividade**: clique no seu avatar → **Definir atividade**: Jogando, Assistindo, Ouvindo, Estudando ou Trabalhando, com o tempo ("há 32 min"). Tem lista de jogos prontos.
 - **Eventos do servidor:** botão **Eventos** no topo da lista de canais. Crie um evento com data, duração e canal de voz; o pessoal marca "Tenho interesse" e recebe aviso 10 minutos antes e na hora, com botão para entrar na call. Cargo novo: **Gerenciar eventos**.
 - **Telão para Windows:** veja a pasta **telao-desktop** (tem o LEIA-ME dela). Depois de gerar o instalador, cole o link em Configurações → App e instalação. Aparece o botão **Baixar para Windows** no app, na tela de login e na página `/baixar`.
+
+## Spotify para todo mundo (versão 6.3)
+
+O jeito principal agora é pelo **Last.fm**, que não tem limite de pessoas nem lista de liberação, e funciona com Spotify grátis ou Premium.
+
+**Você (admin), uma vez só:**
+1. Crie uma conta em last.fm (se não tiver) e entre em **last.fm/api/account/create**.
+2. Em *Application name* coloque `Telão` e clique em **Submit** (o resto pode ficar vazio).
+3. Copie a **API key** e cole no Telão em **Configurações → Conexões → Ativar o Spotify pelo Last.fm → Salvar**.
+
+**Cada pessoa:** Configurações → Conexões → Spotify. Lá tem o passo a passo: criar conta grátis no Last.fm, ligar o Spotify em last.fm/settings/applications e digitar o usuário do Last.fm no Telão. A música aparece no perfil em até 30 segundos depois do play.
+
+O "Spotify direto" (com Ouvir junto) continua opcional e só aparece se você configurar o Client ID do Spotify.
