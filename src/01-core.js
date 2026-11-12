@@ -9,7 +9,7 @@ const esc = s => String(s ?? '').replace(/[&<>"']/g, c => ({'&':'&amp;','<':'&lt
 const COLORS = ['#5865f2','#eb459e','#3ba55c','#faa61a','#ed4245','#f47b67','#1abc9c','#9b59b6','#e67e22','#607d8b'];
 const ls = { get(k,d){ try{ const v=localStorage.getItem(k); return v==null?d:JSON.parse(v); }catch(e){ return d; } }, set(k,v){ try{ localStorage.setItem(k, JSON.stringify(v)); }catch(e){} } };
 
-const APP_VERSION = '6.5';
+const APP_VERSION = '6.6';
 const S = {
   me: null, profiles: new Map(), servers: [], channels: new Map(), members: new Map(),
   friends: [], dms: [], dmActivity: ls.get('telao-dmact', {}), online: new Set(),
@@ -842,13 +842,18 @@ function renderMain(keepMessages){
     const b = $('#mkCh'); if(b) b.onclick = () => createChannelModal(s, 'text');
     bindBack(); return;
   }
-  const memBtn = [['hMembers','users','Mostrar/esconder membros', S.showMembers !== false ? 'on' : '']];
+  const memBtn = [['hMembers','users','Mostrar/esconder membros', (innerWidth <= 1100 ? S.memOverlay : S.showMembers !== false) ? 'on' : '']];
   if(c.kind === 'text'){
     head.innerHTML = `${back}<div class="htitle"><span class="hic">${ic('hash',22)}</span><b>${esc(c.name)}</b>${c.topic ? `<span class="hdiv"></span><span class="desc" id="hTopic" title="${esc(c.topic)}">${richText(c.topic)}</span>` : ''}</div><span class="grow"></span>
       ${headBtns([['hPins','pin','Mensagens fixadas'], ...memBtn, ['hSearch','search','Buscar'], ['mInvite','userPlus','Convidar amigos']])}`;
     $('#hPins').onclick = e => showPins(e.currentTarget); $('#hSearch').onclick = e => showSearch(e.currentTarget);
     $('#mInvite').onclick = () => inviteModal(s);
-    $('#hMembers').onclick = () => { S.showMembers = S.showMembers === false; renderMain(); renderMembers(); };
+    $('#hMembers').onclick = e => {
+      // só mostra/esconde a lista: não recarrega as mensagens nem perde a rolagem
+      if(innerWidth <= 1100){ S.memOverlay = !S.memOverlay; e.currentTarget.classList.toggle('on', S.memOverlay); }
+      else { S.showMembers = S.showMembers === false; ls.set('telao-showmembers', S.showMembers); e.currentTarget.classList.toggle('on', S.showMembers); }
+      renderMembers();
+    };
     bindBack();
     body.innerHTML = `<div id="msgWrap" class="msgcol"></div>`;
     mountMessages(c, $('#msgWrap'), `<div class="welcome"><div class="big">${ic('hash',40)}</div><h1>Bem-vindo(a) a #${esc(c.name)}!</h1><p>${c.topic ? richText(c.topic) : `Este é o começo do canal #${esc(c.name)}.`}</p></div>`);

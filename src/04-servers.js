@@ -69,9 +69,10 @@ function renderMembers(){
   const el = $('#members');
   const s = curServer();
   const textView = S.route.kind === 'server' && (S.channels.get(s?.id) || []).find(c => c.id === S.route.cid)?.kind === 'text';
-  if(!s || !S.members.has(s.id) || S.showMembers === false || !textView){ el.classList.add('hidden'); return; }
+  const want = innerWidth <= 1100 ? !!S.memOverlay : S.showMembers !== false;
+  document.body.classList.toggle('mem-open', !!(s && textView && want));
+  if(!s || !S.members.has(s.id) || !want || !textView){ el.classList.add('hidden'); return; }
   el.classList.remove('hidden');
-  ls.set('telao-showmembers', S.showMembers !== false);
   const roles = (S.roles.get(s.id) || []).filter(r => r.hoist);
   const mem = S.members.get(s.id).map(m => ({ ...m, p: prof(m.user_id) })).sort((a,b) => a.p.display_name.localeCompare(b.p.display_name));
   const groups = new Map(); roles.forEach(r => groups.set(r.id, { name: r.name, list: [] }));

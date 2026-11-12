@@ -265,3 +265,14 @@ O "Spotify direto" (com Ouvir junto) continua opcional e só aparece se você co
 - **Novidades** (sininho no topo da barra): atualizações e anúncios para todas as contas, com bolinha de não lido. Você (admin) publica pelo próprio sininho → **Publicar aviso** (e pode mostrar na tela de quem está online na hora).
 - **Emojis de servidor** (Configurações do servidor → Emojis): estáticos e GIF animados, 50 de cada + 25 por nível de impulso. Todo mundo usa dentro do servidor; com **Telão+** usa em qualquer servidor e nas DMs, desde que esteja no servidor do emoji (o banco confere). Escreva `:nome:` ou escolha no seletor de emoji; funciona nas reações também.
 - Novo cargo: **Gerenciar emojis**.
+
+# Versão 6.6: Telão Bot de música, celular e lista de membros
+
+**Rode o `supabase.sql` de novo** (tabela da fila de música).
+
+- **Telão Bot de música:** entre numa call e use `/tocar link-ou-nome` em qualquer canal de texto, ou o botão **Telão Bot de música** em Atividades. Todo mundo na call ouve a mesma música, no mesmo ponto (sincronizado pelo relógio do servidor). Tem fila, pular, pausar, repetir (fila ou música), embaralhar, barra de tempo clicável e volume próprio de cada um. O bot aparece na lista da chamada.
+  - Comandos: `/tocar`, `/pular`, `/pausar`, `/continuar`, `/parar`, `/fila`, `/repetir`, `/embaralhar`.
+  - Toca: links do YouTube (vídeo ou playlist), links diretos de áudio (.mp3, .m4a, .ogg, .wav) e arquivos enviados pelo próprio painel do bot. Link do Spotify vira busca no YouTube.
+  - **Busca pelo nome** precisa de uma chave grátis da YouTube Data API: Configurações → Conexões → "Busca do YouTube para o Telão Bot" (só o admin vê, com o passo a passo). Sem a chave, o bot toca por link normalmente.
+- **Celular:** barra de navegação embaixo (Início, Explorar, Novidades, Você), botão voltar do celular volta para a lista em vez de fechar, deslizar da borda esquerda para voltar, segurar o dedo numa mensagem/membro/canal abre o menu, janelas e menus abrem de baixo para cima, botões maiores, sem zoom ao digitar no iPhone, respeita o notch e a barra do iPhone, e o player do bot fica compacto.
+- **Lista de membros:** o botão de mostrar/esconder agora funciona sem recarregar o chat, lembra a escolha e, em telas menores, abre por cima em vez de sumir.

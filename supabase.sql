@@ -1267,6 +1267,77 @@ select 'update', 'Chegou a versão 6.5 do Telão',
 - **Novidades:** este sininho, com as atualizações e anúncios do Telão.', '6.5'
 where not exists (select 1 from public.app_notices where version = '6.5');
 
+
+-- =====================================================================
+-- v6.6: TELÃO BOT DE MÚSICA (fila sincronizada por canal de voz)
+-- =====================================================================
+create table if not exists public.voice_music (
+  channel_id uuid primary key references public.channels(id) on delete cascade,
+  current jsonb,
+  queue jsonb not null default '[]'::jsonb,
+  repeat_mode text not null default 'off' check (repeat_mode in ('off','one','all')),
+  updated_by uuid references public.profiles(id) on delete set null,
+  updated_at timestamptz not null default now()
+);
+alter table public.voice_music enable row level security;
+drop policy if exists "ver musica" on public.voice_music;
+create policy "ver musica" on public.voice_music for select to authenticated using (public.can_access_channel(channel_id));
+-- só dá para mexer pela função abaixo (que usa o relógio do servidor para todo mundo ficar no mesmo ponto)
+create or replace function public.music_control(p_channel uuid, p_action text, p_arg jsonb default null) returns jsonb
+language plpgsql security definer set search_path = public as $$
+declare r voice_music; nowms bigint := (extract(epoch from clock_timestamp()) * 1000)::bigint; t jsonb; q jsonb; pos bigint;
+begin
+  if not public.can_access_channel(p_channel) or not exists (select 1 from channels where id = p_channel and kind in ('voice','dm')) then
+    raise exception 'Você não tem acesso a este canal de voz';
+  end if;
+  insert into voice_music (channel_id) values (p_channel) on conflict do nothing;
+  select * into r from voice_music where channel_id = p_channel for update;
+  q := coalesce(r.queue, '[]'::jsonb);
+  if p_action = 'add' then
+    if jsonb_array_length(q) >= 100 then raise exception 'A fila já tem 100 músicas'; end if;
+    t := p_arg || jsonb_build_object('key', md5(random()::text || clock_timestamp()::text), 'by', auth.uid());
+    if r.current is null then r.current := t || jsonb_build_object('started_at', nowms, 'paused_at', null);
+    else q := q || jsonb_build_array(t); end if;
+  elsif p_action in ('skip', 'next') then
+    if p_action = 'next' and (r.current is null or r.current->>'key' is distinct from p_arg->>'key') then
+      return jsonb_build_object('now', nowms, 'state', to_jsonb(r));   -- outro aparelho já avançou
+    end if;
+    if p_action = 'next' and r.repeat_mode = 'one' and r.current is not null then
+      r.current := r.current || jsonb_build_object('started_at', nowms, 'paused_at', null);
+    else
+      if r.repeat_mode = 'all' and r.current is not null then q := q || jsonb_build_array(r.current - 'started_at' - 'paused_at'); end if;
+      if jsonb_array_length(q) > 0 then r.current := (q->0) || jsonb_build_object('started_at', nowms, 'paused_at', null); q := q - 0;
+      else r.current := null; end if;
+    end if;
+  elsif p_action = 'pause' then
+    if r.current is not null and r.current->>'paused_at' is null then r.current := r.current || jsonb_build_object('paused_at', nowms); end if;
+  elsif p_action = 'resume' then
+    if r.current is not null and r.current->>'paused_at' is not null then
+      r.current := r.current || jsonb_build_object('started_at', (r.current->>'started_at')::bigint + (nowms - (r.current->>'paused_at')::bigint), 'paused_at', null);
+    end if;
+  elsif p_action = 'seek' then
+    pos := greatest(0, (p_arg->>'sec')::numeric * 1000)::bigint;
+    if r.current is not null then
+      r.current := r.current || jsonb_build_object('started_at', coalesce((r.current->>'paused_at')::bigint, nowms) - pos);
+    end if;
+  elsif p_action = 'remove' then
+    select coalesce(jsonb_agg(x), '[]'::jsonb) into q from jsonb_array_elements(q) x where x->>'key' <> p_arg->>'key';
+  elsif p_action = 'shuffle' then
+    select coalesce(jsonb_agg(x order by random()), '[]'::jsonb) into q from jsonb_array_elements(q) x;
+  elsif p_action = 'loop' then
+    r.repeat_mode := coalesce(p_arg->>'mode', 'off');
+  elsif p_action = 'stop' then
+    r.current := null; q := '[]'::jsonb;
+  elsif p_action = 'sync' then
+    null;
+  else
+    raise exception 'Ação inválida';
+  end if;
+  update voice_music set current = r.current, queue = q, repeat_mode = r.repeat_mode, updated_by = auth.uid(), updated_at = now() where channel_id = p_channel
+    returning * into r;
+  return jsonb_build_object('now', nowms, 'state', to_jsonb(r));
+end $$;
+
 -- impede trocar campos sensíveis via update
 create or replace function public.guard_updates() returns trigger
 language plpgsql as $$
@@ -1340,6 +1411,7 @@ begin
   begin alter publication supabase_realtime add table public.event_rsvps; exception when others then null; end;
   begin alter publication supabase_realtime add table public.app_notices; exception when others then null; end;
   begin alter publication supabase_realtime add table public.server_emojis; exception when others then null; end;
+  begin alter publication supabase_realtime add table public.voice_music; exception when others then null; end;
 end $$;
 
 -- ---------- Arquivos (avatar, banner, GIF) ----------
