@@ -9,7 +9,7 @@ const esc = s => String(s ?? '').replace(/[&<>"']/g, c => ({'&':'&amp;','<':'&lt
 const COLORS = ['#5865f2','#eb459e','#3ba55c','#faa61a','#ed4245','#f47b67','#1abc9c','#9b59b6','#e67e22','#607d8b'];
 const ls = { get(k,d){ try{ const v=localStorage.getItem(k); return v==null?d:JSON.parse(v); }catch(e){ return d; } }, set(k,v){ try{ localStorage.setItem(k, JSON.stringify(v)); }catch(e){} } };
 
-const APP_VERSION = '5.1';
+const APP_VERSION = '6.0';
 const S = {
   me: null, profiles: new Map(), servers: [], channels: new Map(), members: new Map(),
   friends: [], dms: [], dmActivity: ls.get('telao-dmact', {}), online: new Set(),
@@ -106,7 +106,7 @@ function menu(x, y, items, cls=''){
 }
 function closeMenu(){ const el=$('#menu'); el.classList.add('hidden'); document.removeEventListener('mousedown', el._outside); }
 async function copy(text){
-  try{ await navigator.clipboard.writeText(text); App.toast('Copiado!'); }
+  try{ await navigator.clipboard.writeText(text); App.toast('Copiado'); }
   catch(e){ App.toast('Não deu para copiar automaticamente: '+text); }
 }
 
@@ -149,7 +149,9 @@ function boot(){
   }
   const pr = location.hash.match(/^#plus-(ok|pendente|erro)/);
   if(pr){ S.plusReturn = pr[1] === 'ok' ? 'ok' : pr[1]; history.replaceState(null, '', location.pathname); }
-  const m = location.hash.match(/convite=([a-z0-9]+)/i);
+  const m = location.hash.match(/convite=([a-z0-9-]+)/i);
+  if(/[?&]desktop=1/.test(location.search)){ history.replaceState(null, '', location.pathname + location.hash); document.documentElement.classList.add('desktop'); }
+  if(window.telaoDesktop) document.documentElement.classList.add('desktop');
   if(m){ S.pendingInvite = m[1].toLowerCase(); history.replaceState(null, '', location.pathname); }
   App.sb.auth.onAuthStateChange((ev, session) => {
     if(ev === 'PASSWORD_RECOVERY') setTimeout(newPasswordModal, 800);
@@ -177,6 +179,9 @@ let authMode = 'login';
 function showAuth(){
   $('#auth').classList.remove('hidden');
   if(S.pendingInvite){ $('#authSub').textContent = 'Entre ou crie uma conta para aceitar o convite.'; }
+  if(!window.telaoDesktop) App.sb.from('app_config').select('value').eq('key', 'desktop_url').maybeSingle().then(({ data }) => {
+    if(data && data.value && !$('#authDl')) $('#authSwitch').insertAdjacentHTML('afterend', `<div class="switch" id="authDl"><a href="/baixar">Baixar o Telão para Windows</a></div>`);
+  });
 }
 function setAuthMode(mode){
   authMode = mode; $('#authErr').textContent = ''; $('#authErr').classList.remove('ok-msg');
@@ -205,13 +210,13 @@ $('#resendLink').onclick = async () => {
   const email = $('#aEmail').value.trim();
   if(!email){ authError('Digite seu e-mail no campo acima.'); return; }
   const { error } = await App.sb.auth.resend({ type:'signup', email, options:{ emailRedirectTo: location.origin + '/?confirmado=1' } });
-  if(error) authError(error.message); else authOk('📧 Enviamos de novo para <b>'+esc(email)+'</b>. Pode levar 1–2 minutos; veja também o spam.');
+  if(error) authError(error.message); else authOk('Enviamos de novo para <b>'+esc(email)+'</b>. Pode levar 1–2 minutos; veja também o spam.');
 };
 async function forgotPassword(){
   const email = $('#aEmail').value.trim();
   if(!email){ authError('Digite seu e-mail no campo acima e clique de novo em "Esqueci minha senha".'); $('#aEmail').focus(); return; }
   const { error } = await App.sb.auth.resetPasswordForEmail(email, { redirectTo: location.origin + '/?novasenha=1' });
-  if(error) authError(error.message); else authOk('📧 Se existir uma conta com <b>' + esc(email) + '</b>, enviamos um link para criar uma nova senha. Veja também o spam.');
+  if(error) authError(error.message); else authOk('Se existir uma conta com <b>' + esc(email) + '</b>, enviamos um link para criar uma nova senha. Veja também o spam.');
 }
 $('#forgotLink').onclick = forgotPassword;
 /* voltou do link "nova senha" */
@@ -226,7 +231,7 @@ function newPasswordModal(){
       if(a !== b){ m.querySelector('#npE').textContent = 'As senhas não são iguais.'; return; }
       const { error } = await App.sb.auth.updateUser({ password: a });
       if(error){ m.querySelector('#npE').textContent = error.message; return; }
-      closeModal(); App.toast('🔒 Senha nova salva! Você já está dentro.');
+      closeModal(); App.toast('Senha nova salva. Você já está dentro.');
     };
   });
 }
@@ -271,7 +276,7 @@ $('#authForm').onsubmit = async e => {
       }
       if(!data.session){
         setAuthMode('login'); $('#aEmail').value = email;
-        authOk('📧 Conta criada! Enviamos um link de confirmação para <b>'+esc(email)+'</b>. Abra o e-mail (veja também o spam), clique no link e você já entra.');
+        authOk('Conta criada! Enviamos um link de confirmação para <b>'+esc(email)+'</b>. Abra o e-mail (veja também o spam), clique no link e você já entra.');
         $('#resendBox').classList.remove('hidden');
       }
     } else {
@@ -310,13 +315,13 @@ async function start(session){
 }
 async function handlePlusReturn(kind){
   if(kind === 'erro'){ App.toast('O pagamento não foi concluído. Pode tentar de novo quando quiser.', true); return; }
-  if(kind === 'pendente'){ App.toast('⏳ Pagamento em processamento. Quando o Pix cair, seu Telão+ ativa sozinho.'); return; }
-  App.toast('✅ Pagamento aprovado! Ativando seu Telão+…');
+  if(kind === 'pendente'){ App.toast('Pagamento em processamento. Quando o Pix cair, seu Telão+ ativa sozinho.'); return; }
+  App.toast('Pagamento aprovado. Ativando seu Telão+…');
   const before = S.me.plan_until;
   for(let i = 0; i < 12; i++){
     await new Promise(r => setTimeout(r, 3000));
     const { data } = await App.sb.from('profiles').select('*').eq('id', S.me.id).single();
-    if(data && data.plan_until !== before){ S.me = data; S.profiles.set(data.id, data); renderAll(); App.toast('🎉 Telão+ ativado! Aproveite.'); openSettings('user','plus'); return; }
+    if(data && data.plan_until !== before){ S.me = data; S.profiles.set(data.id, data); renderAll(); App.toast('Telão+ ativado. Aproveite.'); openSettings('user','plus'); return; }
   }
   App.toast('Seu pagamento está sendo confirmado. Em alguns minutos o Telão+ aparece.');
 }
@@ -429,7 +434,7 @@ function liveWatch(topic, prev, metas){
       if(mine === m.voice || isDnd()) return;
       const ch = findChannel(m.voice); if(!ch) return;
       const where = ch.kind === 'dm' ? 'numa chamada com você' : 'em ' + ch.name;
-      App.toast(`🔴 ${prof(m.user_id).display_name} está transmitindo ${where}`, false, { label: 'Assistir', fn: () => watchLive(m.voice, sess) });
+      App.toast(`${prof(m.user_id).display_name} está transmitindo ${where}`, false, { label: 'Assistir', fn: () => watchLive(m.voice, sess) });
     }
   });
   if(mine) a.forEach((m, sess) => { if(m.voice === mine && (!b.has(sess) || b.get(sess).voice !== mine)) App.sfx('leave'); });
@@ -527,7 +532,7 @@ async function onMemberEvent(p){
 function updateBar(text, reload){
   let bar = $('#updbar');
   if(!bar){ bar = document.createElement('div'); bar.id = 'updbar'; bar.className = 'updbar'; document.body.appendChild(bar); }
-  bar.innerHTML = `<span>${ic('sparkles',18)} ${esc(text)}</span>${reload ? `<button class="btn sm" id="updGo">${ic('refresh',15)} Atualizar agora</button>` : ''}<button class="ibtn" id="updX" title="Fechar">${ic('x',16)}</button>`;
+  bar.innerHTML = `<span>${ic('refresh',18)} ${esc(text)}</span>${reload ? `<button class="btn sm" id="updGo">${ic('refresh',15)} Atualizar agora</button>` : ''}<button class="ibtn" id="updX" title="Fechar">${ic('x',16)}</button>`;
   bar.classList.remove('hidden');
   const go = $('#updGo'); if(go) go.onclick = hardReload;
   $('#updX').onclick = () => bar.classList.add('hidden');
@@ -550,9 +555,9 @@ document.addEventListener('visibilitychange', () => { if(!document.hidden) check
 function showAviso(pl){
   if(!pl || !pl.text) return;
   const from = pl.from ? prof(pl.from).display_name : 'Telão';
-  updateBar(`📢 ${from}: ${pl.text}`, !!pl.reload);
+  updateBar(`${from}: ${pl.text}`, !!pl.reload);
   App.sfx('ring');
-  if(pl.from !== S.me?.id) notify('📢 Aviso do Telão', pl.text, null);
+  if(pl.from !== S.me?.id) notify('Aviso do Telão', pl.text, null);
 }
 App.sendAviso = (text, reload) => S.avisoCh && S.avisoCh.send({ type:'broadcast', event:'aviso', payload:{ text, reload, from: S.me.id } });
 
@@ -598,7 +603,7 @@ function renderAll(){ renderRail(); renderSidebar(); renderUserPanel(); renderVo
 function renderLight(){ renderRail(); renderSidebar(); renderUserPanel(); renderMembers(); refreshFriends(); }
 function refreshFriends(){ if(S.route.kind==='home' && !S.route.dm && S.friendTab !== 'add') renderMain(); }
 
-const LOGO = `<svg viewBox="0 0 32 32" width="26" height="26"><defs><linearGradient id="lg1" x1="0" y1="0" x2="1" y2="1"><stop offset="0" stop-color="#ff8a4c"/><stop offset="1" stop-color="#ff3d7f"/></linearGradient></defs><rect x="2" y="5" width="28" height="19" rx="6" fill="url(#lg1)"/><path d="M13 10.5v8l7-4z" fill="#fff"/><rect x="10" y="26" width="12" height="2.6" rx="1.3" fill="url(#lg1)"/></svg>`;
+const LOGO = `<svg viewBox="0 0 32 32" width="26" height="26"><rect x="2" y="5" width="28" height="19" rx="6" fill="#ff6b4a"/><path d="M13 10.5v8l7-4z" fill="#fff"/><rect x="10" y="26" width="12" height="2.6" rx="1.3" fill="#ff6b4a"/></svg>`;
 /* ---------------- barra de servidores ---------------- */
 function serverIcon(s, size){
   return s.icon_url ? `<img src="${esc(s.icon_url)}" alt="" loading="lazy" decoding="async">` : esc(serverInitials(s.name));
@@ -607,6 +612,7 @@ function renderRail(){
   const pend = S.friends.filter(f => f.status === 'pending' && f.incoming).length;
   const dmUnread = S.dms.filter(d => S.unread.has(d.id)).length;
   const homeBadge = pend + dmUnread;
+  if(window.telaoDesktop){ const tot = homeBadge + S.servers.filter(s => (S.channels.get(s.id) || []).some(c => S.unread.has(c.id))).length; if(tot !== S._deskBadge){ S._deskBadge = tot; window.telaoDesktop.badge(tot); } }
   let h = `<button class="ricon home ${S.route.kind==='home'?'on':''}" id="rHome" data-tip="Início · amigos e conversas" data-tipside="r">${ic('chat',22)}
       ${homeBadge ? `<span class="badge">${homeBadge > 99 ? '99+' : homeBadge}</span>` : ''}</button>`;
   // DMs com mensagem nova aparecem na barra, como no Discord
@@ -622,7 +628,7 @@ function renderRail(){
     h += `<button class="ricon srv ${on?'on':''} ${unread?'unread':''} ${s.icon_url?'img':''}" data-sid="${s.id}" data-tip="${esc(s.name)}" data-tipside="r" style="--sc:${esc(s.icon_color)}">${serverIcon(s)}${inVoice ? `<span class="rvoice">${ic('volume',12)}</span>` : ''}</button>`;
   });
   h += `<button class="ricon add" id="rAdd" data-tip="Adicionar um servidor" data-tipside="r">${ic('plus',24)}</button>`;
-  h += `<button class="ricon add shopb" id="rShop" data-tip="Loja do Telão" data-tipsub="fichas, itens e presentes" data-tipside="r"><span style="font-size:21px">🛍️</span>${S.me && S.me.last_daily !== new Date().toLocaleDateString('en-CA',{timeZone:'America/Sao_Paulo'}) ? '<span class="badge">🪙</span>' : ''}</button>`;
+  h += `<button class="ricon add shopb" id="rShop" data-tip="Loja do Telão" data-tipsub="fichas, itens e presentes" data-tipside="r">${ic('gift',22)}${S.me && S.me.last_daily !== new Date().toLocaleDateString('en-CA',{timeZone:'America/Sao_Paulo'}) ? '<span class="badge dotb"></span>' : ''}</button>`;
   $('#rail').innerHTML = h;
   $('#rHome').onclick = () => go({ kind:'home', dm: S.route.kind==='home' ? S.route.dm : null }, true);
   $('#rAdd').onclick = addServerModal;
@@ -655,10 +661,10 @@ function renderSidebar(){
     const dms = [...S.dms].sort((a,b) => (S.dmActivity[b.id] || b.created_at).localeCompare(S.dmActivity[a.id] || a.created_at));
     body.innerHTML = `
       <div class="ch big ${!S.route.dm?'on':''}" id="sbFriends"><span class="ic">${ic('users',20)}</span><span class="nm">Amigos</span>${pend?`<span class="pill">${pend}</span>`:''}</div>
-      <div class="ch big" id="sbPlus"><span class="ic plusic">${ic('sparkles',20)}</span><span class="nm">Telão+</span></div>
+      <div class="ch big" id="sbPlus"><span class="ic plusic">${ic('star',20)}</span><span class="nm">Telão+</span></div>
       <div class="cat"><span>Mensagens diretas</span><button id="sbNewDm" data-tip="Nova conversa">${ic('plus',16)}</button></div>
       ${dms.length ? dms.map(d => { const p = prof(dmOther(d)); const call = voiceUsers(d).length;
-        return `<div class="dmitem ${S.route.dm===d.id?'on':''} ${S.unread.has(d.id)?'unread':''}" data-dm="${d.id}">${avatar(p,'',true)}<div class="dmt"><span class="nm">${esc(p.display_name)}</span>${p.custom_status ? `<small>${statusText(p)}</small>` : ''}</div>${call?`<span class="incall" data-tip="Em chamada">${ic('volume',16)}</span>`:''}</div>`; }).join('')
+        return `<div class="dmitem ${S.route.dm===d.id?'on':''} ${S.unread.has(d.id)?'unread':''}" data-dm="${d.id}">${avatar(p,'',true)}<div class="dmt"><span class="nm">${esc(p.display_name)}</span>${(App.actLine && App.actLine(p)) || p.custom_status ? `<small>${statusText(p)}</small>` : ''}</div>${call?`<span class="incall" data-tip="Em chamada">${ic('volume',16)}</span>`:''}</div>`; }).join('')
         : `<div class="sbempty">${ic('users',32)}<span>Adicione amigos para conversar</span></div>`}`;
     $('#sbFriends').onclick = () => go({ kind:'home', dm:null });
     $('#sbPlus').onclick = () => openSettings('user','plus');
@@ -745,6 +751,7 @@ function statusMenu(e){
   const items = [{ raw: profileCard(p) }];
   ['online','idle','dnd','invisible'].forEach(st => items.push({ label: STATUS[st][0], icon: `<span class="sdot" style="background:${STATUS[st][1]}"></span>`, onClick: () => setMyStatus(st) }));
   items.push('-', { label: p.custom_status ? 'Editar status personalizado' : 'Definir status personalizado', icon: ic('smile',18), onClick: customStatusModal });
+  items.push({ label: S.manualAct ? 'Mudar atividade' : 'Definir atividade', icon: ic('gamepad',18), onClick: () => App.activityModal() });
   if(p.custom_status) items.push({ label:'Limpar status personalizado', icon: ic('x',18), onClick: () => saveCustomStatus(null, null) });
   items.push({ label:'Editar perfil', icon: ic('edit',18), onClick: () => openSettings('user','profile') }, { label:'Copiar usuário', icon: ic('copy',18), onClick: () => copy(p.username) });
   menu(r.left + 8, r.top - 520, items, 'pp');
@@ -784,7 +791,7 @@ function renderVoicePanel(){
     <div class="vbtns">
       <button class="vb ${Voice.camStream?'on':''}" id="vpCam" data-tip="${Voice.camStream?'Desligar câmera':'Ligar câmera'}">${ic(Voice.camStream?'video':'videoOff',18)}</button>
       <button class="vb ${Voice.screenStream?'on':''}" id="vpScreen" data-tip="${Voice.screenStream?'Parar de transmitir':'Compartilhar tela'}">${ic('screenUp',18)}</button>
-      <button class="vb" id="vpAct" data-tip="Atividades e soundboard">${ic('sparkles',18)}</button>
+      <button class="vb" id="vpAct" data-tip="Atividades e soundboard">${ic('gamepad',18)}</button>
       <button class="vb" id="vpQual" data-tip="Qualidade e áudio">${ic('sliders',18)}</button>
     </div>`;
   $('#vpGo').onclick = () => openChannel(c);
@@ -822,7 +829,7 @@ function renderMain(keepMessages){
     if(keepMessages && M.cid === d.id && body.querySelector('.msgs')){ renderStage(); return; }
     body.innerHTML = `<div id="stageWrap"></div><div id="msgWrap" class="msgcol"></div>`;
     renderStage();
-    mountMessages(d, $('#msgWrap'), `<div class="welcome">${avatar(p,'xl')}<h1>${esc(p.display_name)}</h1><p class="un">@${esc(p.username)}</p><p>Este é o começo da sua conversa com <b>${esc(p.display_name)}</b>. Mande um oi! 👋</p></div>`);
+    mountMessages(d, $('#msgWrap'), `<div class="welcome">${avatar(p,'xl')}<h1>${esc(p.display_name)}</h1><p class="un">@${esc(p.username)}</p><p>Este é o começo da sua conversa com <b>${esc(p.display_name)}</b>. Mande um oi.</p></div>`);
     return;
   }
 
@@ -1439,7 +1446,7 @@ async function deleteMsg(m, skipConfirm){
 async function pinMsg(m){
   const { error } = await App.sb.rpc('pin_message', { p_id: m.id, p_pin: !m.pinned });
   if(error){ App.toast(error.message, true); return; }
-  m.pinned = !m.pinned; App.onMsgUpdate({ ...m }); App.toast(m.pinned ? 'Mensagem fixada 📌' : 'Mensagem desafixada');
+  m.pinned = !m.pinned; App.onMsgUpdate({ ...m }); App.toast(m.pinned ? 'Mensagem fixada' : 'Mensagem desafixada');
 }
 function bindEditor(){
   const ed = $('#edBox'); if(!ed) return;
@@ -1994,7 +2001,7 @@ function renderStage(){
         <button class="cbtn ${Voice.camStream?'on':''}" id="sbCam" data-tip="${Voice.camStream?'Desligar câmera':'Ligar câmera'}">${ic(Voice.camStream?'video':'videoOff',22)}</button>
         ${Voice.camStream ? `<button class="cbtn" id="sbCamFx" data-tip="Efeitos da câmera">${ic('wand',22)}</button>` : ''}
         <button class="cbtn ${Voice.screenStream?'on':''}" id="sbScr" data-tip="${Voice.screenStream?'Parar de transmitir':'Compartilhar tela'}">${ic('screenUp',22)}</button>
-        <button class="cbtn" id="sbAct" data-tip="Atividades">${ic('sparkles',22)}</button>
+        <button class="cbtn" id="sbAct" data-tip="Atividades">${ic('gamepad',22)}</button>
         <button class="cbtn" id="sbFx" data-tip="Reagir">${ic('smile',22)}</button>
         <button class="cbtn" id="sbQ" data-tip="Qualidade">${ic('sliders',22)}</button>
       </div>
@@ -2030,7 +2037,7 @@ function renderStage(){
     $w('#stFs').onclick = () => { const el = $w('#focusBox'); (el.requestFullscreen || el.webkitRequestFullscreen || (()=>{})).call(el); };
     const pip = $w('#stPip'); if(pip) pip.onclick = () => { const v = vid(); if(!v) return; (document.pictureInPictureElement === v ? document.exitPictureInPicture() : v.requestPictureInPicture()).catch(e => App.toast('Não deu: ' + e.message, true)); };
     $w('#stShot').onclick = () => screenshot(vid(), focused.s);
-    $w('#stDraw').onclick = () => { DRAW.on = !DRAW.on; renderStage(); if(DRAW.on) App.toast('✏️ Desenhe na tela: todo mundo assistindo vê. Clique de novo para parar.'); };
+    $w('#stDraw').onclick = () => { DRAW.on = !DRAW.on; renderStage(); if(DRAW.on) App.toast('Desenhe na tela: todo mundo assistindo vê. Clique de novo para parar.'); };
     $w('#stCine').onclick = toggleCinema;
     const sv = $w('#stVol'); if(sv){
       sv.oninput = () => Voice.setScreenVolume(focused.s.user_id, sv.value / 100);
@@ -2066,8 +2073,8 @@ function screenshot(v, s){
   const cv = document.createElement('canvas'); cv.width = v.videoWidth; cv.height = v.videoHeight;
   cv.getContext('2d').drawImage(v, 0, 0);
   cv.toBlob(async blob => {
-    try{ await navigator.clipboard.write([new ClipboardItem({ 'image/png': blob })]); App.toast('📸 Print copiado! Cole no chat com Ctrl+V'); }
-    catch(e){ App.toast('📸 Print salvo'); }
+    try{ await navigator.clipboard.write([new ClipboardItem({ 'image/png': blob })]); App.toast('Print copiado. Cole no chat com Ctrl+V'); }
+    catch(e){ App.toast('Print salvo'); }
     const a = document.createElement('a'); a.href = URL.createObjectURL(blob); a.download = `telao-print-${Date.now()}.png`; a.click();
     setTimeout(() => URL.revokeObjectURL(a.href), 5000);
   }, 'image/png');
@@ -2084,11 +2091,11 @@ function startRec(s){
     const blob = new Blob(chunks, { type: (rec.mimeType || 'video/webm').split(';')[0] });
     const a = document.createElement('a'); a.href = URL.createObjectURL(blob); a.download = `telao-gravacao-${Date.now()}.${blob.type.includes('mp4') ? 'mp4' : 'webm'}`; a.click();
     setTimeout(() => URL.revokeObjectURL(a.href), 10000);
-    App.toast(`🎬 Gravação salva (${fmtSize(blob.size)})`);
+    App.toast(`Gravação salva (${fmtSize(blob.size)})`);
   };
   rec.start(1000);
   Object.assign(REC, { on:true, rec, t0: Date.now() });
-  App.toast('⏺ Gravando… clique de novo para parar e baixar');
+  App.toast('Gravando… clique de novo para parar e baixar');
   renderStage();
 }
 function stopRec(){ if(!REC.on) return; REC.on = false; try{ REC.rec.stop(); }catch(e){} renderStage(); }
@@ -2141,7 +2148,7 @@ function activitiesMenu(anchor){
   if(!Voice.channel){ App.toast('Entre numa chamada para usar atividades.', true); return; }
   const r = anchor.getBoundingClientRect();
   const el = $('#menu'); el.className = 'menu actpop';
-  el.innerHTML = `<div class="pphead">${ic('sparkles',18)} Atividades</div>
+  el.innerHTML = `<div class="pphead">${ic('gamepad',18)} Atividades</div>
     <button class="actbig" id="acWT"><span class="ai">${ic('tv',26)}</span><div><b>Assistir juntos</b><small>Vídeo do YouTube sincronizado para todo mundo na chamada</small></div></button>
     <button class="actbig" id="acCap"><span class="ai">🗨️</span><div><b>Legendas ao vivo</b><small>Sua fala vira texto para todo mundo da chamada (acessibilidade)</small></div></button>
     <div class="actsec">${ic('music',15)} Soundboard <small>todos ouvem</small></div>
@@ -2154,7 +2161,7 @@ function activitiesMenu(anchor){
   el.querySelector('#acWT').onclick = () => { closeMenu(); wtPrompt(); };
   el.querySelector('#acCap').onclick = () => { closeMenu(); App.toggleCaptions(); };
   el.querySelectorAll('[data-snd]').forEach(b => b.onclick = () => {
-    if(Date.now() - lastSound < 1500){ App.toast('Calma! Espere um pouquinho entre os sons 😅'); return; }
+    if(Date.now() - lastSound < 1500){ App.toast('Calma. Espere um pouquinho entre os sons'); return; }
     lastSound = Date.now(); Voice.sendFx({ t:'sound', id: b.dataset.snd });
   });
   el.querySelectorAll('[data-fx]').forEach(b => b.onclick = () => Voice.sendFx({ t:'react', e: b.dataset.fx }));
@@ -2179,7 +2186,7 @@ function wtPrompt(){
 }
 function onWT(pl, mine){
   if(!Voice.channel) return;
-  if(pl.t === 'wt-load'){ Object.assign(WT, { active:true, channel: Voice.channel.id, id: pl.id, title:'', state:{ time: pl.time, playing: pl.playing, at: Date.now() } }); WT.player = null; S.focus = 'wt'; renderStage(); if(!mine) App.toast(`${prof(pl.uid).display_name} começou um vídeo para assistir juntos 📺`); }
+  if(pl.t === 'wt-load'){ Object.assign(WT, { active:true, channel: Voice.channel.id, id: pl.id, title:'', state:{ time: pl.time, playing: pl.playing, at: Date.now() } }); WT.player = null; S.focus = 'wt'; renderStage(); if(!mine) App.toast(`${prof(pl.uid).display_name} começou um vídeo para assistir juntos`); }
   else if(pl.t === 'wt-stop'){ WT.active = false; if(WT.player){ try{ WT.player.destroy(); }catch(e){} } WT.player = null; if(S.focus === 'wt') S.focus = null; renderStage(); }
   else if(pl.t === 'wt-sync' && !mine && WT.player && WT.player.seekTo){
     WT.apply = true;
@@ -2301,7 +2308,7 @@ function camFxMenu(anchor){
 /* ---------------- modo cinema ---------------- */
 function toggleCinema(){
   document.body.classList.toggle('cinema');
-  if(document.body.classList.contains('cinema')) App.toast('🎬 Modo cinema — aperte Esc para sair');
+  if(document.body.classList.contains('cinema')) App.toast('Modo cinema — aperte Esc para sair');
 }
 window.addEventListener('keydown', e => { if(e.key === 'Escape' && document.body.classList.contains('cinema')) document.body.classList.remove('cinema'); });
 
@@ -2363,6 +2370,7 @@ const PERMS = [
   [8, 'Gerenciar mensagens', 'Apagar e fixar mensagens de qualquer pessoa.'],
   [64, 'Moderar membros', 'Dar castigo no chat e silenciar, ensurdecer ou desconectar pessoas da call.'],
   [128, 'Banir membros', 'Tirar do servidor e impedir de voltar.'],
+  [256, 'Gerenciar eventos', 'Criar, editar e apagar eventos do servidor.'],
 ];
 S.roles = new Map();        // sid -> [roles]
 S.memberRoles = new Map();  // sid -> Map(uid -> Set(roleId))
@@ -2437,7 +2445,7 @@ function renderMembers(){
   const activity = uid => { for(const metas of S.vp.values()){ const m = metas.find(x => x.user_id === uid && x.voice); if(m) return m.sharing ? `<span class="livetag" data-watch="${m.voice}" data-wsess="${m.session}">${ic('screenUp',12)} AO VIVO · Assistir</span>` : `${ic('volume',12)} Em chamada`; } return ''; };
   const row = m => {
     const color = App.roleColorOf(m.user_id);
-    const sub = activity(m.user_id) || (m.p.custom_status ? statusText(m.p) : '');
+    const sub = activity(m.user_id) || (App.actLine && App.actLine(m.p)) || (m.p.custom_status ? statusText(m.p) : '');
     return `<div class="mem ${S.online.has(m.user_id) || m.user_id === S.me.id ? '' : 'off'}" data-u="${m.user_id}">${avatar(m.p,'',true)}<div class="mt"><span class="nm" style="${color?`color:${color}`:''}">${nameHtml(m.p)}${m.user_id===s.owner_id?`<span class="crown" data-tip="Dono do servidor">${ic('crown',14)}</span>`:''}</span>${sub ? `<small>${sub}</small>` : ''}</div></div>`;
   };
   let h = '';
@@ -2464,7 +2472,7 @@ function serverMenu(s, e){
 function addServerModal(){
   modal(`<div class="mh"><h2>Adicionar um servidor</h2><p>Um servidor é onde você e seus amigos conversam, jogam e assistem juntos.</p></div>
     <div class="mc">
-      <button class="choice" id="chCreate"><span class="e">${ic('sparkles',26)}</span><div><b>Criar o meu</b><small>Do zero, do seu jeito</small></div>${ic('chevRight',20)}</button>
+      <button class="choice" id="chCreate"><span class="e">${ic('plus',26)}</span><div><b>Criar o meu</b><small>Do zero, do seu jeito</small></div>${ic('chevRight',20)}</button>
       <div class="tpls">${[['🎮','Jogos'],['👥','Amigos'],['📚','Estudos'],['🎬','Filmes']].map(([e,n]) => `<button class="tpl" data-tpl="${n}"><span>${e}</span>${n}</button>`).join('')}</div>
       <button class="choice" id="chJoin"><span class="e">${ic('link',26)}</span><div><b>Entrar com um convite</b><small>Tem um link ou código? Cole aqui</small></div>${ic('chevRight',20)}</button>
     </div>`, m => {
@@ -2502,7 +2510,7 @@ function createServerModal(tpl){
         const t = TEMPLATES[tpl]; let pos = 0;
         await App.sb.from('channels').insert(t.text.map(n => ({ server_id: sid, name: n, kind:'text', position: pos++ })).concat(t.voice.map(n => ({ server_id: sid, name: n, kind:'voice', position: pos++ }))));
       }
-      closeModal(); await loadServers(); go({ kind:'server', sid }); App.toast('Servidor criado! 🎉 Convide a galera.');
+      closeModal(); await loadServers(); go({ kind:'server', sid }); App.toast('Servidor criado. Agora é só convidar a galera.');
     };
   });
 }
@@ -2533,7 +2541,7 @@ function joinServerModal(prefill){
       e.preventDefault();
       const { data: sid, error } = await App.sb.rpc('join_server', { p_code: parseInvite(m.querySelector('#jsC').value) });
       if(error){ App.toast(error.message.includes('Convite') ? 'Convite inválido ou expirado.' : error.message, true); return; }
-      closeModal(); await loadServers(); go({ kind:'server', sid }); App.toast('Bem-vindo(a) ao servidor! 🎉');
+      closeModal(); await loadServers(); go({ kind:'server', sid }); App.toast('Bem-vindo(a) ao servidor');
     };
   });
 }
@@ -2749,7 +2757,9 @@ const LINKS = {
   instagram:['Instagram', u => 'https://instagram.com/' + u, '#e1306c'], tiktok:['TikTok', u => 'https://tiktok.com/@' + u, '#25f4ee'],
   youtube:['YouTube', u => 'https://youtube.com/@' + u, '#ff0000'], twitch:['Twitch', u => 'https://twitch.tv/' + u, '#9146ff'],
   x:['X', u => 'https://x.com/' + u, '#e7e9ea'], steam:['Steam', u => 'https://steamcommunity.com/id/' + u, '#66c0f4'],
-  spotify:['Spotify', u => /^https?:/.test(u) ? u : 'https://open.spotify.com/user/' + u, '#1db954'], site:['Site', u => /^https?:/.test(u) ? u : 'https://' + u, '#9aa0aa'],
+  spotify:['Spotify', u => /^https?:/.test(u) ? u : 'https://open.spotify.com/user/' + u, '#1db954'], github:['GitHub', u => 'https://github.com/' + u, '#e6edf3'],
+  riot:['Riot ID', null, '#eb0029'], xbox:['Xbox', u => 'https://www.xbox.com/play/user/' + encodeURIComponent(u), '#107c10'], psn:['PlayStation', u => 'https://psnprofiles.com/' + encodeURIComponent(u), '#0070d1'],
+  epic:['Epic Games', null, '#c9c9c9'], battlenet:['Battle.net', null, '#148eff'], site:['Site', u => /^https?:/.test(u) ? u : 'https://' + u, '#9aa0aa'],
 };
 const PROFILE_FX = [['', 'Nenhum'], ['estrelas','✨ Estrelas'], ['coracoes','💗 Corações'], ['neve','❄️ Neve'], ['fogo','🔥 Brasas'], ['confete','🎉 Confete'], ['aurora','🌌 Aurora']];
 const RINGS = [['', 'Nenhum'], ['arco','🌈 Arco-íris'], ['ouro','🥇 Ouro'], ['neon','💜 Neon'], ['fogo','🔥 Fogo'], ['gelo','🧊 Gelo']];
@@ -2781,7 +2791,7 @@ function profileCard(p, extra=''){
       <div class="un">@${esc(p.username)}${p.pronouns ? ` · ${esc(p.pronouns)}` : ''}</div>
       ${p.custom_status ? `<div class="cst">${p.custom_emoji ? esc(p.custom_emoji) + ' ' : ''}${esc(p.custom_status)}</div>` : ''}
       ${p.bio ? `<h6>Sobre mim</h6><p>${esc(p.bio)}</p>` : ''}
-      ${links.length ? `<div class="plinks">${links.map(l => `<a href="${esc(LINKS[l.t][1](l.u))}" target="_blank" rel="noopener" style="--lc:${LINKS[l.t][2]}"><i></i>${esc(LINKS[l.t][0])}</a>`).join('')}</div>` : ''}
+      ${links.length ? `<div class="plinks">${links.map(l => LINKS[l.t][1] ? `<a href="${esc(LINKS[l.t][1](l.u))}" target="_blank" rel="noopener" style="--lc:${LINKS[l.t][2]}"><i></i>${esc(LINKS[l.t][0])}</a>` : `<a data-copytxt="${esc(l.u)}" style="--lc:${LINKS[l.t][2]}" title="Copiar"><i></i>${esc(LINKS[l.t][0])}: ${esc(l.u)}</a>`).join('')}</div>` : ''}
       ${p.created_at ? `<h6>Membro desde</h6><p>${new Date(p.created_at).toLocaleDateString('pt-BR',{day:'numeric',month:'short',year:'numeric'})}</p>` : ''}
       ${extra}
     </div></div>`;
@@ -2855,12 +2865,12 @@ function renderSettings(){
   let nav;
   if(SET.kind === 'user'){
     nav = [
-      ['h','Configurações de usuário'], ['account','Minha conta'], ['profile','Perfis'],
+      ['h','Configurações de usuário'], ['account','Minha conta'], ['profile','Perfis'], ['connections','Conexões'],
       ['plus', `<span style="display:inline-flex;width:18px;height:18px">${badgeSvg('plus', plusTier(me))}</span> Telão+`],
-      ['shop', '🛍️ Loja e presentes'], ['boosts', `<span style="display:inline-flex">${BOOST_SVG(18)}</span> Impulsos`],
-      ['h','Configurações do app'], ['appearance','Aparência'], ['a11y','Acessibilidade'], ['lang','🌐 Idioma'], ['voice','Voz e vídeo'], ['notif','Notificações'], ['keys','Teclas de atalho'], ['app','App e instalação'],
+      ['shop', 'Loja e presentes'], ['boosts', `<span style="display:inline-flex">${BOOST_SVG(18)}</span> Impulsos`],
+      ['h','Configurações do app'], ['appearance','Aparência'], ['a11y','Acessibilidade'], ['lang','Idioma'], ['voice','Voz e vídeo'], ['notif','Notificações'], ['keys','Teclas de atalho'], ['app','App e instalação'],
     ];
-    if(me.is_admin) nav.push(['h','Administração'], ['admin','👑 Painel do admin']);
+    if(me.is_admin) nav.push(['h','Administração'], ['admin','Painel do admin']);
     nav.push(['hr'], ['logout','Sair', 'danger']);
   } else {
     const s = SET.server;
@@ -2890,7 +2900,7 @@ function renderSettings(){
   const box = SET.el.querySelector('#sIn');
   const back = isMobile() ? `<button class="btn sec sm mobileback" id="sBack">← Voltar</button>` : '';
   const fn = SET.kind === 'user'
-    ? { account: secAccount, profile: secProfile, plus: secPlus, shop: secShop, boosts: secMyBoosts, appearance: secAppearance, a11y: secA11y, lang: secLang, voice: secVoice, notif: secNotif, keys: secKeys, app: secApp, admin: secAdmin }[SET.sec]
+    ? { account: secAccount, profile: secProfile, plus: secPlus, shop: secShop, connections: secConnections, boosts: secMyBoosts, appearance: secAppearance, a11y: secA11y, lang: secLang, voice: secVoice, notif: secNotif, keys: secKeys, app: secApp, admin: secAdmin }[SET.sec]
     : { overview: secSrvOverview, roles: secSrvRoles, channels: secSrvChannels, members: secSrvMembers, boost: secSrvBoost, bans: secSrvBans, invites: secSrvInvites }[SET.sec];
   if(fn) fn(box, back);
   const b = box.querySelector('#sBack'); if(b) b.onclick = () => { SET.mobileOpen = false; renderSettings(); };
@@ -2934,7 +2944,7 @@ function secAccount(box, back){
       e.preventDefault();
       const { data, error } = await App.sb.rpc('set_username', { p_username: m.querySelector('#uN').value.replace(/^@/,'') });
       if(error){ m.querySelector('#uE').textContent = error.message; return; }
-      S.me.username = data; S.profiles.set(S.me.id, S.me); closeModal(); renderSettings(); renderUserPanel(); App.toast('Nome de usuário alterado!');
+      S.me.username = data; S.profiles.set(S.me.id, S.me); closeModal(); renderSettings(); renderUserPanel(); App.toast('Nome de usuário alterado');
     };
   });
   box.querySelector('#aEmail').onclick = () => modal(`<form id="eF"><div class="mh"><h2>Mudar e-mail</h2><p>Vamos mandar um link de confirmação para o novo e-mail.</p></div>
@@ -2944,7 +2954,7 @@ function secAccount(box, back){
       e.preventDefault();
       const { error } = await App.sb.auth.updateUser({ email: m.querySelector('#eN').value.trim() }, { emailRedirectTo: location.origin + '/' });
       if(error){ m.querySelector('#eE').textContent = error.message; return; }
-      closeModal(); App.toast('📧 Confirme no seu novo e-mail para concluir a troca.');
+      closeModal(); App.toast('Confirme no seu novo e-mail para concluir a troca.');
     };
   });
   box.querySelector('#aPass').onclick = () => modal(`<form id="pF"><div class="mh"><h2>${provs.includes('email') ? 'Mudar senha' : 'Criar senha'}</h2></div>
@@ -2957,7 +2967,7 @@ function secAccount(box, back){
       if(a !== b){ m.querySelector('#pE').textContent = 'As senhas não são iguais.'; return; }
       const { error } = await App.sb.auth.updateUser({ password: a });
       if(error){ m.querySelector('#pE').textContent = /reauth|recent/i.test(error.message) ? 'Por segurança, saia e entre de novo antes de trocar a senha.' : error.message; return; }
-      closeModal(); App.toast('Senha salva! 🔒');
+      closeModal(); App.toast('Senha salva');
     };
   });
   box.querySelector('#aDel').onclick = () => modal(`<form id="dF"><div class="mh"><h2>Excluir conta</h2><p>Isso apaga tudo e não tem volta. Digite <b>${esc(p.username)}</b> para confirmar.</p></div>
@@ -3009,11 +3019,11 @@ function secProfile(box, back){
       ${plus ? `<div style="display:flex;gap:8px;flex-wrap:wrap"><button class="btn sm" id="pfBn">${ic('image',16)} Imagem ou GIF</button><button class="btn sec sm" id="pfBnRm">Remover</button></div>` : lockBox('Banner com imagem ou GIF é do Telão+.')}
       <h3>Cor do banner</h3><div class="colorrow"><input type="color" id="pfBc"><button class="btn sec sm" id="pfBcAuto">Automática</button></div>
       <hr class="sdiv">
-      <h3>Tema do cartão ${plus?'':'🔒'}</h3>
+      <h3>Tema do cartão ${plus?'':ic('lock',14)}</h3>
       ${plus ? `<div class="colorrow"><label>Principal <input type="color" id="pfTa"></label><label>Destaque <input type="color" id="pfTb"></label><button class="btn sec sm" id="pfTrm">Sem tema</button></div>` : lockBox('Cores no cartão de perfil são do Telão+.')}
-      <h3>Efeito no perfil ${plus?'':'🔒'}</h3>${plus ? chipRow('pfFx', PROFILE_FX, D.profile_fx) : lockBox('Partículas animadas no seu cartão.')}
-      <h3>Anel do avatar ${plus?'':'🔒'}</h3>${plus ? chipRow('pfRing', RINGS, D.avatar_ring) : lockBox('Um anel animado em volta do seu avatar.')}
-      <h3>Estilo do nome ${plus?'':'🔒'}</h3>${plus ? `<div class="chips" id="pfNs">${NAME_STYLES.map(([v,l]) => `<button type="button" class="chip ${(D.name_style||'')===v?'on':''}" data-v="${v}"><span class="${v?'nst nst-'+v:''}">${l}</span></button>`).join('')}</div>` : lockBox('Nome com gradiente colorido no chat.')}
+      <h3>Efeito no perfil ${plus?'':ic('lock',14)}</h3>${plus ? chipRow('pfFx', PROFILE_FX, D.profile_fx) : lockBox('Partículas animadas no seu cartão.')}
+      <h3>Anel do avatar ${plus?'':ic('lock',14)}</h3>${plus ? chipRow('pfRing', RINGS, D.avatar_ring) : lockBox('Um anel animado em volta do seu avatar.')}
+      <h3>Estilo do nome ${plus?'':ic('lock',14)}</h3>${plus ? `<div class="chips" id="pfNs">${NAME_STYLES.map(([v,l]) => `<button type="button" class="chip ${(D.name_style||'')===v?'on':''}" data-v="${v}"><span class="${v?'nst nst-'+v:''}">${l}</span></button>`).join('')}</div>` : lockBox('Nome com gradiente colorido no chat.')}
     </div>
 
     <div data-pane="insignias" class="hidden">
@@ -3117,7 +3127,7 @@ function secProfile(box, back){
     }catch(err){ App.toast('Não deu para enviar: ' + err.message, true); return; }
     if(target === 'avatar'){ D.avatar_url = url; const c = await avgColor(f); if(c) D.avatar_color = c; }
     else D.banner_url = url;
-    App.toast('Pronto! Clique em “Salvar”.');
+    App.toast('Pronto. Clique em “Salvar”.');
     refresh();
   };
   async function save(){
@@ -3130,13 +3140,13 @@ function secProfile(box, back){
     const { data, error } = await App.sb.from('profiles').update(upd).eq('id', me.id).select().single();
     if(error){ App.toast(error.message, true); return; }
     S.me = data; S.profiles.set(data.id, data);
-    SET.dirty = false; App.toast('Perfil salvo! ✨');
+    SET.dirty = false; App.toast('Perfil salvo');
     renderSettings(); renderUserPanel(); renderMembers(); if(M.el) renderMsgList(false);
   }
   drawLinks(); refresh();
 }
 function upsell(what){
-  modal(`<div class="mh"><h2>✨ Isso é do Telão+</h2><p>${esc(what)} faz parte do <b>Telão+</b>, por ${PRICE_TXT}/mês.</p></div>
+  modal(`<div class="mh"><h2>Isso é do Telão+</h2><p>${esc(what)} faz parte do <b>Telão+</b>, por ${PRICE_TXT}/mês.</p></div>
     <div class="mc" style="text-align:center"><div style="display:inline-flex;width:64px;height:64px">${badgeSvg('plus','diamante')}</div></div>
     <div class="mf"><button class="btn sec" data-close>Agora não</button><button class="btn" id="upGo">Conhecer o Telão+</button></div>`, m => {
     m.querySelector('#upGo').onclick = () => { closeModal(); if(SET) setSec('plus'); else openSettings('user','plus'); };
@@ -3371,12 +3381,24 @@ function secKeys(box, back){
 function secApp(box, back){
   const ios = /iphone|ipad|ipod/i.test(navigator.userAgent);
   const standalone = matchMedia('(display-mode: standalone)').matches || navigator.standalone;
+  const desk = window.telaoDesktop, dl = (S.cfg || {}).desktop_url;
   box.innerHTML = `${back}<h2>App e instalação</h2>
-    ${row('Instalar o Telão', standalone ? '✅ Você está usando o app instalado.' : S.installEvt ? 'Instale como app: ícone próprio, janela separada e abre mais rápido.' : ios ? 'No iPhone: Compartilhar → <b>Adicionar à Tela de Início</b>.' : 'No Chrome/Edge: ícone de instalar na barra de endereço, ou menu ⋮ → <b>Instalar Telão</b>.',
-          S.installEvt && !standalone ? '<button class="btn sm" id="apInst">📲 Instalar</button>' : '')}
+    <div class="dlcard"><span class="clogo">${ic('monitor', 24)}</span><div class="t"><b>Telão para Windows</b>
+      <small>${desk ? 'Você está usando o app para Windows, versão ' + esc(desk.version) + '. Ele se atualiza sozinho.' : 'Programa de verdade: abre pelo menu Iniciar, fica na bandeja, avisa de mensagens e compartilha a tela com o som do PC.'}</small></div>
+      ${desk ? '' : dl ? `<a class="btn" href="${esc(dl)}" download>${ic('download', 16)} Baixar para Windows</a>` : '<span class="mut small">Em breve</span>'}</div>
+    ${S.me.is_admin ? `<div class="srow"><div class="t"><b>Link do instalador (só o admin vê)</b><small>Cole o link do Telao-Setup.exe (por exemplo, o da página Releases do GitHub). Veja o LEIA-ME do app para Windows.</small></div></div>
+      <div style="display:flex;gap:8px;margin-bottom:8px"><input class="inp" id="apDl" placeholder="https://github.com/…/releases/latest/download/Telao-Setup.exe" value="${esc(dl || '')}"><button class="btn sec" id="apDlOk">Salvar</button></div>` : ''}
+    ${desk ? '' : row('Instalar pelo navegador', standalone ? 'Você está usando o app instalado.' : S.installEvt ? 'Instale como app: ícone próprio, janela separada e abre mais rápido.' : ios ? 'No iPhone: Compartilhar → <b>Adicionar à Tela de Início</b>.' : 'No Chrome/Edge: ícone de instalar na barra de endereço, ou menu ⋮ → <b>Instalar Telão</b>.',
+          S.installEvt && !standalone ? '<button class="btn sm" id="apInst">Instalar</button>' : '')}
     ${row('Limpar cache do app', 'Use se uma atualização não aparecer.', '<button class="btn sec sm" id="apClr">Limpar e recarregar</button>')}
-    <hr class="sdiv"><small style="color:var(--mut)">Telão · versão 4.1</small>`;
+    <hr class="sdiv"><small style="color:var(--mut)">Telão · versão ${APP_VERSION}</small>`;
   const i = box.querySelector('#apInst'); if(i) i.onclick = doInstall;
+  const dk = box.querySelector('#apDlOk'); if(dk) dk.onclick = async () => {
+    const v = box.querySelector('#apDl').value.trim();
+    const { error } = await App.sb.from('app_config').upsert({ key: 'desktop_url', value: v || null, updated_at: new Date().toISOString() });
+    if(error){ App.toast(error.message, true); return; }
+    S.cfg.desktop_url = v || null; App.toast('Link salvo. Agora todo mundo vê o botão de baixar.'); renderSettings();
+  };
   box.querySelector('#apClr').onclick = async () => {
     try{ const regs = await navigator.serviceWorker.getRegistrations(); await Promise.all(regs.map(r => r.unregister())); const ks = await caches.keys(); await Promise.all(ks.map(k => caches.delete(k))); }catch(e){}
     location.reload();
@@ -3386,9 +3408,9 @@ function secApp(box, back){
 /* ---------- Painel do admin ---------- */
 function secAdmin(box, back){
   if(!S.me.is_admin){ box.innerHTML = 'Sem acesso.'; return; }
-  box.innerHTML = `${back}<h2>👑 Painel do admin</h2>
+  box.innerHTML = `${back}<h2>Painel do admin</h2>
     <p style="color:var(--txt2);font-size:14px">Dê o Telão+ (ex: quem pagou por Pix) e insígnias para qualquer pessoa.</p>
-    <h3>📢 Aviso para todos</h3>
+    <h3>Aviso para todos</h3>
     <p class="mut small" style="margin-bottom:8px">Aparece na hora para todo mundo que está com o Telão aberto (no topo da tela, com som).</p>
     <textarea class="inp" id="avT" maxlength="200" rows="2">Saiu uma atualização nova do Telão! Clique em "Atualizar agora" para ver as novidades 🎉</textarea>
     <div style="display:flex;gap:10px;align-items:center;margin-top:8px;flex-wrap:wrap"><label style="display:flex;gap:8px;align-items:center;font-size:14px">${toggle('avR', true)} Mostrar botão “Atualizar agora”</label><span class="grow"></span><button class="btn" id="avGo">${ic('send',16)} Enviar para todos</button></div>
@@ -3403,7 +3425,7 @@ function secAdmin(box, back){
     const t = $b('#avT').value.trim(); if(!t){ App.toast('Escreva o aviso.', true); return; }
     if(!(await confirmBox('Enviar aviso', `Mandar para todo mundo que está online agora?<br><br><i>“${esc(t)}”</i>`, 'Enviar', false))) return;
     await App.sendAviso(t, $b('#avR').checked);
-    App.toast('📢 Aviso enviado para todos que estão online!');
+    App.toast('Aviso enviado para todos que estão online');
   };
   let tmr;
   $b('#adQ').oninput = e => { clearTimeout(tmr); const q = e.target.value.trim().replace(/[%,()]/g,''); tmr = setTimeout(async () => {
@@ -3426,13 +3448,13 @@ function secAdmin(box, back){
     box.querySelectorAll('[data-days]').forEach(b => b.onclick = async () => {
       const { error } = await App.sb.rpc('admin_set_plus', { p_user: uid, p_days: +b.dataset.days });
       if(error){ App.toast(error.message, true); return; }
-      await refetch(uid); App.toast(+b.dataset.days ? 'Telão+ liberado! 💎' : 'Plano removido.'); showUser(uid);
+      await refetch(uid); App.toast(+b.dataset.days ? 'Telão+ liberado.' : 'Plano removido.'); showUser(uid);
     });
     $b('#adSaveB').onclick = async () => {
       const list = [...box.querySelectorAll('[data-b]')].filter(x => x.checked).map(x => x.dataset.b);
       const { error } = await App.sb.rpc('admin_set_badges', { p_user: uid, p_badges: list });
       if(error){ App.toast(error.message, true); return; }
-      await refetch(uid); App.toast('Insígnias salvas!'); showUser(uid);
+      await refetch(uid); App.toast('Insígnias salvas'); showUser(uid);
     };
   }
   async function refetch(uid){ const { data } = await App.sb.from('profiles').select('*').eq('id', uid).single(); if(data){ S.profiles.set(uid, data); if(uid === S.me.id) S.me = data; } }
@@ -3482,7 +3504,7 @@ function secSrvOverview(box, back){
     const { error } = await App.sb.from('servers').update({ name, icon_color: D.icon_color, icon_url: D.icon_url, description: D.description.trim() || null }).eq('id', s.id);
     if(error){ App.toast(error.message, true); return; }
     SET.dirty = false; await loadServers(); SET.server = S.servers.find(x => x.id === s.id) || s;
-    renderRail(); renderSidebar(); renderSettings(); App.toast('Servidor atualizado!');
+    renderRail(); renderSidebar(); renderSettings(); App.toast('Servidor atualizado');
   }
   draw();
 }
@@ -3519,7 +3541,7 @@ function secSrvRoles(box, back){
     let perms = 0; PERMS.forEach(([bit]) => { if(ed.querySelector('#rp' + bit).checked) perms |= bit; });
     const { error } = await App.sb.from('server_roles').update({ name: ed.querySelector('#rN').value.trim() || 'cargo', color: D.color, perms, hoist: ed.querySelector('#rH').checked }).eq('id', r.id);
     if(error){ App.toast(error.message, true); return; }
-    await loadRoles(s.id); renderSettings(); renderMembers(); renderSidebar(); App.toast('Cargo salvo!');
+    await loadRoles(s.id); renderSettings(); renderMembers(); renderSidebar(); App.toast('Cargo salvo');
   };
   ed.querySelector('#rDel').onclick = async () => {
     if(!(await confirmBox('Apagar cargo', `Apagar o cargo <b>${esc(r.name)}</b>? Quem tem ele perde as permissões.`, 'Apagar'))) return;
@@ -3603,7 +3625,7 @@ function secSrvInvites(box, back){
   box.querySelector('#siR').onclick = async () => {
     const { data, error } = await App.sb.rpc('regenerate_invite', { p_server: s.id });
     if(error){ App.toast(error.message, true); return; }
-    s.invite_code = data; renderSettings(); App.toast('Novo convite gerado!');
+    s.invite_code = data; renderSettings(); App.toast('Novo convite gerado');
   };
 }
 
@@ -3652,7 +3674,7 @@ function v5Init(){
   }).subscribe();
   loadInventory(); applyPrefs();
   // lembrete das fichas do dia
-  setTimeout(() => { if(S.me && S.me.last_daily !== todayBR()) App.toast(`🪙 Suas fichas de hoje estão esperando${S.me.streak ? ` · ${S.me.streak} dia(s) seguidos` : ''}!`, false, { label:'Pegar', fn: claimDaily }); }, 4000);
+  setTimeout(() => { if(S.me && S.me.last_daily !== todayBR()) App.toast(`Suas fichas de hoje estão esperando${S.me.streak ? ` · ${S.me.streak} dia(s) seguidos` : ''}!`, false, { label:'Pegar', fn: claimDaily }); }, 4000);
 }
 const todayBR = () => new Date().toLocaleDateString('en-CA', { timeZone:'America/Sao_Paulo' });
 
@@ -3729,7 +3751,7 @@ async function boostServerModal(s){
       const { error } = await App.sb.rpc('boost_server', { p_server: s.id, p_slot: slot });
       if(error){ App.toast(error.message, true); return; }
       closeModal(); await loadBoosts(); renderSidebar(); renderMembers();
-      App.toast(`🚀 Você impulsionou ${s.name}!`); boostCelebrate();
+      App.toast(`Você impulsionou ${s.name}`); boostCelebrate();
     };
     const g = m.querySelector('#bsGo'); if(g) g.onclick = () => go(free.slot);
     m.querySelectorAll('[data-slot]').forEach(b => b.onclick = () => { const x = slots.find(y => y.slot === +b.dataset.slot); if(x.b && x.b.server_id === s.id) return; go(x.slot); });
@@ -3853,7 +3875,7 @@ async function claimDaily(){
   if(error){ App.toast(error.message, true); return; }
   const { data: me } = await App.sb.from('profiles').select('*').eq('id', S.me.id).single();
   if(me){ S.me = me; S.profiles.set(me.id, me); }
-  App.toast(`🪙 +${data.gain} fichas! Sequência: ${data.streak} dia(s)${hasPlus(S.me) ? ' · bônus Telão+ em dobro' : ''}`);
+  App.toast(`+${data.gain} fichas! Sequência: ${data.streak} dia(s)${hasPlus(S.me) ? ' · bônus Telão+ em dobro' : ''}`);
   coinRain();
   if(SET && SET.sec === 'shop') renderSettings();
 }
@@ -3875,7 +3897,7 @@ async function secShop(box, back){
   const eq = equippedOf(me);
   box.innerHTML = `${back}
     <div class="shophero">
-      <div><h1>Loja do Telão</h1><p>Coisas que só existem aqui: entradas sonoras, molduras, títulos e muito mais. Tudo comprado com <b>fichas</b> — que você ganha só por aparecer.</p></div>
+      <div><h1>Loja</h1><p>Coisas que só existem aqui: entradas sonoras, molduras, títulos e muito mais. Tudo comprado com <b>fichas</b> — que você ganha só por aparecer.</p></div>
       <div class="wallet">${fichasHtml(me.fichas)}<small>${me.streak ? `🔥 ${me.streak} dia(s) seguidos` : 'Comece sua sequência hoje'}</small>
         <button class="btn ${claimed ? 'sec' : ''}" id="shDaily" ${claimed ? 'disabled' : ''}>${claimed ? 'Volte amanhã ✔' : 'Pegar fichas do dia'}</button></div>
     </div>
@@ -3929,14 +3951,14 @@ async function buyItem(id){
   const { error } = await App.sb.rpc('buy_item', { p_item: id });
   if(error){ App.toast(error.message, true); return; }
   await refreshMe(); await loadInventory();
-  App.toast(it.kind === 'plus' ? '💎 Telão+ ativado! Aproveite.' : `🛍️ ${it.name} é seu!`); coinRain();
+  App.toast(it.kind === 'plus' ? 'Telão+ ativado.' : `${it.name} agora é seu.`); coinRain();
   renderAll(); if(SET) renderSettings();
 }
 async function equipItem(kind, id){
   const { data, error } = await App.sb.rpc('equip_item', { p_kind: kind, p_item: id });
   if(error){ App.toast(error.message, true); return; }
   S.me.equipped = data; S.profiles.set(S.me.id, S.me);
-  App.toast(id ? 'Equipado! ✨' : 'Removido.'); renderAll(); if(SET) renderSettings();
+  App.toast(id ? 'Equipado.' : 'Removido.'); renderAll(); if(SET) renderSettings();
 }
 async function refreshMe(){
   const { data } = await App.sb.from('profiles').select('*').eq('id', S.me.id).single();
@@ -3947,11 +3969,11 @@ async function refreshMe(){
 async function giftModal(toUid, itemId){
   await loadShop();
   const friends = S.friends.filter(f => f.status === 'accepted').map(f => prof(f.uid));
-  if(!friends.length){ App.toast('Adicione amigos para dar presentes 🎁', true); return; }
+  if(!friends.length){ App.toast('Adicione amigos para dar presentes', true); return; }
   let to = toUid || friends[0].id, item = itemId || null, plusDays = 0;
   const admin = S.me.is_admin;
   const opts = S.shop.map(i => `<option value="${i.id}" ${i.id===item?'selected':''}>${(ITEM_LOOK[i.id]||['🎁'])[0]} ${esc(i.name)} — ${i.price} fichas</option>`).join('');
-  modal(`<form id="gF"><div class="mh"><h2>🎁 Dar um presente</h2><p>Chega como um pacote na conversa — a pessoa abre quando quiser.</p></div>
+  modal(`<form id="gF"><div class="mh"><h2>Dar um presente</h2><p>Chega como um pacote na conversa — a pessoa abre quando quiser.</p></div>
     <div class="mc">
       <label class="field"><span>Para</span><select class="inp" id="gTo">${friends.map(p => `<option value="${p.id}" ${p.id===to?'selected':''}>${esc(p.display_name)} (@${esc(p.username)})</option>`).join('')}</select></label>
       <label class="field"><span>Presente</span><select class="inp" id="gIt">
@@ -3971,7 +3993,7 @@ async function giftModal(toUid, itemId){
       const v = sel.value, isPlus = v.startsWith('plus:');
       const { error } = await App.sb.rpc('send_gift', { p_to: m.querySelector('#gTo').value, p_item: isPlus ? null : v, p_note: m.querySelector('#gNote').value.trim() || null, p_plus_days: isPlus ? +v.split(':')[1] : 0 });
       if(error){ m.querySelector('#gE').textContent = error.message; return; }
-      closeModal(); await refreshMe(); App.toast('🎁 Presente enviado!'); boostCelebrate();
+      closeModal(); await refreshMe(); App.toast('Presente enviado'); boostCelebrate();
       if(SET) renderSettings();
     };
   });
@@ -4003,7 +4025,7 @@ document.addEventListener('click', async e => {
   if(error){ App.toast(error.message, true); b.disabled = false; return; }
   GIFTS.delete(b.dataset.opengift);
   await Promise.all([refreshMe(), loadInventory()]);
-  setTimeout(() => { box.classList.remove('shake'); boostCelebrate(); coinRain(); hydrateGift(box); renderAll(); App.toast('🎉 Presente aberto! Veja em Loja › Meus itens.'); }, 650);
+  setTimeout(() => { box.classList.remove('shake'); boostCelebrate(); coinRain(); hydrateGift(box); renderAll(); App.toast('Presente aberto. Veja em Loja › Meus itens.'); }, 650);
 });
 
 /* ---------- configurações: meus impulsos (usuário) e impulsos do servidor ---------- */
@@ -4062,7 +4084,7 @@ function secSrvBoost(box, back){
   const vo = $b('#sbVanOk'); if(vo && lv >= 3) vo.onclick = async () => {
     const { error } = await App.sb.rpc('set_vanity', { p_server: s.id, p_code: $b('#sbVan').value });
     if(error){ App.toast(error.message, true); return; }
-    await loadServers(); SET.server = S.servers.find(x => x.id === s.id) || s; App.toast('Convite personalizado salvo!'); renderSettings();
+    await loadServers(); SET.server = S.servers.find(x => x.id === s.id) || s; App.toast('Convite personalizado salvo'); renderSettings();
   };
 }
 async function uploadBanner(file){
@@ -4270,7 +4292,7 @@ const _joinVoice = joinVoice;
 joinVoice = async function(){ const r = await _joinVoice.apply(this, arguments); if(P.a11yCaps && Voice.channel) startCaptions(); return r; };
 const _leaveVoice = leaveVoice;
 leaveVoice = async function(){ stopCaptions(); const b = document.getElementById('capBox'); if(b) b.remove(); return _leaveVoice.apply(this, arguments); };
-App.toggleCaptions = () => { if(CAP.on){ stopCaptions(); App.toast('Legendas desligadas'); } else if(startCaptions()) App.toast('🗨️ Legendas ligadas — o que você fala aparece para todos na chamada'); };
+App.toggleCaptions = () => { if(CAP.on){ stopCaptions(); App.toast('Legendas desligadas'); } else if(startCaptions()) App.toast('Legendas ligadas — o que você fala aparece para todos na chamada'); };
 
 function secA11y(box, back){
   box.innerHTML = `${back}<h2>Acessibilidade</h2>
@@ -4496,7 +4518,7 @@ App.modItems = (s, uid, x, y) => {
 function timeoutModal(s, uid){
   const p = prof(uid);
   const opts = [[1,'1 minuto'],[5,'5 minutos'],[10,'10 minutos'],[60,'1 hora'],[1440,'1 dia'],[10080,'1 semana']];
-  modal(`<div class="mh"><h2>⏳ Castigo para ${esc(p.display_name)}</h2><p>Durante o castigo a pessoa continua no servidor, mas não consegue mandar mensagens nem reagir.</p></div>
+  modal(`<div class="mh"><h2>Castigo para ${esc(p.display_name)}</h2><p>Durante o castigo a pessoa continua no servidor, mas não consegue mandar mensagens nem reagir.</p></div>
     <div class="mc"><div class="tochips">${opts.map(([v, l]) => `<button data-to="${v}">${l}</button>`).join('')}</div></div>
     <div class="mf"><button class="btn sec" data-close>Cancelar</button></div>`, m => {
     m.querySelectorAll('[data-to]').forEach(b => b.onclick = () => { closeModal(); modCall(s, uid, { p_timeout_minutes: +b.dataset.to }, `⏳ ${p.display_name} está de castigo por ${b.textContent}.`); });
@@ -4511,7 +4533,7 @@ function banModal(s, uid){
       e.preventDefault();
       const { error } = await App.sb.rpc('ban_member', { p_server: s.id, p_user: uid, p_reason: m.querySelector('#bnR').value.trim() || null });
       if(error){ App.toast(error.message, true); return; }
-      closeModal(); App.toast(`🔨 ${p.display_name} foi banido.`); await loadMembers(s.id); renderMembers();
+      closeModal(); App.toast(`${p.display_name} foi banido.`); await loadMembers(s.id); renderMembers();
     };
   });
 }
@@ -4521,12 +4543,12 @@ App.onModChange = row => {
   if(Voice.channel && Voice.channel.server_id === row.server_id){
     const was = [Voice.forceMuted, Voice.forceDeaf];
     Voice.setForced(row.voice_muted, row.voice_deafened);
-    if(!was[0] && row.voice_muted) App.toast(`🔇 Um moderador silenciou você em ${s.name}.`, true);
-    if(!was[1] && row.voice_deafened) App.toast(`🔇 Um moderador ensurdeceu você em ${s.name}.`, true);
+    if(!was[0] && row.voice_muted) App.toast(`Um moderador silenciou você em ${s.name}.`, true);
+    if(!was[1] && row.voice_deafened) App.toast(`Um moderador ensurdeceu você em ${s.name}.`, true);
     renderUserPanel(); renderStage();
   }
   const to = row.timeout_until && new Date(row.timeout_until) > new Date();
-  if(to) App.toast(`⏳ Você está de castigo em ${s.name} até ${new Date(row.timeout_until).toLocaleTimeString('pt-BR',{hour:'2-digit',minute:'2-digit'})}.`, true);
+  if(to) App.toast(`Você está de castigo em ${s.name} até ${new Date(row.timeout_until).toLocaleTimeString('pt-BR',{hour:'2-digit',minute:'2-digit'})}.`, true);
   composerTimeout();
 };
 App.onModDisconnect = pl => {
@@ -4566,15 +4588,431 @@ async function secSrvBans(box, back){
   if(error){ el.textContent = error.message; return; }
   await ensureProfiles((data || []).flatMap(b => [b.user_id, b.banned_by]));
   el.innerHTML = (data || []).length ? (data || []).map(b => `<div class="banrow">${avatar(prof(b.user_id))}<div class="t"><b>${esc(prof(b.user_id).display_name)}</b><small>${b.reason ? esc(b.reason) + ' · ' : ''}por ${esc(prof(b.banned_by).display_name)} em ${new Date(b.created_at).toLocaleDateString('pt-BR')}</small></div>
-    ${App.hasPerm(s.id, 128) ? `<button class="btn sec sm" data-unban="${b.user_id}">Desbanir</button>` : ''}</div>`).join('') : 'Ninguém banido. 🕊️';
+    ${App.hasPerm(s.id, 128) ? `<button class="btn sec sm" data-unban="${b.user_id}">Desbanir</button>` : ''}</div>`).join('') : 'Ninguém banido.';
   el.querySelectorAll('[data-unban]').forEach(b => b.onclick = async () => {
     const { error } = await App.sb.rpc('unban_member', { p_server: s.id, p_user: b.dataset.unban });
     if(error){ App.toast(error.message, true); return; } renderSettings();
   });
 }
+/* =====================================================================
+   v6: CONEXÕES (Spotify) e ATIVIDADE ("Ouvindo", "Jogando"…)
+   O Spotify usa login PKCE: não precisa de chave secreta no site.
+   ===================================================================== */
+S.cfg = {};
+S.conn = null;          // minha conexão com o Spotify (linha de public.connections)
+const SP = { token: null, exp: 0, timer: null, last: null, busy: false };
+const SP_SCOPES = 'user-read-currently-playing user-read-playback-state user-modify-playback-state';
+const spRedirect = () => location.origin + '/';
+// guarda o retorno do Spotify antes de qualquer coisa mexer na URL
+(() => {
+  const q = new URLSearchParams(location.search);
+  if(q.get('state') === 'telao-spotify' && (q.get('code') || q.get('error'))){
+    S.spReturn = { code: q.get('code'), error: q.get('error') };
+    history.replaceState(null, '', location.pathname + location.hash);
+  }
+})();
+
+const ACT_TYPES = {
+  playing:  ['Jogando', 'gamepad'], watching: ['Assistindo', 'tv'], listening: ['Ouvindo', 'music'],
+  studying: ['Estudando', 'book'], working: ['Trabalhando em', 'code'], streaming: ['Transmitindo', 'screenUp'],
+};
+const GAME_PRESETS = ['Valorant','Counter-Strike 2','League of Legends','Minecraft','Fortnite','GTA V','Roblox','EA FC','Rocket League','Free Fire','Apex Legends','Dota 2','Rainbow Six Siege','Overwatch 2','Elden Ring','Call of Duty'];
+
+/* atividade válida agora (some sozinha se a música acabou ou a pessoa saiu) */
+function actOf(p){
+  const a = p && p.activity; if(!a || typeof a !== 'object') return null;
+  const online = p.id === (S.me && S.me.id) || S.online.has(p.id);
+  if(!online) return null;
+  if(a.type === 'spotify'){ if(!a.playing || !a.end || Date.now() > a.end + 20000) return null; return a; }
+  if(!ACT_TYPES[a.type] || !a.name) return null;
+  if(a.since && Date.now() - a.since > 24 * 3600e3) return null;
+  return a;
+}
+App.actOf = actOf;
+const ago = t => { const m = Math.max(1, Math.round((Date.now() - t) / 60000)); return m < 60 ? `há ${m} min` : `há ${Math.floor(m / 60)} h${m % 60 ? ' ' + (m % 60) + ' min' : ''}`; };
+function actLine(p){
+  const a = actOf(p); if(!a) return '';
+  if(a.type === 'spotify') return `<span class="actl sp">${ic('spotify', 12)} Ouvindo <b>${esc(a.track)}</b></span>`;
+  return `<span class="actl">${ic(ACT_TYPES[a.type][1], 12)} ${ACT_TYPES[a.type][0]} <b>${esc(a.name)}</b></span>`;
+}
+App.actLine = actLine;
+function actCard(p){
+  const a = actOf(p); if(!a) return '';
+  if(a.type === 'spotify'){
+    const pct = Math.min(100, Math.max(0, (Date.now() - a.start) / (a.end - a.start) * 100));
+    const mine = p.id === S.me.id;
+    return `<h6>Ouvindo no Spotify</h6><div class="actcard sp" data-actuid="${p.id}">
+      ${a.art ? `<img src="${esc(a.art)}" alt="" loading="lazy">` : `<span class="nart">${ic('music', 22)}</span>`}
+      <div class="at"><b title="${esc(a.track)}">${esc(a.track)}</b><small>${esc(a.artist || '')}</small><small class="mut">${esc(a.album || '')}</small>
+        <div class="spbar"><i style="width:${pct.toFixed(1)}%" data-spstart="${a.start}" data-spend="${a.end}"></i></div>
+        <div class="sptime"><span data-spcur="${a.start}">${fmtMs(Date.now() - a.start)}</span><span>${fmtMs(a.end - a.start)}</span></div></div></div>
+      <div class="actbtns"><a class="btn sec sm" href="${esc(a.url || '#')}" target="_blank" rel="noopener">${ic('spotify', 15)} Abrir no Spotify</a>
+        ${mine ? '' : `<button class="btn sm" data-listen="${p.id}">${ic('headphones', 15)} Ouvir junto</button>`}</div>`;
+  }
+  return `<h6>${ACT_TYPES[a.type][0]}</h6><div class="actcard"><span class="nart">${ic(ACT_TYPES[a.type][1], 24)}</span>
+    <div class="at"><b>${esc(a.name)}</b>${a.detail ? `<small>${esc(a.detail)}</small>` : ''}<small class="mut">${a.since ? ago(a.since) : ''}</small></div></div>`;
+}
+const fmtMs = ms => { const s = Math.max(0, Math.floor(ms / 1000)); return Math.floor(s / 60) + ':' + String(s % 60).padStart(2, '0'); };
+// barra de progresso andando sozinha
+setInterval(() => {
+  document.querySelectorAll('[data-spstart]').forEach(i => { const s = +i.dataset.spstart, e = +i.dataset.spend; i.style.width = Math.min(100, (Date.now() - s) / (e - s) * 100) + '%'; });
+  document.querySelectorAll('[data-spcur]').forEach(i => { i.textContent = fmtMs(Date.now() - +i.dataset.spcur); });
+}, 1000);
+
+/* aparece no cartão de perfil, na lista de membros e nas DMs */
+const _statusText = statusText;
+statusText = function(p){ return actLine(p) || _statusText(p); };
+const _profileCard2 = profileCard;
+profileCard = function(p, extra=''){
+  const h = _profileCard2(p, extra), card = actCard(p);
+  if(!card) return h;
+  return h.includes('<h6>') ? h.replace('<h6>', card + '<h6>') : h.replace(/<\/div><\/div>$/, card + '</div></div>');
+};
+
+/* ---------- carregar config e conexão ---------- */
+async function loadAppConfig(){
+  const { data } = await App.sb.from('app_config').select('*');
+  S.cfg = Object.fromEntries((data || []).map(r => [r.key, r.value]));
+}
+async function loadConnection(){
+  const { data } = await App.sb.from('connections').select('*').eq('user_id', S.me.id).eq('provider', 'spotify').maybeSingle();
+  S.conn = data || null;
+}
+const _loadServersC = loadServers;
+loadServers = async function(){
+  await _loadServersC();
+  if(!S._v6init){ S._v6init = true; v6Init(); }
+};
+async function v6Init(){
+  try{ await Promise.all([loadAppConfig(), loadConnection()]); }catch(e){}
+  if(S.spReturn) await finishSpotify(S.spReturn);
+  S.manualAct = ls.get('telao-act', null);
+  if(S.conn && S.conn.refresh_token) startSpotifyPoll();
+  else if(S.manualAct && !actOf(S.me)) setActivity(S.manualAct);
+}
+
+/* ---------- Spotify: conectar (PKCE) ---------- */
+const b64url = buf => btoa(String.fromCharCode(...new Uint8Array(buf))).replace(/\+/g, '-').replace(/\//g, '_').replace(/=+$/, '');
+async function connectSpotify(){
+  const cid = S.cfg.spotify_client_id;
+  if(!cid){ App.toast('O Spotify ainda não foi configurado pelo admin do Telão.', true); return; }
+  const verifier = b64url(crypto.getRandomValues(new Uint8Array(48)));
+  const challenge = b64url(await crypto.subtle.digest('SHA-256', new TextEncoder().encode(verifier)));
+  sessionStorage.setItem('telao-sp-verifier', verifier);
+  const u = new URL('https://accounts.spotify.com/authorize');
+  u.search = new URLSearchParams({ client_id: cid, response_type: 'code', redirect_uri: spRedirect(), scope: SP_SCOPES,
+    code_challenge_method: 'S256', code_challenge: challenge, state: 'telao-spotify' });
+  location.href = u.toString();
+}
+async function spTokenRequest(body){
+  const r = await fetch('https://accounts.spotify.com/api/token', { method: 'POST', headers: { 'Content-Type': 'application/x-www-form-urlencoded' }, body: new URLSearchParams(body) });
+  const j = await r.json().catch(() => ({}));
+  if(!r.ok) throw new Error(j.error_description || j.error || 'Spotify recusou');
+  return j;
+}
+async function finishSpotify(ret){
+  S.spReturn = null;
+  if(ret.error){ App.toast(ret.error === 'access_denied' ? 'Conexão com o Spotify cancelada.' : 'O Spotify recusou: ' + ret.error, true); return; }
+  const verifier = sessionStorage.getItem('telao-sp-verifier'); sessionStorage.removeItem('telao-sp-verifier');
+  if(!verifier){ App.toast('Não deu para terminar a conexão com o Spotify. Tente de novo.', true); return; }
+  try{
+    const t = await spTokenRequest({ grant_type: 'authorization_code', code: ret.code, redirect_uri: spRedirect(), client_id: S.cfg.spotify_client_id, code_verifier: verifier });
+    SP.token = t.access_token; SP.exp = Date.now() + (t.expires_in - 60) * 1000;
+    const me = await spApi('/v1/me');
+    const row = { user_id: S.me.id, provider: 'spotify', account_name: (me && (me.display_name || me.id)) || 'Spotify', refresh_token: t.refresh_token, show_activity: true };
+    const { error } = await App.sb.from('connections').upsert(row);
+    if(error) throw error;
+    S.conn = row; App.toast('Spotify conectado. O que você ouvir aparece no seu perfil.');
+    startSpotifyPoll(); openSettings('user', 'connections');
+  }catch(e){
+    App.toast(/user not registered|not registered in the developer/i.test(e.message)
+      ? 'Sua conta do Spotify ainda não foi liberada no app do Telão. Peça para o admin te adicionar (Spotify for Developers → User Management).'
+      : 'Erro ao conectar o Spotify: ' + e.message, true);
+  }
+}
+async function spRefresh(){
+  if(!S.conn || !S.conn.refresh_token) throw new Error('sem conexão');
+  try{
+    const t = await spTokenRequest({ grant_type: 'refresh_token', refresh_token: S.conn.refresh_token, client_id: S.cfg.spotify_client_id });
+    SP.token = t.access_token; SP.exp = Date.now() + (t.expires_in - 60) * 1000;
+    if(t.refresh_token && t.refresh_token !== S.conn.refresh_token){
+      S.conn.refresh_token = t.refresh_token;
+      await App.sb.from('connections').update({ refresh_token: t.refresh_token }).eq('user_id', S.me.id).eq('provider', 'spotify');
+    }
+  }catch(e){
+    // outro aparelho pode ter renovado o token: pega o mais novo do banco e tenta de novo
+    const old = S.conn.refresh_token; await loadConnection();
+    if(S.conn && S.conn.refresh_token && S.conn.refresh_token !== old) return spRefresh();
+    throw e;
+  }
+}
+async function spApi(path, opt={}){
+  if(!SP.token || Date.now() > SP.exp) await spRefresh();
+  let r = await fetch('https://api.spotify.com' + path, { ...opt, headers: { Authorization: 'Bearer ' + SP.token, 'Content-Type': 'application/json', ...(opt.headers || {}) } });
+  if(r.status === 401){ await spRefresh(); r = await fetch('https://api.spotify.com' + path, { ...opt, headers: { Authorization: 'Bearer ' + SP.token, 'Content-Type': 'application/json' } }); }
+  if(r.status === 204) return null;
+  const j = await r.json().catch(() => null);
+  if(!r.ok){ const err = new Error((j && j.error && (j.error.message || j.error.reason)) || ('HTTP ' + r.status)); err.status = r.status; err.reason = j && j.error && j.error.reason; throw err; }
+  return j;
+}
+function startSpotifyPoll(){ clearInterval(SP.timer); spPoll(); SP.timer = setInterval(spPoll, 15000); }
+async function spPoll(){
+  if(SP.busy || !S.conn) return; SP.busy = true;
+  try{
+    const j = await spApi('/v1/me/player/currently-playing?additional_types=episode');
+    const it = j && j.item;
+    let act = null;
+    if(it && j.is_playing && S.conn.show_activity !== false){
+      const start = Date.now() - (j.progress_ms || 0);
+      const art = it.album ? (it.album.images || []).slice(-2)[0] : (it.images || [])[0];
+      act = { type: 'spotify', id: it.id, uri: it.uri, track: it.name, artist: it.artists ? it.artists.map(a => a.name).join(', ') : (it.show && it.show.name) || '',
+        album: it.album ? it.album.name : '', art: art ? art.url : null, url: it.external_urls && it.external_urls.spotify, start, end: start + (it.duration_ms || 0), playing: true };
+    }
+    const cur = S.me.activity && S.me.activity.type === 'spotify' ? S.me.activity : null;
+    const changed = act ? (!cur || cur.id !== act.id || Math.abs(cur.start - act.start) > 6000) : !!cur;
+    if(changed) await setActivity(act || S.manualAct || null, true);
+  }catch(e){
+    if(e.status === 429) return;
+    if(/invalid_grant|revoked|sem conexão/i.test(e.message)){ clearInterval(SP.timer); App.toast('A conexão com o Spotify expirou. Conecte de novo em Configurações → Conexões.', true); }
+  }finally{ SP.busy = false; }
+}
+async function setActivity(act, fromSpotify){
+  if(!fromSpotify){ S.manualAct = act; ls.set('telao-act', act); }
+  const cur = S.me.activity && S.me.activity.type === 'spotify' && actOf(S.me);
+  const value = !fromSpotify && cur ? S.me.activity : act;   // música tocando tem prioridade
+  const { data, error } = await App.sb.from('profiles').update({ activity: value }).eq('id', S.me.id).select().single();
+  if(error){ App.toast(error.message, true); return; }
+  S.me = data; S.profiles.set(data.id, data); renderUserPanel(); renderMembers(); renderSidebar();
+}
+async function disconnectSpotify(){
+  if(!(await confirmBox('Desconectar Spotify', 'Parar de mostrar o que você ouve e remover a conexão?', 'Desconectar'))) return;
+  clearInterval(SP.timer); SP.token = null;
+  await App.sb.from('connections').delete().eq('user_id', S.me.id).eq('provider', 'spotify');
+  S.conn = null;
+  if(S.me.activity && S.me.activity.type === 'spotify') await setActivity(S.manualAct || null, true);
+  renderSettings();
+}
+/* ouvir junto: toca a mesma música no seu Spotify, no mesmo ponto (precisa de Premium) */
+document.addEventListener('click', async e => {
+  const b = e.target.closest('[data-listen]'); if(!b) return;
+  const a = actOf(prof(b.dataset.listen)); if(!a) return;
+  if(!S.conn){ App.toast('Conecte seu Spotify em Configurações → Conexões para ouvir junto.', false, { label: 'Conectar', fn: () => openSettings('user', 'connections') }); return; }
+  try{
+    await spApi('/v1/me/player/play', { method: 'PUT', body: JSON.stringify({ uris: [a.uri], position_ms: Math.max(0, Date.now() - a.start) }) });
+    App.toast(`Tocando “${a.track}” junto com ${prof(b.dataset.listen).display_name}.`);
+  }catch(err){
+    if(err.reason === 'NO_ACTIVE_DEVICE' || err.status === 404) App.toast('Abra o Spotify em algum aparelho (celular ou PC) e tente de novo.', true);
+    else if(err.reason === 'PREMIUM_REQUIRED' || err.status === 403) App.toast('Ouvir junto precisa do Spotify Premium. Você ainda pode abrir a música.', true, { label: 'Abrir', fn: () => window.open(a.url, '_blank') });
+    else App.toast('Spotify: ' + err.message, true);
+  }
+});
+/* copiar Riot ID / Epic / Battle.net do perfil */
+document.addEventListener('click', e => { const c = e.target.closest('[data-copytxt]'); if(c){ e.preventDefault(); copy(c.dataset.copytxt); } });
+
+/* ---------- atividade manual ---------- */
+function activityModal(){
+  const cur = S.manualAct || {};
+  let type = cur.type && ACT_TYPES[cur.type] ? cur.type : 'playing';
+  modal(`<form id="acF"><div class="mh"><h2>O que você está fazendo?</h2><p>Aparece embaixo do seu nome para os amigos, com o tempo que você está nisso.</p></div>
+    <div class="mc">
+      <div class="acttypes">${Object.entries(ACT_TYPES).filter(([k]) => k !== 'streaming').map(([k, [l, i]]) => `<button type="button" data-at="${k}" class="${k === type ? 'on' : ''}">${ic(i, 18)}<span>${l.replace(' em', '')}</span></button>`).join('')}</div>
+      <label class="field"><span id="acL">Nome</span><input class="inp" id="acN" maxlength="60" list="acList" value="${esc(cur.name || '')}" placeholder="Valorant"></label>
+      <datalist id="acList">${GAME_PRESETS.map(g => `<option value="${esc(g)}">`).join('')}</datalist>
+      <label class="field"><span>Detalhe (opcional)</span><input class="inp" id="acD" maxlength="60" value="${esc(cur.detail || '')}" placeholder="Ranqueada com a galera"></label>
+    </div>
+    <div class="mf">${S.manualAct ? '<button type="button" class="btn sec" id="acX">Limpar</button>' : ''}<span class="grow"></span><button type="button" class="btn sec" data-close>Cancelar</button><button class="btn">Salvar</button></div></form>`, m => {
+    const ph = { playing:'Valorant', watching:'One Piece', listening:'Podcast do Flow', studying:'Termodinâmica', working:'meu TCC' };
+    const upd = () => { m.querySelectorAll('[data-at]').forEach(x => x.classList.toggle('on', x.dataset.at === type)); m.querySelector('#acN').placeholder = ph[type] || ''; m.querySelector('#acN').setAttribute('list', type === 'playing' ? 'acList' : ''); };
+    m.querySelectorAll('[data-at]').forEach(b => b.onclick = () => { type = b.dataset.at; upd(); });
+    upd();
+    const x = m.querySelector('#acX'); if(x) x.onclick = () => { closeModal(); setActivity(null); };
+    m.querySelector('#acF').onsubmit = e => {
+      e.preventDefault(); const name = m.querySelector('#acN').value.trim(); if(!name) return;
+      const detail = m.querySelector('#acD').value.trim() || null;
+      closeModal(); setActivity({ type, name, detail, since: Date.now() });
+    };
+  });
+}
+App.activityModal = activityModal;
+
+/* ---------- Configurações → Conexões ---------- */
+function secConnections(box, back){
+  const cid = S.cfg.spotify_client_id, c = S.conn, a = actOf(S.me);
+  box.innerHTML = `${back}<h2>Conexões</h2>
+    <p class="mut">Vincule suas contas para mostrar no perfil o que você está ouvindo e jogando.</p>
+    <div class="conncard">
+      <div class="ch2"><span class="clogo sp">${ic('spotify', 26)}</span><div class="t"><b>Spotify</b><small>${c ? 'Conectado como <b>' + esc(c.account_name || '') + '</b>' : 'Mostre a música que está tocando e deixe os amigos ouvirem junto.'}</small></div>
+        ${c ? `<button class="btn sec sm" id="spOff">Desconectar</button>` : `<button class="btn sm" id="spOn" ${cid ? '' : 'disabled'}>Conectar</button>`}</div>
+      ${c ? `${row('Mostrar no perfil o que estou ouvindo', '', toggle('spShow', c.show_activity !== false))}
+        <div class="mut small">${a && a.type === 'spotify' ? `Tocando agora: <b>${esc(a.track)}</b> — ${esc(a.artist)}` : 'Nada tocando agora. Quando você der play no Spotify, aparece aqui em alguns segundos.'}</div>` : ''}
+      ${!cid ? `<div class="mut small" style="margin-top:8px">${S.me.is_admin ? 'Configure o Client ID logo abaixo para liberar para todo mundo.' : 'O admin do Telão ainda precisa ativar o Spotify.'}</div>` : ''}
+    </div>
+    <div class="conncard">
+      <div class="ch2"><span class="clogo">${ic('gamepad', 24)}</span><div class="t"><b>Contas de jogo e redes</b><small>Steam, Xbox, PlayStation, Riot ID, Epic, Battle.net, Twitch, GitHub…</small></div><button class="btn sec sm" id="gLinks">Editar no perfil</button></div>
+    </div>
+    <div class="conncard">
+      <div class="ch2"><span class="clogo">${ic('play', 22)}</span><div class="t"><b>Atividade</b><small>${S.manualAct ? `${ACT_TYPES[S.manualAct.type][0]} ${esc(S.manualAct.name)}` : 'Diga o que você está jogando, assistindo ou estudando.'}</small></div><button class="btn sec sm" id="acSet">${S.manualAct ? 'Mudar' : 'Definir'}</button></div>
+    </div>
+    ${S.me.is_admin ? `<hr class="sdiv"><h3>Ativar o Spotify (só o admin vê)</h3>
+      <ol class="steps">
+        <li>Entre em <a href="https://developer.spotify.com/dashboard" target="_blank" rel="noopener">developer.spotify.com/dashboard</a> e clique em <b>Create app</b>.</li>
+        <li>Em <b>Redirect URIs</b> coloque exatamente: <code>${esc(spRedirect())}</code> e marque <b>Web API</b>.</li>
+        <li>Copie o <b>Client ID</b> (o Client Secret não é usado) e cole aqui:</li>
+      </ol>
+      <div style="display:flex;gap:8px"><input class="inp" id="spCid" placeholder="Client ID" value="${esc(cid || '')}"><button class="btn" id="spCidOk">Salvar</button></div>
+      <p class="mut small" style="margin-top:8px">No modo de desenvolvimento o Spotify libera até 25 pessoas: adicione o e-mail do Spotify de cada amigo em <b>User Management</b> no painel do app.</p>` : ''}`;
+  const $b = q => box.querySelector(q);
+  const on = $b('#spOn'); if(on) on.onclick = connectSpotify;
+  const off = $b('#spOff'); if(off) off.onclick = disconnectSpotify;
+  const sh = $b('#spShow'); if(sh) sh.onchange = async e => {
+    S.conn.show_activity = e.target.checked;
+    await App.sb.from('connections').update({ show_activity: e.target.checked }).eq('user_id', S.me.id).eq('provider', 'spotify');
+    spPoll();
+  };
+  $b('#gLinks').onclick = () => setSec('profile');
+  $b('#acSet').onclick = activityModal;
+  const ok = $b('#spCidOk'); if(ok) ok.onclick = async () => {
+    const v = $b('#spCid').value.trim();
+    const { error } = await App.sb.from('app_config').upsert({ key: 'spotify_client_id', value: v || null, updated_at: new Date().toISOString() });
+    if(error){ App.toast(error.message, true); return; }
+    S.cfg.spotify_client_id = v; App.toast('Client ID salvo.'); renderSettings();
+  };
+}
+/* =====================================================================
+   v6: EVENTOS DO SERVIDOR (agendar noite de jogo, sessão de filme…)
+   ===================================================================== */
+S.events = new Map();   // sid -> [eventos]
+S.rsvps = new Map();    // eventId -> Set(uid)
+const EV_COLORS = ['#ff6b4a','#3b82f6','#22c55e','#eab308','#a855f7','#ec4899','#14b8a6','#64748b'];
+const evLive = e => new Date(e.starts_at) <= new Date() && new Date() <= new Date(e.ends_at || (new Date(e.starts_at).getTime() + 3 * 3600e3));
+const evOver = e => new Date() > new Date(e.ends_at || (new Date(e.starts_at).getTime() + 3 * 3600e3));
+const canEvents = sid => App.hasPerm(sid, 256) || App.hasPerm(sid, 2);
+function fmtEv(d){
+  d = new Date(d); const now = new Date(), tm = new Date(now); tm.setDate(now.getDate() + 1);
+  const hm = d.toLocaleTimeString('pt-BR', { hour:'2-digit', minute:'2-digit' });
+  if(d.toDateString() === now.toDateString()) return 'Hoje às ' + hm;
+  if(d.toDateString() === tm.toDateString()) return 'Amanhã às ' + hm;
+  return d.toLocaleDateString('pt-BR', { weekday:'short', day:'2-digit', month:'short' }).replace('.', '') + ' às ' + hm;
+}
+async function loadEvents(sid){
+  const since = new Date(Date.now() - 6 * 3600e3).toISOString();
+  const { data } = await App.sb.from('server_events').select('*').eq('server_id', sid).gt('starts_at', since).order('starts_at');
+  const list = (data || []).filter(e => !evOver(e));
+  S.events.set(sid, list);
+  if(list.length){
+    const { data: rs } = await App.sb.from('event_rsvps').select('*').in('event_id', list.map(e => e.id));
+    list.forEach(e => S.rsvps.set(e.id, new Set()));
+    (rs || []).forEach(r => { if(S.rsvps.has(r.event_id)) S.rsvps.get(r.event_id).add(r.user_id); });
+  }
+}
+const _loadServersE = loadServers;
+loadServers = async function(){
+  await _loadServersE();
+  await Promise.all(S.servers.map(s => loadEvents(s.id).catch(() => {})));
+  if(!S._evRt){ S._evRt = true;
+    const re = async p => { const r = p.new && p.new.id ? p.new : p.old; const sid = (r && r.server_id) || [...S.events].find(([, l]) => l.some(e => e.id === (r && r.event_id)))?.[0];
+      if(sid) await loadEvents(sid); else await Promise.all(S.servers.map(s => loadEvents(s.id))); renderSidebar(); refreshEvModal(); };
+    App.sb.channel('events-rt').on('postgres_changes', { event:'*', schema:'public', table:'server_events' }, re)
+      .on('postgres_changes', { event:'*', schema:'public', table:'event_rsvps' }, re).subscribe();
+  }
+};
+/* linha "Eventos" na lista de canais */
+const _renderSidebarE = renderSidebar;
+renderSidebar = function(){
+  _renderSidebarE.apply(this, arguments);
+  const s = S.route && S.route.kind === 'server' ? curServer() : null; if(!s) return;
+  const body = $('#sbBody'); if(!body || body.querySelector('.evrow')) return;
+  const list = S.events.get(s.id) || [], live = list.find(evLive), next = list[0];
+  if(!list.length && !canEvents(s.id)) return;
+  body.insertAdjacentHTML('afterbegin', `<button class="evrow ${live ? 'live' : ''}" id="sbEvents">${ic('calendar', 18)}<span class="t"><b>${live ? 'Acontecendo agora' : list.length ? list.length + (list.length > 1 ? ' eventos' : ' evento') : 'Eventos'}</b>${live ? `<small>${esc(live.title)}</small>` : next ? `<small>${esc(next.title)} · ${fmtEv(next.starts_at)}</small>` : '<small>Agendar uma noite de jogo</small>'}</span></button>`);
+  body.querySelector('#sbEvents').onclick = () => eventsModal(s);
+};
+let evModalSid = null;
+function refreshEvModal(){ if(evModalSid && document.querySelector('#evList')) eventsModal(S.servers.find(s => s.id === evModalSid), true); }
+function eventsModal(s, keep){
+  evModalSid = s.id;
+  const list = S.events.get(s.id) || [];
+  const html = `<div class="mh"><h2>Eventos de ${esc(s.name)}</h2><p>Marque “Tenho interesse” e o Telão te avisa 10 minutos antes.</p></div>
+    <div class="mc"><div id="evList" class="evlist">${list.map(e => evCard(s, e)).join('') || '<div class="empty">Nenhum evento marcado.</div>'}</div></div>
+    <div class="mf"><button class="btn sec" data-close>Fechar</button>${canEvents(s.id) ? `<button class="btn" id="evNew">${ic('plus', 16)} Criar evento</button>` : ''}</div>`;
+  const bind = m => {
+    const n = m.querySelector('#evNew'); if(n) n.onclick = () => eventForm(s);
+    m.querySelectorAll('[data-rsvp]').forEach(b => b.onclick = async () => {
+      const id = b.dataset.rsvp, set = S.rsvps.get(id) || new Set();
+      const { error } = set.has(S.me.id) ? await App.sb.from('event_rsvps').delete().eq('event_id', id).eq('user_id', S.me.id) : await App.sb.from('event_rsvps').insert({ event_id: id, user_id: S.me.id });
+      if(error){ App.toast(error.message, true); return; }
+      await loadEvents(s.id); eventsModal(s, true); renderSidebar();
+    });
+    m.querySelectorAll('[data-evjoin]').forEach(b => b.onclick = () => { const ch = findChannel(b.dataset.evjoin); if(ch){ closeModal(); joinVoice(ch); } });
+    m.querySelectorAll('[data-evedit]').forEach(b => b.onclick = () => eventForm(s, list.find(e => e.id === b.dataset.evedit)));
+    m.querySelectorAll('[data-evdel]').forEach(b => b.onclick = async () => {
+      if(!(await confirmBox('Apagar evento', 'Apagar este evento?', 'Apagar'))) return;
+      await App.sb.from('server_events').delete().eq('id', b.dataset.evdel); await loadEvents(s.id); eventsModal(s); renderSidebar();
+    });
+  };
+  modal(html, bind);
+}
+function evCard(s, e){
+  const ch = e.channel_id && findChannel(e.channel_id), set = S.rsvps.get(e.id) || new Set(), going = set.has(S.me.id), live = evLive(e);
+  const mine = canEvents(s.id) || e.created_by === S.me.id, d = new Date(e.starts_at);
+  return `<div class="evcard ${live ? 'live' : ''}" style="--evc:${esc(e.cover_color || '#ff6b4a')}">
+    <div class="evdate"><b>${d.getDate()}</b><small>${d.toLocaleDateString('pt-BR', { month:'short' }).replace('.', '')}</small></div>
+    <div class="evb"><div class="evwhen">${live ? '<span class="evlive">AO VIVO</span>' : fmtEv(e.starts_at)}${ch ? ` · ${ic('volume', 12)} ${esc(ch.name)}` : ''}</div>
+      <b class="evt">${esc(e.title)}</b>${e.description ? `<p>${esc(e.description)}</p>` : ''}
+      <div class="evf"><span class="evppl">${[...set].slice(0, 5).map(u => avatar(prof(u), 'xs')).join('')} ${set.size ? set.size + ' com interesse' : 'Ninguém marcou ainda'}</span>
+        <span class="grow"></span>
+        ${mine ? `<button class="ibtn sm" data-evedit="${e.id}" data-tip="Editar">${ic('edit', 15)}</button><button class="ibtn sm" data-evdel="${e.id}" data-tip="Apagar">${ic('trash', 15)}</button>` : ''}
+        ${live && ch ? `<button class="btn sm" data-evjoin="${ch.id}">Entrar</button>` : `<button class="btn sm ${going ? 'sec' : ''}" data-rsvp="${e.id}">${going ? ic('check', 14) + ' Interessado' : ic('bell', 14) + ' Tenho interesse'}</button>`}</div></div></div>`;
+}
+function eventForm(s, e){
+  const voice = (S.channels.get(s.id) || []).filter(c => c.kind === 'voice');
+  const pad = n => String(n).padStart(2, '0');
+  const local = d => `${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())}T${pad(d.getHours())}:${pad(d.getMinutes())}`;
+  const def = e ? new Date(e.starts_at) : (() => { const d = new Date(); d.setHours(d.getHours() + 2, 0, 0, 0); return d; })();
+  let color = (e && e.cover_color) || EV_COLORS[0];
+  modal(`<form id="evF"><div class="mh"><h2>${e ? 'Editar evento' : 'Novo evento'}</h2></div>
+    <div class="mc">
+      <label class="field"><span>Nome</span><input class="inp" id="evT" maxlength="80" required value="${esc(e ? e.title : '')}" placeholder="Noite do CS"></label>
+      <div style="display:grid;grid-template-columns:1fr 1fr;gap:12px">
+        <label class="field"><span>Começa</span><input class="inp" type="datetime-local" id="evS" required value="${local(def)}"></label>
+        <label class="field"><span>Duração</span><select class="inp" id="evDur">${[[60,'1 hora'],[120,'2 horas'],[180,'3 horas'],[300,'5 horas'],[720,'12 horas']].map(([v, l]) => `<option value="${v}" ${e && e.ends_at && Math.round((new Date(e.ends_at) - new Date(e.starts_at)) / 6e4) === v ? 'selected' : v === 180 && !e ? 'selected' : ''}>${l}</option>`).join('')}</select></label>
+      </div>
+      <label class="field"><span>Onde</span><select class="inp" id="evC"><option value="">Sem canal de voz</option>${voice.map(c => `<option value="${c.id}" ${e && e.channel_id === c.id ? 'selected' : ''}>${esc(c.name)}</option>`).join('')}</select></label>
+      <label class="field"><span>Descrição</span><textarea class="inp" id="evD" rows="3" maxlength="600" placeholder="Quem chegar primeiro escolhe o mapa">${esc(e && e.description || '')}</textarea></label>
+      <div class="colors" id="evCol">${EV_COLORS.map(c => `<button type="button" data-c="${c}" style="background:${c}" class="${c === color ? 'on' : ''}"></button>`).join('')}</div>
+      <div class="err" id="evE"></div></div>
+    <div class="mf"><button type="button" class="btn sec" id="evBack">Voltar</button><button class="btn">${e ? 'Salvar' : 'Criar evento'}</button></div></form>`, m => {
+    m.querySelectorAll('#evCol [data-c]').forEach(b => b.onclick = () => { color = b.dataset.c; m.querySelectorAll('#evCol [data-c]').forEach(x => x.classList.toggle('on', x === b)); });
+    m.querySelector('#evBack').onclick = () => eventsModal(s);
+    m.querySelector('#evF').onsubmit = async ev => {
+      ev.preventDefault();
+      const st = new Date(m.querySelector('#evS').value);
+      if(isNaN(st)) return;
+      const row = { server_id: s.id, title: m.querySelector('#evT').value.trim(), description: m.querySelector('#evD').value.trim() || null, starts_at: st.toISOString(),
+        ends_at: new Date(st.getTime() + (+m.querySelector('#evDur').value) * 6e4).toISOString(), channel_id: m.querySelector('#evC').value || null, cover_color: color };
+      const { error } = e ? await App.sb.from('server_events').update(row).eq('id', e.id) : await App.sb.from('server_events').insert(row);
+      if(error){ m.querySelector('#evE').textContent = error.message; return; }
+      await loadEvents(s.id); renderSidebar(); eventsModal(s);
+      if(!e) App.toast('Evento criado.');
+    };
+  });
+}
+/* avisos: 10 min antes e na hora, para quem marcou interesse */
+const evSeen = new Set(ls.get('telao-evseen', []));
+setInterval(() => {
+  if(!S.me) return;
+  S.events.forEach((list, sid) => list.forEach(e => {
+    if(!(S.rsvps.get(e.id) || new Set()).has(S.me.id)) return;
+    const t = new Date(e.starts_at).getTime(), now = Date.now(), ch = e.channel_id && findChannel(e.channel_id);
+    const fire = (k, msg) => { if(evSeen.has(e.id + k)) return; evSeen.add(e.id + k); ls.set('telao-evseen', [...evSeen].slice(-200)); App.sfx('screen');
+      App.toast(msg, false, ch ? { label: 'Entrar', fn: () => joinVoice(ch) } : null); notify('Evento: ' + e.title, msg, null); };
+    if(now >= t - 10 * 60e3 && now < t) fire(':10', `“${e.title}” começa em ${Math.max(1, Math.round((t - now) / 60e3))} min.`);
+    if(now >= t && now < t + 30 * 60e3) fire(':0', `“${e.title}” começou agora.`);
+  }));
+}, 30000);
 /* ---------------- PWA ---------------- */
 window.addEventListener('beforeinstallprompt', e => {
-  e.preventDefault(); S.installEvt = e;
+  e.preventDefault(); if(window.telaoDesktop) return; S.installEvt = e;
   if(!ls.get('telao-noinstall', false)) $('#install').classList.remove('hidden');
 });
 async function doInstall(){
@@ -4585,11 +5023,11 @@ async function doInstall(){
 }
 $('#installBtn').onclick = doInstall;
 $('#install').oncontextmenu = e => { e.preventDefault(); ls.set('telao-noinstall', true); $('#install').classList.add('hidden'); };
-window.addEventListener('appinstalled', () => { $('#install').classList.add('hidden'); App.toast('Telão instalado! 🎉'); });
+window.addEventListener('appinstalled', () => { $('#install').classList.add('hidden'); App.toast('Telão instalado'); });
 
 window.addEventListener('beforeunload', () => { try{ Voice.channel && Voice.leave(); }catch(e){} });
 window.addEventListener('hashchange', () => {
-  const m = location.hash.match(/convite=([a-z0-9]+)/i);
+  const m = location.hash.match(/convite=([a-z0-9-]+)/i);
   if(m && S.me){ history.replaceState(null, '', location.pathname); inviteJoinPrompt(m[1].toLowerCase()); }
 });
 

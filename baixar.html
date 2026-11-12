@@ -1,0 +1,43 @@
+<!DOCTYPE html>
+<html lang="pt-BR"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
+<title>Baixar o Telão para Windows</title>
+<link rel="icon" href="/icons/icon-192.png">
+<link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&family=Archivo:wght@700;800&display=swap" rel="stylesheet">
+<style>
+  *{box-sizing:border-box;margin:0;padding:0}
+  body{min-height:100vh;background:#0c0c11;color:#f3f2f7;font-family:Inter,system-ui,sans-serif;display:flex;align-items:center;justify-content:center;padding:24px}
+  .box{max-width:560px;width:100%}
+  .brand{display:flex;align-items:center;gap:10px;font:800 22px Archivo,Inter,sans-serif;margin-bottom:28px}
+  h1{font:800 40px/1.05 Archivo,Inter,sans-serif;letter-spacing:-.02em;margin-bottom:14px}
+  p{color:#b9b8c6;font-size:16px;line-height:1.6;margin-bottom:26px}
+  .btn{display:inline-flex;align-items:center;gap:10px;background:#ff6b4a;color:#fff;font-weight:700;font-size:16px;padding:15px 22px;border-radius:8px;text-decoration:none}
+  .btn:hover{filter:brightness(1.07)}.btn[aria-disabled=true]{opacity:.45;pointer-events:none}
+  .alt{display:block;margin-top:14px;color:#82819a;font-size:14px}.alt a{color:#ff8f6f}
+  ul{list-style:none;margin:34px 0 0;display:grid;grid-template-columns:1fr 1fr;gap:10px}
+  ul li{background:#15151d;border:1px solid #26262f;border-radius:10px;padding:12px 14px;font-size:14px;color:#d9d8e3}
+  ul li b{display:block;color:#fff;margin-bottom:2px}
+  ol{margin:26px 0 0 18px;color:#b9b8c6;font-size:14px;line-height:1.8}
+</style></head>
+<body><div class="box">
+  <div class="brand"><svg viewBox="0 0 32 32" width="30" height="30"><rect x="2" y="5" width="28" height="19" rx="6" fill="#ff6b4a"/><path d="M13 10.5v8l7-4z" fill="#fff"/><rect x="10" y="26" width="12" height="2.6" rx="1.3" fill="#ff6b4a"/></svg>telão</div>
+  <h1>Telão para Windows</h1>
+  <p>Chat, call e compartilhamento de tela com o som do PC, num programa próprio. Abre pelo menu Iniciar, fica na bandeja e avisa quando chega mensagem.</p>
+  <a class="btn" id="dl" href="#" aria-disabled="true"><svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round"><path d="M12 4v11M7 10l5 5 5-5M5 20h14"/></svg><span id="dlt">Carregando…</span></a>
+  <span class="alt">Prefere não instalar? <a href="/">Use no navegador</a>.</span>
+  <ol><li>Clique em baixar. O arquivo <b>Telao-Setup.exe</b> vai para a pasta Downloads.</li><li>Abra o arquivo. Se o Windows mostrar “O Windows protegeu o computador”, clique em <b>Mais informações → Executar assim mesmo</b>.</li><li>Pronto: o Telão abre sozinho e cria um atalho na área de trabalho.</li></ol>
+  <ul><li><b>Tela com som</b>Escolha a tela ou a janela do jogo, com o áudio do PC.</li><li><b>Na bandeja</b>Fechar a janela deixa o Telão ligado para receber chamadas.</li><li><b>Notificações</b>Aviso do Windows para mensagens e chamadas.</li><li><b>Atualiza sozinho</b>Versões novas entram quando você fecha o app.</li></ul>
+</div>
+<script src="/config.js"></script>
+<script>
+(async () => {
+  const a = document.getElementById('dl'), t = document.getElementById('dlt');
+  try{
+    const C = window.TELAO_CONFIG || {}, url = String(C.SUPABASE_URL || '').replace(/\/+$/, '');
+    const r = await fetch(url + '/rest/v1/app_config?key=eq.desktop_url&select=value', { headers: { apikey: C.SUPABASE_ANON_KEY, Authorization: 'Bearer ' + C.SUPABASE_ANON_KEY } });
+    const j = await r.json(), link = j && j[0] && j[0].value;
+    if(link){ a.href = link; a.removeAttribute('aria-disabled'); t.textContent = 'Baixar para Windows'; }
+    else t.textContent = 'Em breve';
+  }catch(e){ t.textContent = 'Em breve'; }
+})();
+</script>
+</body></html>

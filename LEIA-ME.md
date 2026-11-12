@@ -210,3 +210,19 @@ O código fica na pasta `src/`. Depois de editar, rode `./build.sh` para gerar o
 | "O Google recusou o login" (Unable to exchange external code) | O **Client Secret** colado no Supabase está errado ou foi trocado. Gere outro no Google Cloud e cole de novo |
 | Volta para `localhost:3000` | Arrume o **Site URL** e o **Redirect URLs** (passo 2 acima) |
 | "Database error saving new user" | Rode o `supabase.sql` da v5: ele deixa o cadastro à prova de falha e já usa a foto do Google como avatar |
+
+---
+
+# Versão 6: o que tem de novo
+
+**Rode o `supabase.sql` de novo** no SQL Editor (tabelas novas de conexões e eventos) e suba tudo na Vercel, menos o `config.js`.
+
+- **Visual mais autoral:** cores sólidas no lugar dos degradês rosa/roxo, sem brilho, sem vidro, cantos menores, títulos com a fonte Archivo, e textos de aviso sem emoji e sem exclamação em tudo.
+- **Conexões (Configurações → Conexões):**
+  - **Spotify**: mostra no perfil, na lista de membros e nas DMs a música que está tocando, com capa e barra de tempo. Os amigos podem clicar em **Ouvir junto**, que toca a mesma música no Spotify deles, no mesmo ponto (precisa de Spotify Premium e do Spotify aberto em algum aparelho).
+    - **Para ativar (uma vez, só o admin):** entre em developer.spotify.com/dashboard → Create app → em Redirect URIs coloque `https://telao-zeta-three.vercel.app/` e marque Web API → copie o **Client ID** e cole em Configurações → Conexões (aparece só para o admin).
+    - No modo de desenvolvimento, o Spotify libera até 25 pessoas: adicione o e-mail do Spotify de cada amigo em **User Management** no painel do app.
+  - **Contas de jogo**: Steam, Xbox, PlayStation, Riot ID, Epic, Battle.net e GitHub aparecem no cartão de perfil (Perfis → Links). Riot, Epic e Battle.net copiam o nick ao clicar.
+  - **Atividade**: clique no seu avatar → **Definir atividade**: Jogando, Assistindo, Ouvindo, Estudando ou Trabalhando, com o tempo ("há 32 min"). Tem lista de jogos prontos.
+- **Eventos do servidor:** botão **Eventos** no topo da lista de canais. Crie um evento com data, duração e canal de voz; o pessoal marca "Tenho interesse" e recebe aviso 10 minutos antes e na hora, com botão para entrar na call. Cargo novo: **Gerenciar eventos**.
+- **Telão para Windows:** veja a pasta **telao-desktop** (tem o LEIA-ME dela). Depois de gerar o instalador, cole o link em Configurações → App e instalação. Aparece o botão **Baixar para Windows** no app, na tela de login e na página `/baixar`.

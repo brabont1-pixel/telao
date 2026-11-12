@@ -860,6 +860,74 @@ begin
   delete from server_members where server_id = p_server and user_id = p_user;
 end $$;
 
+
+-- =====================================================================
+-- v6: CONEXÕES (Spotify), ATIVIDADE NO PERFIL e EVENTOS DE SERVIDOR
+-- =====================================================================
+alter table public.profiles add column if not exists activity jsonb;
+alter table public.profiles drop constraint if exists profiles_activity_ck;
+alter table public.profiles add constraint profiles_activity_ck check (activity is null or (jsonb_typeof(activity) = 'object' and pg_column_size(activity) < 4000));
+
+-- configurações do app que o admin muda pelo painel (ex.: Client ID do Spotify, que é público)
+create table if not exists public.app_config (key text primary key, value text, updated_at timestamptz not null default now());
+alter table public.app_config enable row level security;
+drop policy if exists "ler config" on public.app_config;
+create policy "ler config" on public.app_config for select to anon, authenticated using (true);
+drop policy if exists "admin grava config" on public.app_config;
+create policy "admin grava config" on public.app_config for all to authenticated using (public.is_admin_user()) with check (public.is_admin_user());
+
+-- contas vinculadas: o token só o próprio dono enxerga
+create table if not exists public.connections (
+  user_id uuid not null references public.profiles(id) on delete cascade,
+  provider text not null check (provider in ('spotify')),
+  account_name text,
+  refresh_token text,
+  show_activity boolean not null default true,
+  created_at timestamptz not null default now(),
+  primary key (user_id, provider)
+);
+alter table public.connections enable row level security;
+drop policy if exists "minhas conexoes" on public.connections;
+create policy "minhas conexoes" on public.connections for all to authenticated using (user_id = auth.uid()) with check (user_id = auth.uid());
+
+-- eventos
+create table if not exists public.server_events (
+  id uuid primary key default gen_random_uuid(),
+  server_id uuid not null references public.servers(id) on delete cascade,
+  channel_id uuid references public.channels(id) on delete set null,
+  title text not null check (char_length(title) between 1 and 80),
+  description text check (char_length(description) <= 600),
+  starts_at timestamptz not null,
+  ends_at timestamptz,
+  cover_color text,
+  created_by uuid default auth.uid() references public.profiles(id) on delete set null,
+  created_at timestamptz not null default now()
+);
+create index if not exists server_events_idx on public.server_events (server_id, starts_at);
+create table if not exists public.event_rsvps (
+  event_id uuid not null references public.server_events(id) on delete cascade,
+  user_id uuid not null default auth.uid() references public.profiles(id) on delete cascade,
+  created_at timestamptz not null default now(),
+  primary key (event_id, user_id)
+);
+alter table public.server_events enable row level security;
+alter table public.event_rsvps enable row level security;
+-- 256 = Gerenciar eventos
+drop policy if exists "ver eventos" on public.server_events;
+create policy "ver eventos" on public.server_events for select to authenticated using (public.is_member(server_id));
+drop policy if exists "criar eventos" on public.server_events;
+create policy "criar eventos" on public.server_events for insert to authenticated with check (public.has_perm(server_id, 256) or public.has_perm(server_id, 2));
+drop policy if exists "editar eventos" on public.server_events;
+create policy "editar eventos" on public.server_events for update to authenticated using (public.has_perm(server_id, 256) or public.has_perm(server_id, 2) or created_by = auth.uid());
+drop policy if exists "apagar eventos" on public.server_events;
+create policy "apagar eventos" on public.server_events for delete to authenticated using (public.has_perm(server_id, 256) or public.has_perm(server_id, 2) or created_by = auth.uid());
+drop policy if exists "ver interessados" on public.event_rsvps;
+create policy "ver interessados" on public.event_rsvps for select to authenticated using (exists (select 1 from public.server_events e where e.id = event_id and public.is_member(e.server_id)));
+drop policy if exists "marcar interesse" on public.event_rsvps;
+create policy "marcar interesse" on public.event_rsvps for insert to authenticated with check (user_id = auth.uid() and exists (select 1 from public.server_events e where e.id = event_id and public.is_member(e.server_id)));
+drop policy if exists "tirar interesse" on public.event_rsvps;
+create policy "tirar interesse" on public.event_rsvps for delete to authenticated using (user_id = auth.uid());
+
 -- impede trocar campos sensíveis via update
 create or replace function public.guard_updates() returns trigger
 language plpgsql as $$
@@ -926,6 +994,8 @@ begin
   begin alter publication supabase_realtime add table public.server_roles; exception when others then null; end;
   begin alter publication supabase_realtime add table public.member_roles; exception when others then null; end;
   begin alter publication supabase_realtime add table public.server_boosts; exception when others then null; end;
+  begin alter publication supabase_realtime add table public.server_events; exception when others then null; end;
+  begin alter publication supabase_realtime add table public.event_rsvps; exception when others then null; end;
 end $$;
 
 -- ---------- Arquivos (avatar, banner, GIF) ----------
