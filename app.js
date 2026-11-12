@@ -9,7 +9,7 @@ const esc = s => String(s ?? '').replace(/[&<>"']/g, c => ({'&':'&amp;','<':'&lt
 const COLORS = ['#5865f2','#eb459e','#3ba55c','#faa61a','#ed4245','#f47b67','#1abc9c','#9b59b6','#e67e22','#607d8b'];
 const ls = { get(k,d){ try{ const v=localStorage.getItem(k); return v==null?d:JSON.parse(v); }catch(e){ return d; } }, set(k,v){ try{ localStorage.setItem(k, JSON.stringify(v)); }catch(e){} } };
 
-const APP_VERSION = '5.0';
+const APP_VERSION = '5.1';
 const S = {
   me: null, profiles: new Map(), servers: [], channels: new Map(), members: new Map(),
   friends: [], dms: [], dmActivity: ls.get('telao-dmact', {}), online: new Set(),
@@ -137,6 +137,7 @@ function boot(){
   const hp = new URLSearchParams(location.hash.slice(1) || location.search.slice(1));
   const linkErr = hp.get('error_description');
   // voltou do link de confirmação do e-mail
+  if(/[?&]novasenha=1/.test(location.search)) history.replaceState(null, '', location.pathname + location.hash);
   if(/[?&]confirmado=1/.test(location.search) || hp.get('type') === 'signup'){ S.justConfirmed = !linkErr; history.replaceState(null, '', location.pathname + location.hash); }
   if(linkErr){
     history.replaceState(null, '', location.pathname);
@@ -151,6 +152,7 @@ function boot(){
   const m = location.hash.match(/convite=([a-z0-9]+)/i);
   if(m){ S.pendingInvite = m[1].toLowerCase(); history.replaceState(null, '', location.pathname); }
   App.sb.auth.onAuthStateChange((ev, session) => {
+    if(ev === 'PASSWORD_RECOVERY') setTimeout(newPasswordModal, 800);
     if(ev === 'SIGNED_OUT'){ location.reload(); return; }
     if(session && !S.started){ S.started = true; setTimeout(() => start(session), 0); if(S.justConfirmed) showConfirmed(true); }
     else if(!session && ev === 'INITIAL_SESSION' && S.justConfirmed) showConfirmed(false);
@@ -180,6 +182,7 @@ function setAuthMode(mode){
   authMode = mode; $('#authErr').textContent = ''; $('#authErr').classList.remove('ok-msg');
   const reg = mode === 'register';
   $('#regFields').classList.toggle('hidden', !reg);
+  $('#forgotBox').classList.toggle('hidden', reg);
   $('#authTitle').textContent = reg ? 'Criar uma conta' : 'Boas-vindas de volta!';
   $('#authSub').textContent = reg ? 'Leva 10 segundos.' : 'Que bom te ver de novo.';
   $('#authBtn').textContent = reg ? 'Continuar' : 'Entrar';
@@ -189,6 +192,12 @@ function setAuthMode(mode){
 }
 $('#toReg').onclick = () => setAuthMode('register');
 $('#googleBtn').onclick = async () => {
+  // confere antes se o Google está ligado no Supabase (senão o usuário cai numa página de erro em inglês)
+  try{
+    const r = await fetch(App.sbUrl + '/auth/v1/settings', { headers:{ apikey: CFG.SUPABASE_ANON_KEY.trim() } });
+    const st = await r.json();
+    if(st && st.external && st.external.google === false){ authError('O login com Google ainda não está ligado. Por enquanto, entre com e-mail e senha.'); return; }
+  }catch(e){}
   const { error } = await App.sb.auth.signInWithOAuth({ provider:'google', options:{ redirectTo: location.origin + '/', queryParams:{ prompt:'select_account' } } });
   if(error) authError(/provider is not enabled|unsupported provider/i.test(error.message) ? 'O login com Google ainda não foi ativado no Supabase (veja o LEIA-ME).' : error.message);
 };
@@ -198,9 +207,37 @@ $('#resendLink').onclick = async () => {
   const { error } = await App.sb.auth.resend({ type:'signup', email, options:{ emailRedirectTo: location.origin + '/?confirmado=1' } });
   if(error) authError(error.message); else authOk('📧 Enviamos de novo para <b>'+esc(email)+'</b>. Pode levar 1–2 minutos; veja também o spam.');
 };
+async function forgotPassword(){
+  const email = $('#aEmail').value.trim();
+  if(!email){ authError('Digite seu e-mail no campo acima e clique de novo em "Esqueci minha senha".'); $('#aEmail').focus(); return; }
+  const { error } = await App.sb.auth.resetPasswordForEmail(email, { redirectTo: location.origin + '/?novasenha=1' });
+  if(error) authError(error.message); else authOk('📧 Se existir uma conta com <b>' + esc(email) + '</b>, enviamos um link para criar uma nova senha. Veja também o spam.');
+}
+$('#forgotLink').onclick = forgotPassword;
+/* voltou do link "nova senha" */
+function newPasswordModal(){
+  modal(`<form id="npF"><div class="mh"><h2>Criar nova senha</h2><p>Escolha a senha nova da sua conta.</p></div>
+    <div class="mc"><label class="field"><span>Nova senha</span><input class="inp" type="password" id="npA" minlength="6" autocomplete="new-password" required></label>
+    <label class="field"><span>Confirme a nova senha</span><input class="inp" type="password" id="npB" minlength="6" autocomplete="new-password" required></label><div class="err" id="npE"></div></div>
+    <div class="mf"><button class="btn">Salvar senha</button></div></form>`, m => {
+    m.querySelector('#npF').onsubmit = async e => {
+      e.preventDefault();
+      const a = m.querySelector('#npA').value, b = m.querySelector('#npB').value;
+      if(a !== b){ m.querySelector('#npE').textContent = 'As senhas não são iguais.'; return; }
+      const { error } = await App.sb.auth.updateUser({ password: a });
+      if(error){ m.querySelector('#npE').textContent = error.message; return; }
+      closeModal(); App.toast('🔒 Senha nova salva! Você já está dentro.');
+    };
+  });
+}
 function authOk(html){ const e = $('#authErr'); e.classList.add('ok-msg'); e.innerHTML = html; }
 function authError(msg){
   $('#authErr').classList.remove('ok-msg');
+  if(msg === 'EMAIL_EXISTE' || /already registered|already been registered|user already exists/i.test(msg)){
+    $('#authErr').innerHTML = '⚠️ Já existe uma conta com esse e-mail. Entre com sua senha abaixo — se você criou a conta pelo Google, use <b>Continuar com Google</b>. Esqueceu a senha? <a id="aeForgot">Criar uma nova</a>.';
+    const f = $('#aeForgot'); if(f) f.onclick = forgotPassword;
+    $('#aPass').focus(); return;
+  }
   if(/email not confirmed/i.test(msg)) $('#resendBox').classList.remove('hidden');
   if(/rate limit|too many/i.test(msg)){ $('#authErr').textContent = 'Muitas tentativas seguidas. Espere alguns minutos e tente de novo.'; return; }
   if(/error sending|smtp/i.test(msg)){ $('#authErr').textContent = 'O servidor não conseguiu enviar o e-mail de confirmação. (Dono do site: configure o SMTP no Supabase — veja o LEIA-ME.)'; return; }
@@ -226,6 +263,12 @@ $('#authForm').onsubmit = async e => {
       if(taken){ authError('Esse nome de usuário já está em uso.'); return; }
       const { data, error } = await App.sb.auth.signUp({ email, password, options:{ data:{ username, display_name }, emailRedirectTo: location.origin + '/?confirmado=1' } });
       if(error){ authError(error.message); return; }
+      // o Supabase não dá erro para e-mail repetido (por segurança): devolve um usuário sem identidades
+      if(data.user && Array.isArray(data.user.identities) && data.user.identities.length === 0){
+        setAuthMode('login'); $('#aEmail').value = email; $('#aPass').value = '';
+        authError('EMAIL_EXISTE');
+        return;
+      }
       if(!data.session){
         setAuthMode('login'); $('#aEmail').value = email;
         authOk('📧 Conta criada! Enviamos um link de confirmação para <b>'+esc(email)+'</b>. Abra o e-mail (veja também o spam), clique no link e você já entra.');
