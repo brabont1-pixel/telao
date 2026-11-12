@@ -244,7 +244,8 @@ function authError(msg){
     $('#aPass').focus(); return;
   }
   if(/email not confirmed/i.test(msg)) $('#resendBox').classList.remove('hidden');
-  if(/rate limit|too many/i.test(msg)){ $('#authErr').textContent = 'Muitas tentativas seguidas. Espere alguns minutos e tente de novo.'; return; }
+  if(/email rate limit|over_email_send_rate/i.test(msg)){ $('#authErr').innerHTML = 'O Telão bateu o limite de e-mails de confirmação desta hora (não é culpa sua). Use <b>Continuar com Google</b> logo abaixo, que não precisa de e-mail, ou tente de novo daqui a pouco.'; return; }
+  if(/rate limit|too many/i.test(msg)){ $('#authErr').innerHTML = 'Muitas tentativas vindas da mesma internet. Espere uns minutos ou use <b>Continuar com Google</b> logo abaixo.'; return; }
   if(/error sending|smtp/i.test(msg)){ $('#authErr').textContent = 'O servidor não conseguiu enviar o e-mail de confirmação. (Dono do site: configure o SMTP no Supabase — veja o LEIA-ME.)'; return; }
   const map = { 'Invalid login credentials':'E-mail ou senha incorretos.', 'Email not confirmed':'Confirme seu e-mail antes de entrar (veja sua caixa de entrada e o spam).',
     'User already registered':'Esse e-mail já tem uma conta.', 'Password should be at least 6 characters.':'A senha precisa de pelo menos 6 caracteres.' };
