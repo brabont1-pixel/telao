@@ -12,7 +12,7 @@ function applyPrefs(){
   document.body.classList.add('theme-' + P.theme);
   document.body.classList.toggle('compact', !!P.compact);
   document.documentElement.style.setProperty('--fs', P.fontSize + 'px');
-  const a = P.accent || '#ff6b4a', rs = document.documentElement.style;
+  const a = S._srvAcc || P.accent || '#ff6b4a', rs = document.documentElement.style;
   const [r,g,b] = [1,3,5].map(i => parseInt(a.slice(i, i+2), 16));
   const lum = (0.299*r + 0.587*g + 0.114*b) / 255;
   rs.setProperty('--acc', a);
@@ -116,7 +116,9 @@ const LINKS = {
   instagram:['Instagram', u => 'https://instagram.com/' + u, '#e1306c'], tiktok:['TikTok', u => 'https://tiktok.com/@' + u, '#25f4ee'],
   youtube:['YouTube', u => 'https://youtube.com/@' + u, '#ff0000'], twitch:['Twitch', u => 'https://twitch.tv/' + u, '#9146ff'],
   x:['X', u => 'https://x.com/' + u, '#e7e9ea'], steam:['Steam', u => 'https://steamcommunity.com/id/' + u, '#66c0f4'],
-  spotify:['Spotify', u => /^https?:/.test(u) ? u : 'https://open.spotify.com/user/' + u, '#1db954'], site:['Site', u => /^https?:/.test(u) ? u : 'https://' + u, '#9aa0aa'],
+  spotify:['Spotify', u => /^https?:/.test(u) ? u : 'https://open.spotify.com/user/' + u, '#1db954'], github:['GitHub', u => 'https://github.com/' + u, '#e6edf3'],
+  riot:['Riot ID', null, '#eb0029'], xbox:['Xbox', u => 'https://www.xbox.com/play/user/' + encodeURIComponent(u), '#107c10'], psn:['PlayStation', u => 'https://psnprofiles.com/' + encodeURIComponent(u), '#0070d1'],
+  epic:['Epic Games', null, '#c9c9c9'], battlenet:['Battle.net', null, '#148eff'], site:['Site', u => /^https?:/.test(u) ? u : 'https://' + u, '#9aa0aa'],
 };
 const PROFILE_FX = [['', 'Nenhum'], ['estrelas','✨ Estrelas'], ['coracoes','💗 Corações'], ['neve','❄️ Neve'], ['fogo','🔥 Brasas'], ['confete','🎉 Confete'], ['aurora','🌌 Aurora']];
 const RINGS = [['', 'Nenhum'], ['arco','🌈 Arco-íris'], ['ouro','🥇 Ouro'], ['neon','💜 Neon'], ['fogo','🔥 Fogo'], ['gelo','🧊 Gelo']];
@@ -148,7 +150,7 @@ function profileCard(p, extra=''){
       <div class="un">@${esc(p.username)}${p.pronouns ? ` · ${esc(p.pronouns)}` : ''}</div>
       ${p.custom_status ? `<div class="cst">${p.custom_emoji ? esc(p.custom_emoji) + ' ' : ''}${esc(p.custom_status)}</div>` : ''}
       ${p.bio ? `<h6>Sobre mim</h6><p>${esc(p.bio)}</p>` : ''}
-      ${links.length ? `<div class="plinks">${links.map(l => `<a href="${esc(LINKS[l.t][1](l.u))}" target="_blank" rel="noopener" style="--lc:${LINKS[l.t][2]}"><i></i>${esc(LINKS[l.t][0])}</a>`).join('')}</div>` : ''}
+      ${links.length ? `<div class="plinks">${links.map(l => LINKS[l.t][1] ? `<a href="${esc(LINKS[l.t][1](l.u))}" target="_blank" rel="noopener" style="--lc:${LINKS[l.t][2]}"><i></i>${esc(LINKS[l.t][0])}</a>` : `<a data-copytxt="${esc(l.u)}" style="--lc:${LINKS[l.t][2]}" title="Copiar"><i></i>${esc(LINKS[l.t][0])}: ${esc(l.u)}</a>`).join('')}</div>` : ''}
       ${p.created_at ? `<h6>Membro desde</h6><p>${new Date(p.created_at).toLocaleDateString('pt-BR',{day:'numeric',month:'short',year:'numeric'})}</p>` : ''}
       ${extra}
     </div></div>`;
@@ -222,11 +224,12 @@ function renderSettings(){
   let nav;
   if(SET.kind === 'user'){
     nav = [
-      ['h','Configurações de usuário'], ['account','Minha conta'], ['profile','Perfis'],
+      ['h','Configurações de usuário'], ['account','Minha conta'], ['profile','Perfis'], ['connections','Conexões'],
       ['plus', `<span style="display:inline-flex;width:18px;height:18px">${badgeSvg('plus', plusTier(me))}</span> Telão+`],
-      ['h','Configurações do app'], ['appearance','Aparência'], ['voice','Voz e vídeo'], ['notif','Notificações'], ['keys','Teclas de atalho'], ['app','App e instalação'],
+      ['shop', 'Loja e presentes'], ['boosts', `<span style="display:inline-flex">${BOOST_SVG(18)}</span> Impulsos`],
+      ['h','Configurações do app'], ['appearance','Aparência'], ['a11y','Acessibilidade'], ['lang','Idioma'], ['voice','Voz e vídeo'], ['notif','Notificações'], ['keys','Teclas de atalho'], ['app','App e instalação'],
     ];
-    if(me.is_admin) nav.push(['h','Administração'], ['admin','👑 Painel do admin']);
+    if(me.is_admin) nav.push(['h','Administração'], ['admin','Painel do admin']);
     nav.push(['hr'], ['logout','Sair', 'danger']);
   } else {
     const s = SET.server;
@@ -234,8 +237,9 @@ function renderSettings(){
     if(App.hasPerm(s.id, 2)) nav.push(['overview','Visão geral']);
     if(App.hasPerm(s.id, 16)) nav.push(['roles','Cargos']);
     if(App.hasPerm(s.id, 1)) nav.push(['channels','Canais']);
-    nav.push(['members','Membros']);
+    nav.push(['members','Membros'], ['boost', `<span style="display:inline-flex">${BOOST_SVG(16)}</span> Impulsos`]);
     if(App.hasPerm(s.id, 2)) nav.push(['invites','Convites']);
+    if(App.hasPerm(s.id, 128) || App.hasPerm(s.id, 4)) nav.push(['bans','Banimentos']);
     if(s.owner_id === S.me.id) nav.push(['hr'], ['delete','Excluir servidor','danger']);
     if(!nav.find(n => n[0] === SET.sec)) SET.sec = (nav[1] || [])[0] || 'members';
   }
@@ -243,7 +247,7 @@ function renderSettings(){
   SET.el.innerHTML = `<nav class="snav"><div class="in">${nav.map(n =>
       n[0] === 'h' ? `<h5>${n[1]}</h5>` : n[0] === 'hr' ? '<hr>' :
       `<button class="si ${SET.sec===n[0]?'on':''} ${n[2]||''}" data-sec="${n[0]}">${n[1]}</button>`).join('')}
-      ${SET.kind==='user' ? '<hr><div class="ver">Telão · versão 4.1</div>' : ''}</div></nav>
+      ${SET.kind==='user' ? '<hr><div class="ver">Telão · versão ' + APP_VERSION + '</div>' : ''}</div></nav>
     <div class="scontent"><div class="sclose"><button id="sClose" title="Fechar (Esc)">✕</button><span>ESC</span></div><div class="in" id="sIn"></div></div>`;
   SET.el.querySelector('#sClose').onclick = () => { if(isMobile() && SET.mobileOpen){ SET.mobileOpen = false; renderSettings(); } else closeSettings(); };
   SET.el.querySelectorAll('[data-sec]').forEach(b => b.onclick = () => {
@@ -255,8 +259,8 @@ function renderSettings(){
   const box = SET.el.querySelector('#sIn');
   const back = isMobile() ? `<button class="btn sec sm mobileback" id="sBack">← Voltar</button>` : '';
   const fn = SET.kind === 'user'
-    ? { account: secAccount, profile: secProfile, plus: secPlus, appearance: secAppearance, voice: secVoice, notif: secNotif, keys: secKeys, app: secApp, admin: secAdmin }[SET.sec]
-    : { overview: secSrvOverview, roles: secSrvRoles, channels: secSrvChannels, members: secSrvMembers, invites: secSrvInvites }[SET.sec];
+    ? { account: secAccount, profile: secProfile, plus: secPlus, shop: secShop, connections: secConnections, boosts: secMyBoosts, appearance: secAppearance, a11y: secA11y, lang: secLang, voice: secVoice, notif: secNotif, keys: secKeys, app: secApp, admin: secAdmin }[SET.sec]
+    : { overview: secSrvOverview, roles: secSrvRoles, channels: secSrvChannels, members: secSrvMembers, boost: secSrvBoost, bans: secSrvBans, invites: secSrvInvites }[SET.sec];
   if(fn) fn(box, back);
   const b = box.querySelector('#sBack'); if(b) b.onclick = () => { SET.mobileOpen = false; renderSettings(); };
 }
@@ -299,7 +303,7 @@ function secAccount(box, back){
       e.preventDefault();
       const { data, error } = await App.sb.rpc('set_username', { p_username: m.querySelector('#uN').value.replace(/^@/,'') });
       if(error){ m.querySelector('#uE').textContent = error.message; return; }
-      S.me.username = data; S.profiles.set(S.me.id, S.me); closeModal(); renderSettings(); renderUserPanel(); App.toast('Nome de usuário alterado!');
+      S.me.username = data; S.profiles.set(S.me.id, S.me); closeModal(); renderSettings(); renderUserPanel(); App.toast('Nome de usuário alterado');
     };
   });
   box.querySelector('#aEmail').onclick = () => modal(`<form id="eF"><div class="mh"><h2>Mudar e-mail</h2><p>Vamos mandar um link de confirmação para o novo e-mail.</p></div>
@@ -309,7 +313,7 @@ function secAccount(box, back){
       e.preventDefault();
       const { error } = await App.sb.auth.updateUser({ email: m.querySelector('#eN').value.trim() }, { emailRedirectTo: location.origin + '/' });
       if(error){ m.querySelector('#eE').textContent = error.message; return; }
-      closeModal(); App.toast('📧 Confirme no seu novo e-mail para concluir a troca.');
+      closeModal(); App.toast('Confirme no seu novo e-mail para concluir a troca.');
     };
   });
   box.querySelector('#aPass').onclick = () => modal(`<form id="pF"><div class="mh"><h2>${provs.includes('email') ? 'Mudar senha' : 'Criar senha'}</h2></div>
@@ -322,7 +326,7 @@ function secAccount(box, back){
       if(a !== b){ m.querySelector('#pE').textContent = 'As senhas não são iguais.'; return; }
       const { error } = await App.sb.auth.updateUser({ password: a });
       if(error){ m.querySelector('#pE').textContent = /reauth|recent/i.test(error.message) ? 'Por segurança, saia e entre de novo antes de trocar a senha.' : error.message; return; }
-      closeModal(); App.toast('Senha salva! 🔒');
+      closeModal(); App.toast('Senha salva');
     };
   });
   box.querySelector('#aDel').onclick = () => modal(`<form id="dF"><div class="mh"><h2>Excluir conta</h2><p>Isso apaga tudo e não tem volta. Digite <b>${esc(p.username)}</b> para confirmar.</p></div>
@@ -374,11 +378,11 @@ function secProfile(box, back){
       ${plus ? `<div style="display:flex;gap:8px;flex-wrap:wrap"><button class="btn sm" id="pfBn">${ic('image',16)} Imagem ou GIF</button><button class="btn sec sm" id="pfBnRm">Remover</button></div>` : lockBox('Banner com imagem ou GIF é do Telão+.')}
       <h3>Cor do banner</h3><div class="colorrow"><input type="color" id="pfBc"><button class="btn sec sm" id="pfBcAuto">Automática</button></div>
       <hr class="sdiv">
-      <h3>Tema do cartão ${plus?'':'🔒'}</h3>
+      <h3>Tema do cartão ${plus?'':ic('lock',14)}</h3>
       ${plus ? `<div class="colorrow"><label>Principal <input type="color" id="pfTa"></label><label>Destaque <input type="color" id="pfTb"></label><button class="btn sec sm" id="pfTrm">Sem tema</button></div>` : lockBox('Cores no cartão de perfil são do Telão+.')}
-      <h3>Efeito no perfil ${plus?'':'🔒'}</h3>${plus ? chipRow('pfFx', PROFILE_FX, D.profile_fx) : lockBox('Partículas animadas no seu cartão.')}
-      <h3>Anel do avatar ${plus?'':'🔒'}</h3>${plus ? chipRow('pfRing', RINGS, D.avatar_ring) : lockBox('Um anel animado em volta do seu avatar.')}
-      <h3>Estilo do nome ${plus?'':'🔒'}</h3>${plus ? `<div class="chips" id="pfNs">${NAME_STYLES.map(([v,l]) => `<button type="button" class="chip ${(D.name_style||'')===v?'on':''}" data-v="${v}"><span class="${v?'nst nst-'+v:''}">${l}</span></button>`).join('')}</div>` : lockBox('Nome com gradiente colorido no chat.')}
+      <h3>Efeito no perfil ${plus?'':ic('lock',14)}</h3>${plus ? chipRow('pfFx', PROFILE_FX, D.profile_fx) : lockBox('Partículas animadas no seu cartão.')}
+      <h3>Anel do avatar ${plus?'':ic('lock',14)}</h3>${plus ? chipRow('pfRing', RINGS, D.avatar_ring) : lockBox('Um anel animado em volta do seu avatar.')}
+      <h3>Estilo do nome ${plus?'':ic('lock',14)}</h3>${plus ? `<div class="chips" id="pfNs">${NAME_STYLES.map(([v,l]) => `<button type="button" class="chip ${(D.name_style||'')===v?'on':''}" data-v="${v}"><span class="${v?'nst nst-'+v:''}">${l}</span></button>`).join('')}</div>` : lockBox('Nome com gradiente colorido no chat.')}
     </div>
 
     <div data-pane="insignias" class="hidden">
@@ -482,7 +486,7 @@ function secProfile(box, back){
     }catch(err){ App.toast('Não deu para enviar: ' + err.message, true); return; }
     if(target === 'avatar'){ D.avatar_url = url; const c = await avgColor(f); if(c) D.avatar_color = c; }
     else D.banner_url = url;
-    App.toast('Pronto! Clique em “Salvar”.');
+    App.toast('Pronto. Clique em “Salvar”.');
     refresh();
   };
   async function save(){
@@ -495,13 +499,13 @@ function secProfile(box, back){
     const { data, error } = await App.sb.from('profiles').update(upd).eq('id', me.id).select().single();
     if(error){ App.toast(error.message, true); return; }
     S.me = data; S.profiles.set(data.id, data);
-    SET.dirty = false; App.toast('Perfil salvo! ✨');
+    SET.dirty = false; App.toast('Perfil salvo');
     renderSettings(); renderUserPanel(); renderMembers(); if(M.el) renderMsgList(false);
   }
   drawLinks(); refresh();
 }
 function upsell(what){
-  modal(`<div class="mh"><h2>✨ Isso é do Telão+</h2><p>${esc(what)} faz parte do <b>Telão+</b>, por ${PRICE_TXT}/mês.</p></div>
+  modal(`<div class="mh"><h2>Isso é do Telão+</h2><p>${esc(what)} faz parte do <b>Telão+</b>, por ${PRICE_TXT}/mês.</p></div>
     <div class="mc" style="text-align:center"><div style="display:inline-flex;width:64px;height:64px">${badgeSvg('plus','diamante')}</div></div>
     <div class="mf"><button class="btn sec" data-close>Agora não</button><button class="btn" id="upGo">Conhecer o Telão+</button></div>`, m => {
     m.querySelector('#upGo').onclick = () => { closeModal(); if(SET) setSec('plus'); else openSettings('user','plus'); };
@@ -620,6 +624,7 @@ function secVoice(box, back){
     ${plus ? '' : `<div class="locked">🔒 1080p 60fps, 1440p, 4K e até 20 Mbps são do Telão+. <button class="btn sm" data-plus>Conhecer</button></div>`}
     <small style="color:var(--mut);display:block;margin-top:8px">O bitrate vale para cada pessoa assistindo e usa a internet (upload) de quem transmite.</small>
     <hr class="sdiv"><h3>Sons</h3>
+    ${row('Abaixar o som das telas quando alguém fala', 'Deixa a conversa por cima do som do jogo/filme que estão transmitindo.', toggle('vDuck', P.duck !== false))}
     ${row('Sons de entrar, sair e mutar', '', toggle('vSnd', P.soundVoice))}
     ${row('Bipe ao apertar o botão de falar', 'Só no modo “Pressionar para falar”.', toggle('vSndP', P.soundPtt))}`;
   const $b = s => box.querySelector(s);
@@ -650,6 +655,7 @@ function secVoice(box, back){
   const proc = (id, key) => $b(id).onchange = e => { P[key] = e.target.checked; savePrefs(); Voice.switchMic(); if(test) startTest(); };
   proc('#vNoise','noise'); proc('#vEcho','echo'); proc('#vAgc','agc');
   $b('#vSnd').onchange = e => { P.soundVoice = e.target.checked; savePrefs(); };
+  $b('#vDuck').onchange = e => { P.duck = e.target.checked; savePrefs(); };
   $b('#vSndP').onchange = e => { P.soundPtt = e.target.checked; savePrefs(); };
   const scr = () => {
     const [w,h,fps] = $b('#vRes').value.split('x').map(Number);
@@ -734,12 +740,24 @@ function secKeys(box, back){
 function secApp(box, back){
   const ios = /iphone|ipad|ipod/i.test(navigator.userAgent);
   const standalone = matchMedia('(display-mode: standalone)').matches || navigator.standalone;
+  const desk = window.telaoDesktop, dl = (S.cfg || {}).desktop_url;
   box.innerHTML = `${back}<h2>App e instalação</h2>
-    ${row('Instalar o Telão', standalone ? '✅ Você está usando o app instalado.' : S.installEvt ? 'Instale como app: ícone próprio, janela separada e abre mais rápido.' : ios ? 'No iPhone: Compartilhar → <b>Adicionar à Tela de Início</b>.' : 'No Chrome/Edge: ícone de instalar na barra de endereço, ou menu ⋮ → <b>Instalar Telão</b>.',
-          S.installEvt && !standalone ? '<button class="btn sm" id="apInst">📲 Instalar</button>' : '')}
+    <div class="dlcard"><span class="clogo">${ic('monitor', 24)}</span><div class="t"><b>Telão para Windows</b>
+      <small>${desk ? 'Você está usando o app para Windows, versão ' + esc(desk.version) + '. Ele se atualiza sozinho.' : 'Programa de verdade: abre pelo menu Iniciar, fica na bandeja, avisa de mensagens e compartilha a tela com o som do PC.'}</small></div>
+      ${desk ? '' : dl ? `<a class="btn" href="${esc(dl)}" download>${ic('download', 16)} Baixar para Windows</a>` : '<span class="mut small">Em breve</span>'}</div>
+    ${S.me.is_admin ? `<div class="srow"><div class="t"><b>Link do instalador (só o admin vê)</b><small>Cole o link do Telao-Setup.exe (por exemplo, o da página Releases do GitHub). Veja o LEIA-ME do app para Windows.</small></div></div>
+      <div style="display:flex;gap:8px;margin-bottom:8px"><input class="inp" id="apDl" placeholder="https://github.com/…/releases/latest/download/Telao-Setup.exe" value="${esc(dl || '')}"><button class="btn sec" id="apDlOk">Salvar</button></div>` : ''}
+    ${desk ? '' : row('Instalar pelo navegador', standalone ? 'Você está usando o app instalado.' : S.installEvt ? 'Instale como app: ícone próprio, janela separada e abre mais rápido.' : ios ? 'No iPhone: Compartilhar → <b>Adicionar à Tela de Início</b>.' : 'No Chrome/Edge: ícone de instalar na barra de endereço, ou menu ⋮ → <b>Instalar Telão</b>.',
+          S.installEvt && !standalone ? '<button class="btn sm" id="apInst">Instalar</button>' : '')}
     ${row('Limpar cache do app', 'Use se uma atualização não aparecer.', '<button class="btn sec sm" id="apClr">Limpar e recarregar</button>')}
-    <hr class="sdiv"><small style="color:var(--mut)">Telão · versão 4.1</small>`;
+    <hr class="sdiv"><small style="color:var(--mut)">Telão · versão ${APP_VERSION}</small>`;
   const i = box.querySelector('#apInst'); if(i) i.onclick = doInstall;
+  const dk = box.querySelector('#apDlOk'); if(dk) dk.onclick = async () => {
+    const v = box.querySelector('#apDl').value.trim();
+    const { error } = await App.sb.from('app_config').upsert({ key: 'desktop_url', value: v || null, updated_at: new Date().toISOString() });
+    if(error){ App.toast(error.message, true); return; }
+    S.cfg.desktop_url = v || null; App.toast('Link salvo. Agora todo mundo vê o botão de baixar.'); renderSettings();
+  };
   box.querySelector('#apClr').onclick = async () => {
     try{ const regs = await navigator.serviceWorker.getRegistrations(); await Promise.all(regs.map(r => r.unregister())); const ks = await caches.keys(); await Promise.all(ks.map(k => caches.delete(k))); }catch(e){}
     location.reload();
@@ -749,9 +767,9 @@ function secApp(box, back){
 /* ---------- Painel do admin ---------- */
 function secAdmin(box, back){
   if(!S.me.is_admin){ box.innerHTML = 'Sem acesso.'; return; }
-  box.innerHTML = `${back}<h2>👑 Painel do admin</h2>
+  box.innerHTML = `${back}<h2>Painel do admin</h2>
     <p style="color:var(--txt2);font-size:14px">Dê o Telão+ (ex: quem pagou por Pix) e insígnias para qualquer pessoa.</p>
-    <h3>📢 Aviso para todos</h3>
+    <h3>Aviso para todos</h3>
     <p class="mut small" style="margin-bottom:8px">Aparece na hora para todo mundo que está com o Telão aberto (no topo da tela, com som).</p>
     <textarea class="inp" id="avT" maxlength="200" rows="2">Saiu uma atualização nova do Telão! Clique em "Atualizar agora" para ver as novidades 🎉</textarea>
     <div style="display:flex;gap:10px;align-items:center;margin-top:8px;flex-wrap:wrap"><label style="display:flex;gap:8px;align-items:center;font-size:14px">${toggle('avR', true)} Mostrar botão “Atualizar agora”</label><span class="grow"></span><button class="btn" id="avGo">${ic('send',16)} Enviar para todos</button></div>
@@ -766,7 +784,7 @@ function secAdmin(box, back){
     const t = $b('#avT').value.trim(); if(!t){ App.toast('Escreva o aviso.', true); return; }
     if(!(await confirmBox('Enviar aviso', `Mandar para todo mundo que está online agora?<br><br><i>“${esc(t)}”</i>`, 'Enviar', false))) return;
     await App.sendAviso(t, $b('#avR').checked);
-    App.toast('📢 Aviso enviado para todos que estão online!');
+    App.toast('Aviso enviado para todos que estão online');
   };
   let tmr;
   $b('#adQ').oninput = e => { clearTimeout(tmr); const q = e.target.value.trim().replace(/[%,()]/g,''); tmr = setTimeout(async () => {
@@ -789,13 +807,13 @@ function secAdmin(box, back){
     box.querySelectorAll('[data-days]').forEach(b => b.onclick = async () => {
       const { error } = await App.sb.rpc('admin_set_plus', { p_user: uid, p_days: +b.dataset.days });
       if(error){ App.toast(error.message, true); return; }
-      await refetch(uid); App.toast(+b.dataset.days ? 'Telão+ liberado! 💎' : 'Plano removido.'); showUser(uid);
+      await refetch(uid); App.toast(+b.dataset.days ? 'Telão+ liberado.' : 'Plano removido.'); showUser(uid);
     });
     $b('#adSaveB').onclick = async () => {
       const list = [...box.querySelectorAll('[data-b]')].filter(x => x.checked).map(x => x.dataset.b);
       const { error } = await App.sb.rpc('admin_set_badges', { p_user: uid, p_badges: list });
       if(error){ App.toast(error.message, true); return; }
-      await refetch(uid); App.toast('Insígnias salvas!'); showUser(uid);
+      await refetch(uid); App.toast('Insígnias salvas'); showUser(uid);
     };
   }
   async function refetch(uid){ const { data } = await App.sb.from('profiles').select('*').eq('id', uid).single(); if(data){ S.profiles.set(uid, data); if(uid === S.me.id) S.me = data; } }
@@ -814,7 +832,7 @@ function secSrvOverview(box, back){
   box.innerHTML = `${back}<h2>Visão geral do servidor</h2>
     <div class="ovrow"><div><label class="upicon big" id="soIcon" style="--sc:${esc(s.icon_color)}"></label>
       <div class="ovbtns"><button class="btn sm" id="soUp">Enviar imagem</button>${'<button class="btn sm sec" id="soRm">Remover</button>'}</div><input type="file" id="soFile" accept="image/*" hidden>
-      <small class="mut">Mínimo 128×128. GIF animado só com Telão+.</small></div>
+      <small class="mut">Mínimo 128×128. GIF animado libera no nível 1 de impulsos.</small></div>
     <div style="flex:1"><label class="field"><span>Nome do servidor</span><input class="inp" id="soN" maxlength="40"></label>
       <label class="field"><span>Descrição</span><textarea class="inp" id="soD" maxlength="200" rows="3" placeholder="Sobre o que é este servidor?"></textarea></label></div></div>
     <h3>Cor do ícone</h3><div class="colors" id="soC">${COLORS.map(c => `<button type="button" data-c="${c}" style="background:${c}"></button>`).join('')}</div>
@@ -836,7 +854,7 @@ function secSrvOverview(box, back){
   $b('#soRm').onclick = () => { D.icon_url = null; draw(); };
   $b('#soFile').onchange = async e => {
     const f = e.target.files[0]; e.target.value = ''; if(!f) return;
-    if(f.type === 'image/gif' && !hasPlus(S.me)){ upsell('Ícone de servidor animado'); return; }
+    if(f.type === 'image/gif' && serverLevel(s.id) < 1){ App.toast('Ícone animado libera quando o servidor chega no nível 1 de impulsos (2 impulsos).', true); return; }
     App.toast('Enviando…');
     try{ D.icon_url = await uploadSquare(f, 'server', 256); draw(); }catch(err){ App.toast(err.message, true); }
   };
@@ -845,7 +863,7 @@ function secSrvOverview(box, back){
     const { error } = await App.sb.from('servers').update({ name, icon_color: D.icon_color, icon_url: D.icon_url, description: D.description.trim() || null }).eq('id', s.id);
     if(error){ App.toast(error.message, true); return; }
     SET.dirty = false; await loadServers(); SET.server = S.servers.find(x => x.id === s.id) || s;
-    renderRail(); renderSidebar(); renderSettings(); App.toast('Servidor atualizado!');
+    renderRail(); renderSidebar(); renderSettings(); App.toast('Servidor atualizado');
   }
   draw();
 }
@@ -882,7 +900,7 @@ function secSrvRoles(box, back){
     let perms = 0; PERMS.forEach(([bit]) => { if(ed.querySelector('#rp' + bit).checked) perms |= bit; });
     const { error } = await App.sb.from('server_roles').update({ name: ed.querySelector('#rN').value.trim() || 'cargo', color: D.color, perms, hoist: ed.querySelector('#rH').checked }).eq('id', r.id);
     if(error){ App.toast(error.message, true); return; }
-    await loadRoles(s.id); renderSettings(); renderMembers(); renderSidebar(); App.toast('Cargo salvo!');
+    await loadRoles(s.id); renderSettings(); renderMembers(); renderSidebar(); App.toast('Cargo salvo');
   };
   ed.querySelector('#rDel').onclick = async () => {
     if(!(await confirmBox('Apagar cargo', `Apagar o cargo <b>${esc(r.name)}</b>? Quem tem ele perde as permissões.`, 'Apagar'))) return;
@@ -966,7 +984,7 @@ function secSrvInvites(box, back){
   box.querySelector('#siR').onclick = async () => {
     const { data, error } = await App.sb.rpc('regenerate_invite', { p_server: s.id });
     if(error){ App.toast(error.message, true); return; }
-    s.invite_code = data; renderSettings(); App.toast('Novo convite gerado!');
+    s.invite_code = data; renderSettings(); App.toast('Novo convite gerado');
   };
 }
 

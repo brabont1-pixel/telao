@@ -276,8 +276,8 @@ App.onReaction = p => {
 /* ---------- renderização ---------- */
 function attHtml(m){
   const at = m.attachments || []; if(!at.length) return '';
-  const imgs = at.filter(a => isImg(a) || isVid(a)), others = at.filter(a => !isImg(a) && !isVid(a) && a.type !== 'poll');
-  let h = at.filter(a => a.type === 'poll').map(a => pollHtml(m, a)).join('');
+  const imgs = at.filter(a => isImg(a) || isVid(a)), others = at.filter(a => !isImg(a) && !isVid(a) && a.type !== 'poll' && a.type !== 'gift');
+  let h = at.filter(a => a.type === 'poll').map(a => pollHtml(m, a)).join('') + at.filter(a => a.type === 'gift').map(a => App.giftCardHtml(a)).join('');
   if(imgs.length){
     const n = Math.min(imgs.length, 4);
     h += `<div class="mgrid g${n}">` + imgs.map((a, i) => {
@@ -468,7 +468,7 @@ async function deleteMsg(m, skipConfirm){
 async function pinMsg(m){
   const { error } = await App.sb.rpc('pin_message', { p_id: m.id, p_pin: !m.pinned });
   if(error){ App.toast(error.message, true); return; }
-  m.pinned = !m.pinned; App.onMsgUpdate({ ...m }); App.toast(m.pinned ? 'Mensagem fixada 📌' : 'Mensagem desafixada');
+  m.pinned = !m.pinned; App.onMsgUpdate({ ...m }); App.toast(m.pinned ? 'Mensagem fixada' : 'Mensagem desafixada');
 }
 function bindEditor(){
   const ed = $('#edBox'); if(!ed) return;

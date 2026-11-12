@@ -9,7 +9,7 @@ const esc = s => String(s ?? '').replace(/[&<>"']/g, c => ({'&':'&amp;','<':'&lt
 const COLORS = ['#5865f2','#eb459e','#3ba55c','#faa61a','#ed4245','#f47b67','#1abc9c','#9b59b6','#e67e22','#607d8b'];
 const ls = { get(k,d){ try{ const v=localStorage.getItem(k); return v==null?d:JSON.parse(v); }catch(e){ return d; } }, set(k,v){ try{ localStorage.setItem(k, JSON.stringify(v)); }catch(e){} } };
 
-const APP_VERSION = '4.1';
+const APP_VERSION = '6.1';
 const S = {
   me: null, profiles: new Map(), servers: [], channels: new Map(), members: new Map(),
   friends: [], dms: [], dmActivity: ls.get('telao-dmact', {}), online: new Set(),
@@ -93,7 +93,7 @@ function confirmBox(title, text, label='Confirmar', danger=true){
 }
 function menu(x, y, items, cls=''){
   const el = $('#menu'); el.className = 'menu ' + cls;
-  el.innerHTML = items.map((it,i) => it === '-' ? '<hr>' : it.raw ? it.raw : it.html ? `<div style="padding:6px 10px">${it.html}</div>` : `<button data-i="${i}" class="${it.danger?'danger':''}">${esc(it.label)}<span>${it.icon||''}</span></button>`).join('');
+  el.innerHTML = items.map((it,i) => it === '-' ? '<hr>' : it.raw ? it.raw : it.html ? `<div style="padding:6px 10px">${it.html}</div>` : `<button data-i="${i}" class="${it.danger?'danger':''} ${it.cls||''}">${esc(it.label)}<span>${it.icon||''}</span></button>`).join('');
   el.classList.remove('hidden');
   const r = el.getBoundingClientRect();
   el.style.left = Math.max(8, Math.min(x, innerWidth - r.width - 8)) + 'px';
@@ -106,7 +106,7 @@ function menu(x, y, items, cls=''){
 }
 function closeMenu(){ const el=$('#menu'); el.classList.add('hidden'); document.removeEventListener('mousedown', el._outside); }
 async function copy(text){
-  try{ await navigator.clipboard.writeText(text); App.toast('Copiado!'); }
+  try{ await navigator.clipboard.writeText(text); App.toast('Copiado'); }
   catch(e){ App.toast('Não deu para copiar automaticamente: '+text); }
 }
 
@@ -136,20 +136,42 @@ function boot(){
   App.sbUrl = url;
   const hp = new URLSearchParams(location.hash.slice(1) || location.search.slice(1));
   const linkErr = hp.get('error_description');
+  // voltou do link de confirmação do e-mail
+  if(/[?&]novasenha=1/.test(location.search)) history.replaceState(null, '', location.pathname + location.hash);
+  if(/[?&]confirmado=1/.test(location.search) || hp.get('type') === 'signup'){ S.justConfirmed = !linkErr; history.replaceState(null, '', location.pathname + location.hash); }
   if(linkErr){
     history.replaceState(null, '', location.pathname);
-    setTimeout(() => authError(/expired|invalid/i.test(linkErr) ? 'Esse link de confirmação expirou ou já foi usado. Entre com e-mail e senha ou peça um novo link.' : linkErr.replace(/\+/g,' ')), 300);
+    const le = linkErr.replace(/\+/g,' ');
+    setTimeout(() => authError(/expired|invalid/i.test(le) ? 'Esse link de confirmação expirou ou já foi usado. Se você já confirmou, é só entrar com e-mail e senha. Se não, peça um novo link abaixo.'
+      : /database error saving new user/i.test(le) ? 'Não deu para criar sua conta agora (erro no banco). Dono do site: rode o supabase.sql de novo no SQL Editor.'
+      : /exchange external code|unable to exchange/i.test(le) ? 'O Google recusou o login. Dono do site: confira o Client Secret do Google no Supabase (veja o LEIA-ME, parte "Login com Google").'
+      : /access_denied|denied/i.test(le) ? 'Login com Google cancelado.' : le), 300);
   }
   const pr = location.hash.match(/^#plus-(ok|pendente|erro)/);
   if(pr){ S.plusReturn = pr[1] === 'ok' ? 'ok' : pr[1]; history.replaceState(null, '', location.pathname); }
-  const m = location.hash.match(/convite=([a-z0-9]+)/i);
+  const m = location.hash.match(/convite=([a-z0-9-]+)/i);
+  if(/[?&]desktop=1/.test(location.search)){ history.replaceState(null, '', location.pathname + location.hash); document.documentElement.classList.add('desktop'); }
+  if(window.telaoDesktop) document.documentElement.classList.add('desktop');
   if(m){ S.pendingInvite = m[1].toLowerCase(); history.replaceState(null, '', location.pathname); }
   App.sb.auth.onAuthStateChange((ev, session) => {
+    if(ev === 'PASSWORD_RECOVERY') setTimeout(newPasswordModal, 800);
     if(ev === 'SIGNED_OUT'){ location.reload(); return; }
-    if(session && !S.started){ S.started = true; setTimeout(() => start(session), 0); }
+    if(session && !S.started){ S.started = true; setTimeout(() => start(session), 0); if(S.justConfirmed) showConfirmed(true); }
+    else if(!session && ev === 'INITIAL_SESSION' && S.justConfirmed) showConfirmed(false);
     else if(!session && ev === 'INITIAL_SESSION') showAuth();
   });
   if('serviceWorker' in navigator) navigator.serviceWorker.register('/sw.js').catch(()=>{});
+}
+
+/* tela "conta confirmada" */
+function showConfirmed(logged){
+  S.justConfirmed = false;
+  const el = document.createElement('div'); el.className = 'confirmed';
+  el.innerHTML = `<div class="cbox2"><div class="cicon">✓</div><h1>Conta confirmada!</h1>
+    <p>${logged ? 'Tudo certo, seu e-mail foi verificado. Você já pode usar o Telão — chame seus amigos, crie um servidor e bora compartilhar a tela.' : 'Seu e-mail foi verificado. Agora é só entrar com seu e-mail e senha.'}</p>
+    <button class="btn" id="cfGo">${logged ? 'Começar a usar o Telão' : 'Entrar'}</button></div>`;
+  document.body.appendChild(el);
+  el.querySelector('#cfGo').onclick = () => { el.classList.add('out'); setTimeout(() => el.remove(), 300); };
 }
 
 /* ---------------- autenticação ---------------- */
@@ -157,11 +179,15 @@ let authMode = 'login';
 function showAuth(){
   $('#auth').classList.remove('hidden');
   if(S.pendingInvite){ $('#authSub').textContent = 'Entre ou crie uma conta para aceitar o convite.'; }
+  if(!window.telaoDesktop) App.sb.from('app_config').select('value').eq('key', 'desktop_url').maybeSingle().then(({ data }) => {
+    if(data && data.value && !$('#authDl')) $('#authSwitch').insertAdjacentHTML('afterend', `<div class="switch" id="authDl"><a href="/baixar">Baixar o Telão para Windows</a></div>`);
+  });
 }
 function setAuthMode(mode){
   authMode = mode; $('#authErr').textContent = ''; $('#authErr').classList.remove('ok-msg');
   const reg = mode === 'register';
   $('#regFields').classList.toggle('hidden', !reg);
+  $('#forgotBox').classList.toggle('hidden', reg);
   $('#authTitle').textContent = reg ? 'Criar uma conta' : 'Boas-vindas de volta!';
   $('#authSub').textContent = reg ? 'Leva 10 segundos.' : 'Que bom te ver de novo.';
   $('#authBtn').textContent = reg ? 'Continuar' : 'Entrar';
@@ -171,18 +197,52 @@ function setAuthMode(mode){
 }
 $('#toReg').onclick = () => setAuthMode('register');
 $('#googleBtn').onclick = async () => {
+  // confere antes se o Google está ligado no Supabase (senão o usuário cai numa página de erro em inglês)
+  try{
+    const r = await fetch(App.sbUrl + '/auth/v1/settings', { headers:{ apikey: CFG.SUPABASE_ANON_KEY.trim() } });
+    const st = await r.json();
+    if(st && st.external && st.external.google === false){ authError('O login com Google ainda não está ligado. Por enquanto, entre com e-mail e senha.'); return; }
+  }catch(e){}
   const { error } = await App.sb.auth.signInWithOAuth({ provider:'google', options:{ redirectTo: location.origin + '/', queryParams:{ prompt:'select_account' } } });
   if(error) authError(/provider is not enabled|unsupported provider/i.test(error.message) ? 'O login com Google ainda não foi ativado no Supabase (veja o LEIA-ME).' : error.message);
 };
 $('#resendLink').onclick = async () => {
   const email = $('#aEmail').value.trim();
   if(!email){ authError('Digite seu e-mail no campo acima.'); return; }
-  const { error } = await App.sb.auth.resend({ type:'signup', email, options:{ emailRedirectTo: location.origin + '/' } });
-  if(error) authError(error.message); else authOk('📧 Enviamos de novo para <b>'+esc(email)+'</b>. Pode levar 1–2 minutos; veja também o spam.');
+  const { error } = await App.sb.auth.resend({ type:'signup', email, options:{ emailRedirectTo: location.origin + '/?confirmado=1' } });
+  if(error) authError(error.message); else authOk('Enviamos de novo para <b>'+esc(email)+'</b>. Pode levar 1–2 minutos; veja também o spam.');
 };
+async function forgotPassword(){
+  const email = $('#aEmail').value.trim();
+  if(!email){ authError('Digite seu e-mail no campo acima e clique de novo em "Esqueci minha senha".'); $('#aEmail').focus(); return; }
+  const { error } = await App.sb.auth.resetPasswordForEmail(email, { redirectTo: location.origin + '/?novasenha=1' });
+  if(error) authError(error.message); else authOk('Se existir uma conta com <b>' + esc(email) + '</b>, enviamos um link para criar uma nova senha. Veja também o spam.');
+}
+$('#forgotLink').onclick = forgotPassword;
+/* voltou do link "nova senha" */
+function newPasswordModal(){
+  modal(`<form id="npF"><div class="mh"><h2>Criar nova senha</h2><p>Escolha a senha nova da sua conta.</p></div>
+    <div class="mc"><label class="field"><span>Nova senha</span><input class="inp" type="password" id="npA" minlength="6" autocomplete="new-password" required></label>
+    <label class="field"><span>Confirme a nova senha</span><input class="inp" type="password" id="npB" minlength="6" autocomplete="new-password" required></label><div class="err" id="npE"></div></div>
+    <div class="mf"><button class="btn">Salvar senha</button></div></form>`, m => {
+    m.querySelector('#npF').onsubmit = async e => {
+      e.preventDefault();
+      const a = m.querySelector('#npA').value, b = m.querySelector('#npB').value;
+      if(a !== b){ m.querySelector('#npE').textContent = 'As senhas não são iguais.'; return; }
+      const { error } = await App.sb.auth.updateUser({ password: a });
+      if(error){ m.querySelector('#npE').textContent = error.message; return; }
+      closeModal(); App.toast('Senha nova salva. Você já está dentro.');
+    };
+  });
+}
 function authOk(html){ const e = $('#authErr'); e.classList.add('ok-msg'); e.innerHTML = html; }
 function authError(msg){
   $('#authErr').classList.remove('ok-msg');
+  if(msg === 'EMAIL_EXISTE' || /already registered|already been registered|user already exists/i.test(msg)){
+    $('#authErr').innerHTML = '⚠️ Já existe uma conta com esse e-mail. Entre com sua senha abaixo — se você criou a conta pelo Google, use <b>Continuar com Google</b>. Esqueceu a senha? <a id="aeForgot">Criar uma nova</a>.';
+    const f = $('#aeForgot'); if(f) f.onclick = forgotPassword;
+    $('#aPass').focus(); return;
+  }
   if(/email not confirmed/i.test(msg)) $('#resendBox').classList.remove('hidden');
   if(/rate limit|too many/i.test(msg)){ $('#authErr').textContent = 'Muitas tentativas seguidas. Espere alguns minutos e tente de novo.'; return; }
   if(/error sending|smtp/i.test(msg)){ $('#authErr').textContent = 'O servidor não conseguiu enviar o e-mail de confirmação. (Dono do site: configure o SMTP no Supabase — veja o LEIA-ME.)'; return; }
@@ -206,11 +266,17 @@ $('#authForm').onsubmit = async e => {
       if(!/^[a-z0-9_]{3,20}$/.test(username)){ authError('Nome de usuário: 3 a 20 caracteres, só letras minúsculas, números e _'); return; }
       const { data: taken } = await App.sb.from('profiles').select('id').eq('username', username).maybeSingle();
       if(taken){ authError('Esse nome de usuário já está em uso.'); return; }
-      const { data, error } = await App.sb.auth.signUp({ email, password, options:{ data:{ username, display_name }, emailRedirectTo: location.origin + '/' } });
+      const { data, error } = await App.sb.auth.signUp({ email, password, options:{ data:{ username, display_name }, emailRedirectTo: location.origin + '/?confirmado=1' } });
       if(error){ authError(error.message); return; }
+      // o Supabase não dá erro para e-mail repetido (por segurança): devolve um usuário sem identidades
+      if(data.user && Array.isArray(data.user.identities) && data.user.identities.length === 0){
+        setAuthMode('login'); $('#aEmail').value = email; $('#aPass').value = '';
+        authError('EMAIL_EXISTE');
+        return;
+      }
       if(!data.session){
         setAuthMode('login'); $('#aEmail').value = email;
-        authOk('📧 Conta criada! Enviamos um link de confirmação para <b>'+esc(email)+'</b>. Abra o e-mail (veja também o spam), clique no link e você já entra.');
+        authOk('Conta criada! Enviamos um link de confirmação para <b>'+esc(email)+'</b>. Abra o e-mail (veja também o spam), clique no link e você já entra.');
         $('#resendBox').classList.remove('hidden');
       }
     } else {
@@ -249,13 +315,13 @@ async function start(session){
 }
 async function handlePlusReturn(kind){
   if(kind === 'erro'){ App.toast('O pagamento não foi concluído. Pode tentar de novo quando quiser.', true); return; }
-  if(kind === 'pendente'){ App.toast('⏳ Pagamento em processamento. Quando o Pix cair, seu Telão+ ativa sozinho.'); return; }
-  App.toast('✅ Pagamento aprovado! Ativando seu Telão+…');
+  if(kind === 'pendente'){ App.toast('Pagamento em processamento. Quando o Pix cair, seu Telão+ ativa sozinho.'); return; }
+  App.toast('Pagamento aprovado. Ativando seu Telão+…');
   const before = S.me.plan_until;
   for(let i = 0; i < 12; i++){
     await new Promise(r => setTimeout(r, 3000));
     const { data } = await App.sb.from('profiles').select('*').eq('id', S.me.id).single();
-    if(data && data.plan_until !== before){ S.me = data; S.profiles.set(data.id, data); renderAll(); App.toast('🎉 Telão+ ativado! Aproveite.'); openSettings('user','plus'); return; }
+    if(data && data.plan_until !== before){ S.me = data; S.profiles.set(data.id, data); renderAll(); App.toast('Telão+ ativado. Aproveite.'); openSettings('user','plus'); return; }
   }
   App.toast('Seu pagamento está sendo confirmado. Em alguns minutos o Telão+ aparece.');
 }
@@ -279,7 +345,7 @@ async function loadChannels(sid){
   S.channels.set(sid, data || []);
 }
 async function loadMembers(sid){
-  const [{ data }] = await Promise.all([App.sb.from('server_members').select('user_id, role').eq('server_id', sid), loadRoles(sid)]);
+  const [{ data }] = await Promise.all([App.sb.from('server_members').select('*').eq('server_id', sid), loadRoles(sid)]);
   S.members.set(sid, data || []);
   await ensureProfiles((data || []).map(m => m.user_id));
 }
@@ -345,6 +411,7 @@ function subscribeRealtime(){
   sb.channel('user:'+S.me.id)
     .on('broadcast', { event:'ring' }, ({payload}) => onRing(payload))
     .on('broadcast', { event:'ring-cancel' }, ({payload}) => { if(S.ringing && S.ringing.channel_id === payload.channel_id) stopRing(); })
+    .on('broadcast', { event:'mod-disconnect' }, ({payload}) => App.onModDisconnect && App.onModDisconnect(payload))
     .on('broadcast', { event:'ring-decline' }, ({payload}) => { App.toast(prof(payload.from).display_name + ' recusou a chamada.'); })
     .subscribe();
 }
@@ -357,7 +424,7 @@ function liveWatch(topic, prev, metas){
   b.forEach((m, sess) => {
     const was = a.get(sess);
     if(mine && m.voice === mine){
-      if(!was || was.voice !== mine) App.sfx('join');
+      if(!was || was.voice !== mine){ if(!(App.entrance && App.entrance(m.user_id))) App.sfx('join'); }
       else if(m.sharing && !was.sharing) App.sfx('screen');
       else if(!m.sharing && was.sharing) App.sfx('screenoff');
     }
@@ -367,7 +434,7 @@ function liveWatch(topic, prev, metas){
       if(mine === m.voice || isDnd()) return;
       const ch = findChannel(m.voice); if(!ch) return;
       const where = ch.kind === 'dm' ? 'numa chamada com você' : 'em ' + ch.name;
-      App.toast(`🔴 ${prof(m.user_id).display_name} está transmitindo ${where}`, false, { label: 'Assistir', fn: () => watchLive(m.voice, sess) });
+      App.toast(`${prof(m.user_id).display_name} está transmitindo ${where}`, false, { label: 'Assistir', fn: () => watchLive(m.voice, sess) });
     }
   });
   if(mine) a.forEach((m, sess) => { if(m.voice === mine && (!b.has(sess) || b.get(sess).voice !== mine)) App.sfx('leave'); });
@@ -396,6 +463,7 @@ function vpChannel(topic){
         if(topic.startsWith('vp:dm:') && S.route.kind === 'home' && S.route.dm && topicFor({kind:'dm', id:S.route.dm}) === topic) renderMain(true);
       });
     });
+    ch.on('broadcast', { event:'thumb' }, ({ payload }) => App.onThumb && App.onThumb(topic, payload));
     ch.subscribe(stt => { if(stt === 'SUBSCRIBED') res(); });
   });
   S.vpCh.set(topic, ch);
@@ -443,7 +511,12 @@ async function onChannelEvent(p){
 async function onMemberEvent(p){
   const row = p.new && p.new.server_id ? p.new : p.old;
   if(!row) return;
+  if(row.user_id === S.me.id && p.eventType === 'UPDATE'){
+    if(S.members.has(row.server_id)){ await loadMembers(row.server_id); renderMembers(); }
+    App.onModChange && App.onModChange(row); return;
+  }
   if(row.user_id === S.me.id){
+    if(p.eventType === 'DELETE') App.onRemoved && App.onRemoved(row);
     await loadServers(); renderRail();
     if(p.eventType === 'DELETE' && S.route.kind === 'server' && S.route.sid === row.server_id){
       if(Voice.channel && Voice.channel.server_id === row.server_id) Voice.leave();
@@ -451,14 +524,15 @@ async function onMemberEvent(p){
     } else renderSidebar();
     return;
   }
-  if(S.members.has(row.server_id)){ await loadMembers(row.server_id); renderMembers(); }
+  if(S.members.has(row.server_id)){ await loadMembers(row.server_id); renderMembers(); renderSidebar(); }
+  if(p.eventType === 'UPDATE' && Voice.channel) Voice.peers.forEach(pp => Voice.applyVolume(pp));
 }
 
 /* ---------------- atualizações e avisos globais ---------------- */
 function updateBar(text, reload){
   let bar = $('#updbar');
   if(!bar){ bar = document.createElement('div'); bar.id = 'updbar'; bar.className = 'updbar'; document.body.appendChild(bar); }
-  bar.innerHTML = `<span>${ic('sparkles',18)} ${esc(text)}</span>${reload ? `<button class="btn sm" id="updGo">${ic('refresh',15)} Atualizar agora</button>` : ''}<button class="ibtn" id="updX" title="Fechar">${ic('x',16)}</button>`;
+  bar.innerHTML = `<span>${ic('refresh',18)} ${esc(text)}</span>${reload ? `<button class="btn sm" id="updGo">${ic('refresh',15)} Atualizar agora</button>` : ''}<button class="ibtn" id="updX" title="Fechar">${ic('x',16)}</button>`;
   bar.classList.remove('hidden');
   const go = $('#updGo'); if(go) go.onclick = hardReload;
   $('#updX').onclick = () => bar.classList.add('hidden');
@@ -481,9 +555,9 @@ document.addEventListener('visibilitychange', () => { if(!document.hidden) check
 function showAviso(pl){
   if(!pl || !pl.text) return;
   const from = pl.from ? prof(pl.from).display_name : 'Telão';
-  updateBar(`📢 ${from}: ${pl.text}`, !!pl.reload);
+  updateBar(`${from}: ${pl.text}`, !!pl.reload);
   App.sfx('ring');
-  if(pl.from !== S.me?.id) notify('📢 Aviso do Telão', pl.text, null);
+  if(pl.from !== S.me?.id) notify('Aviso do Telão', pl.text, null);
 }
 App.sendAviso = (text, reload) => S.avisoCh && S.avisoCh.send({ type:'broadcast', event:'aviso', payload:{ text, reload, from: S.me.id } });
 
@@ -529,7 +603,7 @@ function renderAll(){ renderRail(); renderSidebar(); renderUserPanel(); renderVo
 function renderLight(){ renderRail(); renderSidebar(); renderUserPanel(); renderMembers(); refreshFriends(); }
 function refreshFriends(){ if(S.route.kind==='home' && !S.route.dm && S.friendTab !== 'add') renderMain(); }
 
-const LOGO = `<svg viewBox="0 0 32 32" width="26" height="26"><defs><linearGradient id="lg1" x1="0" y1="0" x2="1" y2="1"><stop offset="0" stop-color="#ff8a4c"/><stop offset="1" stop-color="#ff3d7f"/></linearGradient></defs><rect x="2" y="5" width="28" height="19" rx="6" fill="url(#lg1)"/><path d="M13 10.5v8l7-4z" fill="#fff"/><rect x="10" y="26" width="12" height="2.6" rx="1.3" fill="url(#lg1)"/></svg>`;
+const LOGO = `<svg class="tlogo" viewBox="0 0 125 135" width="30" height="30" aria-hidden="true"><g transform="translate(5 5)" stroke="#FF2E9A" fill="none" stroke-width="9" stroke-linecap="round" stroke-linejoin="round"><path d="M14 22 L106 18 L102 88 L18 92 Z"/><path d="M30 92 V108"/><path d="M72 90 V116"/><path d="M30 60 C38 44, 50 44, 58 56 S78 70, 90 50"/></g><g stroke="currentColor" fill="none" stroke-width="9" stroke-linecap="round" stroke-linejoin="round"><path d="M14 22 L106 18 L102 88 L18 92 Z"/><path d="M30 92 V108"/><path d="M72 90 V116"/></g><circle cx="30" cy="112" r="6" fill="currentColor"/><circle cx="72" cy="120" r="6" fill="currentColor"/><path d="M30 60 C38 44, 50 44, 58 56 S78 70, 90 50" fill="none" stroke="#B6FF2E" stroke-width="11" stroke-linecap="round"/></svg>`;
 /* ---------------- barra de servidores ---------------- */
 function serverIcon(s, size){
   return s.icon_url ? `<img src="${esc(s.icon_url)}" alt="" loading="lazy" decoding="async">` : esc(serverInitials(s.name));
@@ -538,6 +612,7 @@ function renderRail(){
   const pend = S.friends.filter(f => f.status === 'pending' && f.incoming).length;
   const dmUnread = S.dms.filter(d => S.unread.has(d.id)).length;
   const homeBadge = pend + dmUnread;
+  if(window.telaoDesktop){ const tot = homeBadge + S.servers.filter(s => (S.channels.get(s.id) || []).some(c => S.unread.has(c.id))).length; if(tot !== S._deskBadge){ S._deskBadge = tot; window.telaoDesktop.badge(tot); } }
   let h = `<button class="ricon home ${S.route.kind==='home'?'on':''}" id="rHome" data-tip="Início · amigos e conversas" data-tipside="r">${ic('chat',22)}
       ${homeBadge ? `<span class="badge">${homeBadge > 99 ? '99+' : homeBadge}</span>` : ''}</button>`;
   // DMs com mensagem nova aparecem na barra, como no Discord
@@ -553,9 +628,11 @@ function renderRail(){
     h += `<button class="ricon srv ${on?'on':''} ${unread?'unread':''} ${s.icon_url?'img':''}" data-sid="${s.id}" data-tip="${esc(s.name)}" data-tipside="r" style="--sc:${esc(s.icon_color)}">${serverIcon(s)}${inVoice ? `<span class="rvoice">${ic('volume',12)}</span>` : ''}</button>`;
   });
   h += `<button class="ricon add" id="rAdd" data-tip="Adicionar um servidor" data-tipside="r">${ic('plus',24)}</button>`;
+  h += `<button class="ricon add shopb" id="rShop" data-tip="Loja do Telão" data-tipsub="fichas, itens e presentes" data-tipside="r">${ic('gift',22)}${S.me && S.me.last_daily !== new Date().toLocaleDateString('en-CA',{timeZone:'America/Sao_Paulo'}) ? '<span class="badge dotb"></span>' : ''}</button>`;
   $('#rail').innerHTML = h;
   $('#rHome').onclick = () => go({ kind:'home', dm: S.route.kind==='home' ? S.route.dm : null }, true);
   $('#rAdd').onclick = addServerModal;
+  $('#rShop').onclick = () => openSettings('user', 'shop');
   $$('#rail [data-sid]').forEach(b => b.onclick = () => go({ kind:'server', sid: b.dataset.sid }, true));
   $$('#rail [data-dmr]').forEach(b => b.onclick = () => go({ kind:'home', dm: b.dataset.dmr }));
 }
@@ -578,16 +655,16 @@ function renderSidebar(){
   const head = $('#sbHead'), body = $('#sbBody');
   if(S.route.kind === 'home'){
     head.className = 'sbhead home'; head.style.removeProperty('--sc');
-    head.innerHTML = `<div class="brandrow"><span class="logo">${LOGO}</span><b>telão</b></div><button class="findbtn" id="sbFind">${ic('search',15)}<span>Buscar ou ir para…</span><kbd>Ctrl K</kbd></button>`; head.onclick = null;
+    head.innerHTML = `<div class="brandrow"><span class="logo">${LOGO}</span><b class="tagw">telão</b></div><button class="findbtn" id="sbFind">${ic('search',15)}<span>Buscar ou ir para…</span><kbd>Ctrl K</kbd></button>`; head.onclick = null;
     $('#sbFind').onclick = quickSwitcher;
     const pend = S.friends.filter(f => f.status === 'pending' && f.incoming).length;
     const dms = [...S.dms].sort((a,b) => (S.dmActivity[b.id] || b.created_at).localeCompare(S.dmActivity[a.id] || a.created_at));
     body.innerHTML = `
       <div class="ch big ${!S.route.dm?'on':''}" id="sbFriends"><span class="ic">${ic('users',20)}</span><span class="nm">Amigos</span>${pend?`<span class="pill">${pend}</span>`:''}</div>
-      <div class="ch big" id="sbPlus"><span class="ic plusic">${ic('sparkles',20)}</span><span class="nm">Telão+</span></div>
+      <div class="ch big" id="sbPlus"><span class="ic plusic">${ic('star',20)}</span><span class="nm">Telão+</span></div>
       <div class="cat"><span>Mensagens diretas</span><button id="sbNewDm" data-tip="Nova conversa">${ic('plus',16)}</button></div>
       ${dms.length ? dms.map(d => { const p = prof(dmOther(d)); const call = voiceUsers(d).length;
-        return `<div class="dmitem ${S.route.dm===d.id?'on':''} ${S.unread.has(d.id)?'unread':''}" data-dm="${d.id}">${avatar(p,'',true)}<div class="dmt"><span class="nm">${esc(p.display_name)}</span>${p.custom_status ? `<small>${statusText(p)}</small>` : ''}</div>${call?`<span class="incall" data-tip="Em chamada">${ic('volume',16)}</span>`:''}</div>`; }).join('')
+        return `<div class="dmitem ${S.route.dm===d.id?'on':''} ${S.unread.has(d.id)?'unread':''}" data-dm="${d.id}">${avatar(p,'',true)}<div class="dmt"><span class="nm">${esc(p.display_name)}</span>${(App.actLine && App.actLine(p)) || p.custom_status ? `<small>${statusText(p)}</small>` : ''}</div>${call?`<span class="incall" data-tip="Em chamada">${ic('volume',16)}</span>`:''}</div>`; }).join('')
         : `<div class="sbempty">${ic('users',32)}<span>Adicione amigos para conversar</span></div>`}`;
     $('#sbFriends').onclick = () => go({ kind:'home', dm:null });
     $('#sbPlus').onclick = () => openSettings('user','plus');
@@ -651,7 +728,7 @@ function renderSidebar(){
 function vuRow(u){
   const p = prof(u.user_id);
   return `<div class="vu" data-vuser="${u.user_id}">${avatar(p,'sm').replace('class="av ', `data-sess="${u.session}" class="av `)}<span class="nm" style="${App.roleColorOf(u.user_id) ? 'color:' + App.roleColorOf(u.user_id) : ''}">${esc(p.display_name)}</span>
-    <span class="icons">${u.camera ? `<span class="vi">${ic('video',14)}</span>` : ''}${u.sharing ? `<button class="live" data-watch="${u.voice}" data-wsess="${u.session}" data-tip="Clique para assistir">AO VIVO</button>` : ''}${u.deafened ? `<span class="vi off">${ic('headphonesOff',14)}</span>` : u.muted ? `<span class="vi off">${ic('micOff',14)}</span>` : ''}</span></div>`;
+    <span class="icons">${u.camera ? `<span class="vi">${ic('video',14)}</span>` : ''}${u.sharing ? `<button class="live" data-watch="${u.voice}" data-wsess="${u.session}" data-tip="Clique para assistir">AO VIVO</button>` : ''}${u.smod || (App.srvVoiceMuted && App.srvVoiceMuted(u.user_id)) ? `<span class="vi off smod" data-tip="Silenciado por moderador">${ic('micOff',14)}</span>` : u.deafened ? `<span class="vi off">${ic('headphonesOff',14)}</span>` : u.muted ? `<span class="vi off">${ic('micOff',14)}</span>` : ''}</span></div>`;
 }
 
 /* ---------------- painel do usuário e de voz ---------------- */
@@ -674,6 +751,7 @@ function statusMenu(e){
   const items = [{ raw: profileCard(p) }];
   ['online','idle','dnd','invisible'].forEach(st => items.push({ label: STATUS[st][0], icon: `<span class="sdot" style="background:${STATUS[st][1]}"></span>`, onClick: () => setMyStatus(st) }));
   items.push('-', { label: p.custom_status ? 'Editar status personalizado' : 'Definir status personalizado', icon: ic('smile',18), onClick: customStatusModal });
+  items.push({ label: S.manualAct ? 'Mudar atividade' : 'Definir atividade', icon: ic('gamepad',18), onClick: () => App.activityModal() });
   if(p.custom_status) items.push({ label:'Limpar status personalizado', icon: ic('x',18), onClick: () => saveCustomStatus(null, null) });
   items.push({ label:'Editar perfil', icon: ic('edit',18), onClick: () => openSettings('user','profile') }, { label:'Copiar usuário', icon: ic('copy',18), onClick: () => copy(p.username) });
   menu(r.left + 8, r.top - 520, items, 'pp');
@@ -713,7 +791,7 @@ function renderVoicePanel(){
     <div class="vbtns">
       <button class="vb ${Voice.camStream?'on':''}" id="vpCam" data-tip="${Voice.camStream?'Desligar câmera':'Ligar câmera'}">${ic(Voice.camStream?'video':'videoOff',18)}</button>
       <button class="vb ${Voice.screenStream?'on':''}" id="vpScreen" data-tip="${Voice.screenStream?'Parar de transmitir':'Compartilhar tela'}">${ic('screenUp',18)}</button>
-      <button class="vb" id="vpAct" data-tip="Atividades e soundboard">${ic('sparkles',18)}</button>
+      <button class="vb" id="vpAct" data-tip="Atividades e soundboard">${ic('gamepad',18)}</button>
       <button class="vb" id="vpQual" data-tip="Qualidade e áudio">${ic('sliders',18)}</button>
     </div>`;
   $('#vpGo').onclick = () => openChannel(c);
@@ -751,7 +829,7 @@ function renderMain(keepMessages){
     if(keepMessages && M.cid === d.id && body.querySelector('.msgs')){ renderStage(); return; }
     body.innerHTML = `<div id="stageWrap"></div><div id="msgWrap" class="msgcol"></div>`;
     renderStage();
-    mountMessages(d, $('#msgWrap'), `<div class="welcome">${avatar(p,'xl')}<h1>${esc(p.display_name)}</h1><p class="un">@${esc(p.username)}</p><p>Este é o começo da sua conversa com <b>${esc(p.display_name)}</b>. Mande um oi! 👋</p></div>`);
+    mountMessages(d, $('#msgWrap'), `<div class="welcome">${avatar(p,'xl')}<h1>${esc(p.display_name)}</h1><p class="un">@${esc(p.username)}</p><p>Este é o começo da sua conversa com <b>${esc(p.display_name)}</b>. Mande um oi.</p></div>`);
     return;
   }
 

@@ -9,7 +9,7 @@ const esc = s => String(s ?? '').replace(/[&<>"']/g, c => ({'&':'&amp;','<':'&lt
 const COLORS = ['#5865f2','#eb459e','#3ba55c','#faa61a','#ed4245','#f47b67','#1abc9c','#9b59b6','#e67e22','#607d8b'];
 const ls = { get(k,d){ try{ const v=localStorage.getItem(k); return v==null?d:JSON.parse(v); }catch(e){ return d; } }, set(k,v){ try{ localStorage.setItem(k, JSON.stringify(v)); }catch(e){} } };
 
-const APP_VERSION = '6.0';
+const APP_VERSION = '6.1';
 const S = {
   me: null, profiles: new Map(), servers: [], channels: new Map(), members: new Map(),
   friends: [], dms: [], dmActivity: ls.get('telao-dmact', {}), online: new Set(),
@@ -603,7 +603,7 @@ function renderAll(){ renderRail(); renderSidebar(); renderUserPanel(); renderVo
 function renderLight(){ renderRail(); renderSidebar(); renderUserPanel(); renderMembers(); refreshFriends(); }
 function refreshFriends(){ if(S.route.kind==='home' && !S.route.dm && S.friendTab !== 'add') renderMain(); }
 
-const LOGO = `<svg viewBox="0 0 32 32" width="26" height="26"><rect x="2" y="5" width="28" height="19" rx="6" fill="#ff6b4a"/><path d="M13 10.5v8l7-4z" fill="#fff"/><rect x="10" y="26" width="12" height="2.6" rx="1.3" fill="#ff6b4a"/></svg>`;
+const LOGO = `<svg class="tlogo" viewBox="0 0 125 135" width="30" height="30" aria-hidden="true"><g transform="translate(5 5)" stroke="#FF2E9A" fill="none" stroke-width="9" stroke-linecap="round" stroke-linejoin="round"><path d="M14 22 L106 18 L102 88 L18 92 Z"/><path d="M30 92 V108"/><path d="M72 90 V116"/><path d="M30 60 C38 44, 50 44, 58 56 S78 70, 90 50"/></g><g stroke="currentColor" fill="none" stroke-width="9" stroke-linecap="round" stroke-linejoin="round"><path d="M14 22 L106 18 L102 88 L18 92 Z"/><path d="M30 92 V108"/><path d="M72 90 V116"/></g><circle cx="30" cy="112" r="6" fill="currentColor"/><circle cx="72" cy="120" r="6" fill="currentColor"/><path d="M30 60 C38 44, 50 44, 58 56 S78 70, 90 50" fill="none" stroke="#B6FF2E" stroke-width="11" stroke-linecap="round"/></svg>`;
 /* ---------------- barra de servidores ---------------- */
 function serverIcon(s, size){
   return s.icon_url ? `<img src="${esc(s.icon_url)}" alt="" loading="lazy" decoding="async">` : esc(serverInitials(s.name));
@@ -655,7 +655,7 @@ function renderSidebar(){
   const head = $('#sbHead'), body = $('#sbBody');
   if(S.route.kind === 'home'){
     head.className = 'sbhead home'; head.style.removeProperty('--sc');
-    head.innerHTML = `<div class="brandrow"><span class="logo">${LOGO}</span><b>telão</b></div><button class="findbtn" id="sbFind">${ic('search',15)}<span>Buscar ou ir para…</span><kbd>Ctrl K</kbd></button>`; head.onclick = null;
+    head.innerHTML = `<div class="brandrow"><span class="logo">${LOGO}</span><b class="tagw">telão</b></div><button class="findbtn" id="sbFind">${ic('search',15)}<span>Buscar ou ir para…</span><kbd>Ctrl K</kbd></button>`; head.onclick = null;
     $('#sbFind').onclick = quickSwitcher;
     const pend = S.friends.filter(f => f.status === 'pending' && f.incoming).length;
     const dms = [...S.dms].sort((a,b) => (S.dmActivity[b.id] || b.created_at).localeCompare(S.dmActivity[a.id] || a.created_at));

@@ -6,6 +6,9 @@ const PERMS = [
   [16, 'Gerenciar cargos', 'Criar cargos e dar cargos para as pessoas.'],
   [4, 'Expulsar membros', 'Tirar pessoas do servidor.'],
   [8, 'Gerenciar mensagens', 'Apagar e fixar mensagens de qualquer pessoa.'],
+  [64, 'Moderar membros', 'Dar castigo no chat e silenciar, ensurdecer ou desconectar pessoas da call.'],
+  [128, 'Banir membros', 'Tirar do servidor e impedir de voltar.'],
+  [256, 'Gerenciar eventos', 'Criar, editar e apagar eventos do servidor.'],
 ];
 S.roles = new Map();        // sid -> [roles]
 S.memberRoles = new Map();  // sid -> Map(uid -> Set(roleId))
@@ -80,7 +83,7 @@ function renderMembers(){
   const activity = uid => { for(const metas of S.vp.values()){ const m = metas.find(x => x.user_id === uid && x.voice); if(m) return m.sharing ? `<span class="livetag" data-watch="${m.voice}" data-wsess="${m.session}">${ic('screenUp',12)} AO VIVO · Assistir</span>` : `${ic('volume',12)} Em chamada`; } return ''; };
   const row = m => {
     const color = App.roleColorOf(m.user_id);
-    const sub = activity(m.user_id) || (m.p.custom_status ? statusText(m.p) : '');
+    const sub = activity(m.user_id) || (App.actLine && App.actLine(m.p)) || (m.p.custom_status ? statusText(m.p) : '');
     return `<div class="mem ${S.online.has(m.user_id) || m.user_id === S.me.id ? '' : 'off'}" data-u="${m.user_id}">${avatar(m.p,'',true)}<div class="mt"><span class="nm" style="${color?`color:${color}`:''}">${nameHtml(m.p)}${m.user_id===s.owner_id?`<span class="crown" data-tip="Dono do servidor">${ic('crown',14)}</span>`:''}</span>${sub ? `<small>${sub}</small>` : ''}</div></div>`;
   };
   let h = '';
@@ -96,7 +99,7 @@ function renderMembers(){
 function serverMenu(s, e){
   const owner = s.owner_id === S.me.id;
   const r = $('#sbHead').getBoundingClientRect();
-  const items = [{ label:'Convidar pessoas', icon: ic('userPlus',18), onClick: () => inviteModal(s) }];
+  const items = [{ label:'Impulsionar servidor', icon: BOOST_SVG(18), cls:'boostitem', onClick: () => boostServerModal(s) }, { label:'Convidar pessoas', icon: ic('userPlus',18), onClick: () => inviteModal(s) }];
   if(App.hasPerm(s.id, 2) || App.hasPerm(s.id, 16)) items.push({ label:'Configurações do servidor', icon: ic('gear',18), onClick: () => openSettings('server','overview', s) });
   if(App.hasPerm(s.id, 1)) items.push({ label:'Criar canal', icon: ic('plusCircle',18), onClick: () => createChannelModal(s, 'text') }, { label:'Criar categoria', icon: ic('folder',18), onClick: () => createCategoryModal(s) });
   items.push('-');
@@ -107,7 +110,7 @@ function serverMenu(s, e){
 function addServerModal(){
   modal(`<div class="mh"><h2>Adicionar um servidor</h2><p>Um servidor é onde você e seus amigos conversam, jogam e assistem juntos.</p></div>
     <div class="mc">
-      <button class="choice" id="chCreate"><span class="e">${ic('sparkles',26)}</span><div><b>Criar o meu</b><small>Do zero, do seu jeito</small></div>${ic('chevRight',20)}</button>
+      <button class="choice" id="chCreate"><span class="e">${ic('plus',26)}</span><div><b>Criar o meu</b><small>Do zero, do seu jeito</small></div>${ic('chevRight',20)}</button>
       <div class="tpls">${[['🎮','Jogos'],['👥','Amigos'],['📚','Estudos'],['🎬','Filmes']].map(([e,n]) => `<button class="tpl" data-tpl="${n}"><span>${e}</span>${n}</button>`).join('')}</div>
       <button class="choice" id="chJoin"><span class="e">${ic('link',26)}</span><div><b>Entrar com um convite</b><small>Tem um link ou código? Cole aqui</small></div>${ic('chevRight',20)}</button>
     </div>`, m => {
@@ -145,7 +148,7 @@ function createServerModal(tpl){
         const t = TEMPLATES[tpl]; let pos = 0;
         await App.sb.from('channels').insert(t.text.map(n => ({ server_id: sid, name: n, kind:'text', position: pos++ })).concat(t.voice.map(n => ({ server_id: sid, name: n, kind:'voice', position: pos++ }))));
       }
-      closeModal(); await loadServers(); go({ kind:'server', sid }); App.toast('Servidor criado! 🎉 Convide a galera.');
+      closeModal(); await loadServers(); go({ kind:'server', sid }); App.toast('Servidor criado. Agora é só convidar a galera.');
     };
   });
 }
@@ -165,7 +168,7 @@ async function uploadSquare(file, folder, size, bucket='media'){
   if(error) throw error;
   return App.sb.storage.from(bucket).getPublicUrl(path).data.publicUrl;
 }
-function parseInvite(v){ v = v.trim(); const m = v.match(/convite=([a-z0-9]+)/i); return (m ? m[1] : v.split('/').pop()).toLowerCase(); }
+function parseInvite(v){ v = v.trim(); const m = v.match(/convite=([a-z0-9-]+)/i); return (m ? m[1] : v.split('/').pop()).toLowerCase(); }
 function joinServerModal(prefill){
   modal(`<form id="jsF"><div class="mh"><h2>Entrar num servidor</h2><p>Cole o link ou o código de convite que te mandaram.</p></div>
     <div class="mc"><label class="field"><span>Link ou código do convite</span><input class="inp" id="jsC" value="${esc(typeof prefill==='string'?prefill:'')}" placeholder="https://.../#convite=a1b2c3d4" required></label>
@@ -176,7 +179,7 @@ function joinServerModal(prefill){
       e.preventDefault();
       const { data: sid, error } = await App.sb.rpc('join_server', { p_code: parseInvite(m.querySelector('#jsC').value) });
       if(error){ App.toast(error.message.includes('Convite') ? 'Convite inválido ou expirado.' : error.message, true); return; }
-      closeModal(); await loadServers(); go({ kind:'server', sid }); App.toast('Bem-vindo(a) ao servidor! 🎉');
+      closeModal(); await loadServers(); go({ kind:'server', sid }); App.toast('Bem-vindo(a) ao servidor');
     };
   });
 }

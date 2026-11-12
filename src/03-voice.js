@@ -121,6 +121,7 @@ function renderStage(){
           <span class="stats" id="stStats"></span>
           <span class="lbl">${ic('monitor',14)} ${esc(f.s.mine ? 'Sua tela (prévia)' : 'Tela de ' + prof(f.s.user_id).display_name)} ${f.s.mine ? '' : (f.s.stream.getAudioTracks().length ? ic('volume',14) : `<span class="noaud">${ic('micOff',13)} sem áudio</span>`)}</span>
           <span class="tools">
+            ${f.s.mine || !f.s.stream.getAudioTracks().length ? '' : `<span class="svol"><button id="stVolB" data-tip="Volume da tela">${ic((Voice.screenVolumes.get(f.s.user_id) ?? 1) === 0 ? 'micOff' : 'volume',18)}</button><input type="range" id="stVol" min="0" max="100" value="${Math.round((Voice.screenVolumes.get(f.s.user_id) ?? 1)*100)}"></span>`}
             <button id="stDraw" data-tip="Desenhar na tela (todos veem)" class="${DRAW.on?'on':''}">${ic('pen',18)}</button>
             <button id="stCine" data-tip="Modo cinema">${ic('film',18)}</button>
             <button id="stShot" data-tip="Tirar print">${ic('camera',18)}</button>
@@ -142,7 +143,7 @@ function renderStage(){
         <button class="cbtn ${Voice.camStream?'on':''}" id="sbCam" data-tip="${Voice.camStream?'Desligar câmera':'Ligar câmera'}">${ic(Voice.camStream?'video':'videoOff',22)}</button>
         ${Voice.camStream ? `<button class="cbtn" id="sbCamFx" data-tip="Efeitos da câmera">${ic('wand',22)}</button>` : ''}
         <button class="cbtn ${Voice.screenStream?'on':''}" id="sbScr" data-tip="${Voice.screenStream?'Parar de transmitir':'Compartilhar tela'}">${ic('screenUp',22)}</button>
-        <button class="cbtn" id="sbAct" data-tip="Atividades">${ic('sparkles',22)}</button>
+        <button class="cbtn" id="sbAct" data-tip="Atividades">${ic('gamepad',22)}</button>
         <button class="cbtn" id="sbFx" data-tip="Reagir">${ic('smile',22)}</button>
         <button class="cbtn" id="sbQ" data-tip="Qualidade">${ic('sliders',22)}</button>
       </div>
@@ -178,8 +179,12 @@ function renderStage(){
     $w('#stFs').onclick = () => { const el = $w('#focusBox'); (el.requestFullscreen || el.webkitRequestFullscreen || (()=>{})).call(el); };
     const pip = $w('#stPip'); if(pip) pip.onclick = () => { const v = vid(); if(!v) return; (document.pictureInPictureElement === v ? document.exitPictureInPicture() : v.requestPictureInPicture()).catch(e => App.toast('Não deu: ' + e.message, true)); };
     $w('#stShot').onclick = () => screenshot(vid(), focused.s);
-    $w('#stDraw').onclick = () => { DRAW.on = !DRAW.on; renderStage(); if(DRAW.on) App.toast('✏️ Desenhe na tela: todo mundo assistindo vê. Clique de novo para parar.'); };
+    $w('#stDraw').onclick = () => { DRAW.on = !DRAW.on; renderStage(); if(DRAW.on) App.toast('Desenhe na tela: todo mundo assistindo vê. Clique de novo para parar.'); };
     $w('#stCine').onclick = toggleCinema;
+    const sv = $w('#stVol'); if(sv){
+      sv.oninput = () => Voice.setScreenVolume(focused.s.user_id, sv.value / 100);
+      $w('#stVolB').onclick = () => { const cur = Voice.screenVolumes.get(focused.s.user_id) ?? 1; const nv = cur > 0 ? 0 : 1; Voice.setScreenVolume(focused.s.user_id, nv); sv.value = nv * 100; $w('#stVolB').innerHTML = ic(nv ? 'volume' : 'micOff', 18); };
+    }
     mountDraw(focused.s.session);
     $w('#stRec').onclick = () => REC.on ? stopRec() : startRec(focused.s);
     let lastB = 0, lastT = 0;
@@ -210,8 +215,8 @@ function screenshot(v, s){
   const cv = document.createElement('canvas'); cv.width = v.videoWidth; cv.height = v.videoHeight;
   cv.getContext('2d').drawImage(v, 0, 0);
   cv.toBlob(async blob => {
-    try{ await navigator.clipboard.write([new ClipboardItem({ 'image/png': blob })]); App.toast('📸 Print copiado! Cole no chat com Ctrl+V'); }
-    catch(e){ App.toast('📸 Print salvo'); }
+    try{ await navigator.clipboard.write([new ClipboardItem({ 'image/png': blob })]); App.toast('Print copiado. Cole no chat com Ctrl+V'); }
+    catch(e){ App.toast('Print salvo'); }
     const a = document.createElement('a'); a.href = URL.createObjectURL(blob); a.download = `telao-print-${Date.now()}.png`; a.click();
     setTimeout(() => URL.revokeObjectURL(a.href), 5000);
   }, 'image/png');
@@ -228,11 +233,11 @@ function startRec(s){
     const blob = new Blob(chunks, { type: (rec.mimeType || 'video/webm').split(';')[0] });
     const a = document.createElement('a'); a.href = URL.createObjectURL(blob); a.download = `telao-gravacao-${Date.now()}.${blob.type.includes('mp4') ? 'mp4' : 'webm'}`; a.click();
     setTimeout(() => URL.revokeObjectURL(a.href), 10000);
-    App.toast(`🎬 Gravação salva (${fmtSize(blob.size)})`);
+    App.toast(`Gravação salva (${fmtSize(blob.size)})`);
   };
   rec.start(1000);
   Object.assign(REC, { on:true, rec, t0: Date.now() });
-  App.toast('⏺ Gravando… clique de novo para parar e baixar');
+  App.toast('Gravando… clique de novo para parar e baixar');
   renderStage();
 }
 function stopRec(){ if(!REC.on) return; REC.on = false; try{ REC.rec.stop(); }catch(e){} renderStage(); }
@@ -262,7 +267,7 @@ function playSound(id){
       boing: () => tone(180, 0, 0.5, 'sine', 0.9, 620),
       grilo: () => { for(let i=0;i<6;i++) tone(4300, i*0.09 + (i>2?0.3:0), 0.05, 'sine', 0.3); },
       laser: () => tone(1800, 0, 0.35, 'sawtooth', 0.35, 120),
-    }[id] || (()=>{}))();
+    }[id] || (EXTRA_SOUNDS[id] ? () => EXTRA_SOUNDS[id](tone, noise) : ()=>{}))();
   }catch(e){}
 }
 function floatReaction(emoji, uid){
@@ -285,18 +290,20 @@ function activitiesMenu(anchor){
   if(!Voice.channel){ App.toast('Entre numa chamada para usar atividades.', true); return; }
   const r = anchor.getBoundingClientRect();
   const el = $('#menu'); el.className = 'menu actpop';
-  el.innerHTML = `<div class="pphead">${ic('sparkles',18)} Atividades</div>
+  el.innerHTML = `<div class="pphead">${ic('gamepad',18)} Atividades</div>
     <button class="actbig" id="acWT"><span class="ai">${ic('tv',26)}</span><div><b>Assistir juntos</b><small>Vídeo do YouTube sincronizado para todo mundo na chamada</small></div></button>
+    <button class="actbig" id="acCap"><span class="ai">🗨️</span><div><b>Legendas ao vivo</b><small>Sua fala vira texto para todo mundo da chamada (acessibilidade)</small></div></button>
     <div class="actsec">${ic('music',15)} Soundboard <small>todos ouvem</small></div>
-    <div class="sboard">${SOUNDS.map(([id, e, n]) => `<button data-snd="${id}"><span>${e}</span>${n}</button>`).join('')}</div>
+    <div class="sboard">${soundList().map(([id, e, n]) => `<button data-snd="${id}"><span>${e}</span>${n}</button>`).join('')}</div>
     <div class="actsec">${ic('smile',15)} Reações na tela</div>
     <div class="quickrx">${['😂','🔥','👏','❤️','😮','💀','🎉','👀'].map(e => `<button data-fx="${e}">${e}</button>`).join('')}</div>`;
   el.classList.remove('hidden');
   el.style.left = Math.max(8, Math.min(r.left - 140, innerWidth - 380)) + 'px';
   el.style.top = Math.max(8, r.top - el.offsetHeight - 10) + 'px';
   el.querySelector('#acWT').onclick = () => { closeMenu(); wtPrompt(); };
+  el.querySelector('#acCap').onclick = () => { closeMenu(); App.toggleCaptions(); };
   el.querySelectorAll('[data-snd]').forEach(b => b.onclick = () => {
-    if(Date.now() - lastSound < 1500){ App.toast('Calma! Espere um pouquinho entre os sons 😅'); return; }
+    if(Date.now() - lastSound < 1500){ App.toast('Calma. Espere um pouquinho entre os sons'); return; }
     lastSound = Date.now(); Voice.sendFx({ t:'sound', id: b.dataset.snd });
   });
   el.querySelectorAll('[data-fx]').forEach(b => b.onclick = () => Voice.sendFx({ t:'react', e: b.dataset.fx }));
@@ -321,7 +328,7 @@ function wtPrompt(){
 }
 function onWT(pl, mine){
   if(!Voice.channel) return;
-  if(pl.t === 'wt-load'){ Object.assign(WT, { active:true, channel: Voice.channel.id, id: pl.id, title:'', state:{ time: pl.time, playing: pl.playing, at: Date.now() } }); WT.player = null; S.focus = 'wt'; renderStage(); if(!mine) App.toast(`${prof(pl.uid).display_name} começou um vídeo para assistir juntos 📺`); }
+  if(pl.t === 'wt-load'){ Object.assign(WT, { active:true, channel: Voice.channel.id, id: pl.id, title:'', state:{ time: pl.time, playing: pl.playing, at: Date.now() } }); WT.player = null; S.focus = 'wt'; renderStage(); if(!mine) App.toast(`${prof(pl.uid).display_name} começou um vídeo para assistir juntos`); }
   else if(pl.t === 'wt-stop'){ WT.active = false; if(WT.player){ try{ WT.player.destroy(); }catch(e){} } WT.player = null; if(S.focus === 'wt') S.focus = null; renderStage(); }
   else if(pl.t === 'wt-sync' && !mine && WT.player && WT.player.seekTo){
     WT.apply = true;
@@ -369,10 +376,16 @@ function userMenu(uid, x, y){
     const fr = S.friends.find(f => f.uid === uid);
     if(Voice.channel && voiceUsers(Voice.channel).some(m => m.user_id === uid)){
       const vol = Math.round((Voice.userVolumes.get(uid) ?? 1) * 100);
-      items.push({ html:`<div class="uvol">${ic('volume',16)}<span>Volume</span><b id="uvL">${vol}%</b></div><input type="range" id="uvR" min="0" max="100" value="${vol}" class="range">`,
-        mount: el => { const r = el.querySelector('#uvR'); r.oninput = () => { el.querySelector('#uvL').textContent = r.value + '%'; Voice.setUserVolume(uid, r.value / 100); }; } });
+      const sharing = voiceUsers(Voice.channel).some(m => m.user_id === uid && m.sharing);
+      const svol = Math.round((Voice.screenVolumes.get(uid) ?? 1) * 100);
+      items.push({ html:`<div class="uvol">${ic('mic',16)}<span>Volume da voz</span><b id="uvL">${vol}%</b></div><input type="range" id="uvR" min="0" max="100" value="${vol}" class="range">
+          ${sharing ? `<div class="uvol" style="margin-top:8px">${ic('monitor',16)}<span>Volume da tela</span><b id="usL">${svol}%</b></div><input type="range" id="usR" min="0" max="100" value="${svol}" class="range">` : ''}`,
+        mount: el => {
+          const r = el.querySelector('#uvR'); r.oninput = () => { el.querySelector('#uvL').textContent = r.value + '%'; Voice.setUserVolume(uid, r.value / 100); };
+          const r2 = el.querySelector('#usR'); if(r2) r2.oninput = () => { el.querySelector('#usL').textContent = r2.value + '%'; Voice.setScreenVolume(uid, r2.value / 100); };
+        } });
     }
-    if(fr && fr.status === 'accepted') items.push({ label:'Mensagem', icon: ic('chat',18), onClick: () => openDM(uid) }, { label:'Ligar', icon: ic('phone',18), onClick: async () => { const d = await openDM(uid); if(d) joinVoice(d); } });
+    if(fr && fr.status === 'accepted') items.push({ label:'Mensagem', icon: ic('chat',18), onClick: () => openDM(uid) }, { label:'Ligar', icon: ic('phone',18), onClick: async () => { const d = await openDM(uid); if(d) joinVoice(d); } }, { label:'Dar presente', icon: '<span style="font-size:16px;width:18px;text-align:center">🎁</span>', onClick: () => giftModal(uid) });
     else if(!fr) items.push({ label:'Adicionar amigo', icon: ic('userPlus',18), onClick: async () => {
       const { data, error } = await App.sb.rpc('send_friend_request', { p_username: p.username });
       App.toast(error ? error.message : data === 'accepted' ? 'Agora vocês são amigos!' : 'Pedido enviado!', !!error); loadFriends().then(renderRail);
@@ -380,10 +393,11 @@ function userMenu(uid, x, y){
     else if(fr.status === 'pending') items.push({ html: `<div style="color:var(--mut);font-size:13px">${fr.incoming ? 'Te mandou pedido de amizade' : 'Pedido de amizade enviado'}</div>` });
     const s = curServer();
     if(s && App.hasPerm(s.id, 16) && (S.members.get(s.id) || []).some(m => m.user_id === uid)) items.push({ label:'Cargos', icon: ic('shield',18), onClick: () => App.roleAssignMenu(s, uid, x, y) });
+    if(s && App.modItems) items.push(...App.modItems(s, uid, x, y));
     if(s && App.hasPerm(s.id, 4) && uid !== s.owner_id && (S.members.get(s.id) || []).some(m => m.user_id === uid)) items.push('-', { label:'Expulsar do servidor', icon: ic('logout',18), danger:true, onClick: async () => {
       if(!(await confirmBox('Expulsar', `Expulsar <b>${esc(p.display_name)}</b> de ${esc(s.name)}?`, 'Expulsar'))) return;
-      const { error } = await App.sb.from('server_members').delete().eq('server_id', s.id).eq('user_id', uid);
-      if(error) App.toast(error.message, true);
+      const { error } = await App.sb.rpc('kick_member', { p_server: s.id, p_user: uid });
+      if(error) App.toast(error.message, true); else App.toast(p.display_name + ' foi expulso.');
     }});
   }
   if(uid === S.me.id) items.push({ label:'Editar perfil', icon: ic('edit',18), onClick: () => openSettings('user','profile') });
@@ -436,7 +450,7 @@ function camFxMenu(anchor){
 /* ---------------- modo cinema ---------------- */
 function toggleCinema(){
   document.body.classList.toggle('cinema');
-  if(document.body.classList.contains('cinema')) App.toast('🎬 Modo cinema — aperte Esc para sair');
+  if(document.body.classList.contains('cinema')) App.toast('Modo cinema — aperte Esc para sair');
 }
 window.addEventListener('keydown', e => { if(e.key === 'Escape' && document.body.classList.contains('cinema')) document.body.classList.remove('cinema'); });
 
