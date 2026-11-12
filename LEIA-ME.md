@@ -276,3 +276,13 @@ O "Spotify direto" (com Ouvir junto) continua opcional e só aparece se você co
   - **Busca pelo nome** precisa de uma chave grátis da YouTube Data API: Configurações → Conexões → "Busca do YouTube para o Telão Bot" (só o admin vê, com o passo a passo). Sem a chave, o bot toca por link normalmente.
 - **Celular:** barra de navegação embaixo (Início, Explorar, Novidades, Você), botão voltar do celular volta para a lista em vez de fechar, deslizar da borda esquerda para voltar, segurar o dedo numa mensagem/membro/canal abre o menu, janelas e menus abrem de baixo para cima, botões maiores, sem zoom ao digitar no iPhone, respeita o notch e a barra do iPhone, e o player do bot fica compacto.
 - **Lista de membros:** o botão de mostrar/esconder agora funciona sem recarregar o chat, lembra a escolha e, em telas menores, abre por cima em vez de sumir.
+
+# Versão 6.7: modo de desempenho (e bot de música desligado)
+
+- **Desempenho** (Configurações → Desempenho): três níveis.
+  - **Qualidade:** tudo ligado (animações, partículas, vidro, transições).
+  - **Equilibrado:** tira o que mais pesa (vidro desfocado, partículas, sombras grandes) e encurta as animações.
+  - **Modo jogo:** o mais leve possível para sobrar FPS. Sem animações nem efeitos, e o Telão trabalha menos em segundo plano (detecção de fala, prévia da tela e filtro de conteúdo com menos frequência). Voz, câmera e tela transmitida continuam com a mesma qualidade.
+  - Automático (ligado por padrão): entra no modo jogo sozinho quando o Telão vai para segundo plano. Opcional: modo jogo enquanto você compartilha a tela.
+  - Atalho **Ctrl+Shift+G** liga e desliga o modo jogo de qualquer lugar. Quando está ligado aparece "Modo jogo" no seu painel.
+- O **Telão Bot de música** foi desligado por enquanto (o código ficou guardado na pasta `desativado/`; a tabela no banco não atrapalha nada).

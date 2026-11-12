@@ -228,7 +228,7 @@ function renderSettings(){
       ['h','Configurações de usuário'], ['account','Minha conta'], ['security','Segurança'], ['privacy','Privacidade'], ['profile','Perfis'], ['connections','Conexões'],
       ['plus', `<span style="display:inline-flex;width:18px;height:18px">${badgeSvg('plus', plusTier(me))}</span> Telão+`],
       ['shop', 'Loja e presentes'], ['boosts', `<span style="display:inline-flex">${BOOST_SVG(18)}</span> Impulsos`],
-      ['h','Configurações do app'], ['appearance','Aparência'], ['a11y','Acessibilidade'], ['lang','Idioma'], ['voice','Voz e vídeo'], ['notif','Notificações'], ['keys','Teclas de atalho'], ['app','App e instalação'],
+      ['h','Configurações do app'], ['appearance','Aparência'], ['perf','Desempenho'], ['a11y','Acessibilidade'], ['lang','Idioma'], ['voice','Voz e vídeo'], ['notif','Notificações'], ['keys','Teclas de atalho'], ['app','App e instalação'],
     ];
     if(me.is_admin) nav.push(['h','Administração'], ['admin','Painel do admin']);
     nav.push(['hr'], ['logout','Sair', 'danger']);
@@ -262,7 +262,7 @@ function renderSettings(){
   const box = SET.el.querySelector('#sIn');
   const back = isMobile() ? `<button class="btn sec sm mobileback" id="sBack">← Voltar</button>` : '';
   const fn = SET.kind === 'user'
-    ? { account: secAccount, profile: secProfile, plus: secPlus, shop: secShop, connections: secConnections, security: secSecurity, privacy: secPrivacy, boosts: secMyBoosts, appearance: secAppearance, a11y: secA11y, lang: secLang, voice: secVoice, notif: secNotif, keys: secKeys, app: secApp, admin: secAdmin }[SET.sec]
+    ? { account: secAccount, profile: secProfile, plus: secPlus, shop: secShop, connections: secConnections, security: secSecurity, privacy: secPrivacy, boosts: secMyBoosts, appearance: secAppearance, perf: secPerf, a11y: secA11y, lang: secLang, voice: secVoice, notif: secNotif, keys: secKeys, app: secApp, admin: secAdmin }[SET.sec]
     : { overview: secSrvOverview, roles: secSrvRoles, channels: secSrvChannels, members: secSrvMembers, boost: secSrvBoost, bans: secSrvBans, safety: secSrvSafety, emojis: secSrvEmojis, tag: secSrvTag, community: secSrvCommunity, invites: secSrvInvites }[SET.sec];
   if(fn) fn(box, back);
   const b = box.querySelector('#sBack'); if(b) b.onclick = () => { SET.mobileOpen = false; renderSettings(); };

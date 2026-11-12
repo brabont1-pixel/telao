@@ -265,6 +265,7 @@ const Guard = {
     if(!stream) return;
     const v = document.createElement('video'); v.muted = true; v.playsInline = true; v.srcObject = stream; v.play().catch(() => {});
     const check = async () => {
+      if(App.perf === 'game' && (this._skip = !this._skip)) return;   // modo jogo: confere a cada 5 s
       const cur = kind === 'screen' ? Voice.screenStream : Voice.camStream;
       if(!cur || cur !== stream){ clearInterval(this.timers[kind]); v.srcObject = null; return; }
       let sc = null;

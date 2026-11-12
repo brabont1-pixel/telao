@@ -1323,3 +1323,25 @@ html.touch .msg:hover .acts{display:none}
 }
 @media (max-width:380px){ .exgrid,.shopgrid{grid-template-columns:1fr} }
 @media (max-width:760px){ #rBell,#rExplore{display:none} }
+/* ---------- v6.7 · desempenho ---------- */
+.perfgrid{display:grid;grid-template-columns:repeat(3,1fr);gap:10px;margin:12px 0 18px}
+.perfc{text-align:left;padding:14px;border-radius:12px;background:var(--bg2);border:1.5px solid var(--line);display:flex;flex-direction:column;gap:6px;color:var(--txt)}
+.perfc .pi{width:40px;height:40px;border-radius:10px;background:var(--bg4);display:flex;align-items:center;justify-content:center}
+.perfc small{color:var(--mut);font-size:12.5px;line-height:1.45}.perfc .ok{color:var(--lime);font-size:12px;font-weight:700;margin-top:auto}
+.perfc.on{border-color:var(--pink);background:color-mix(in srgb,var(--pink) 9%,var(--bg2))}.perfc.on .pi{background:var(--pink);color:#fff}
+.perflist{padding-left:18px;color:var(--txt2);font-size:14px;line-height:1.8}
+.perfchip{position:absolute;top:-11px;left:12px;display:inline-flex;align-items:center;gap:4px;font-size:10.5px;font-weight:800;padding:2px 8px;border-radius:6px;background:var(--lime);color:#111;z-index:2}
+.userpanel{position:relative}
+@media (max-width:760px){ .perfgrid{grid-template-columns:1fr} }
+/* equilibrado: tira o que mais pesa */
+body.perf-balanced *,body.perf-balanced *::before,body.perf-balanced *::after{backdrop-filter:none!important;-webkit-backdrop-filter:none!important}
+body.perf-balanced *{transition-duration:.08s!important}
+body.perf-balanced .pfx,body.perf-balanced .boostburst,body.perf-balanced .coinrain,body.perf-balanced.theme-aurora::before{display:none!important}
+body.perf-balanced .mbox,body.perf-balanced .menu,body.perf-balanced .livepop{box-shadow:0 4px 14px rgba(0,0,0,.4)!important}
+body.perf-balanced .msg{content-visibility:auto;contain-intrinsic-size:auto 64px}
+/* modo jogo: o mais leve possível */
+body.perf-game *,body.perf-game *::before,body.perf-game *::after{animation:none!important;transition:none!important;backdrop-filter:none!important;-webkit-backdrop-filter:none!important;box-shadow:none!important;text-shadow:none!important}
+body.perf-game .pfx,body.perf-game .boostburst,body.perf-game .coinrain,body.perf-game.theme-aurora::before,body.perf-game .deco,body.perf-game .fxlayer{display:none!important}
+body.perf-game .msg,body.perf-game .mem,body.perf-game .dmitem{content-visibility:auto;contain-intrinsic-size:auto 56px}
+body.perf-game .modal{background:rgba(5,5,10,.8)}
+body.perf-game img[src$=".gif"]{image-rendering:auto}

@@ -587,7 +587,7 @@
         const duck = talkingNow || Date.now() < (this._duckUntil || 0);
         if(duck !== this.ducking){ this.ducking = duck; this.peers.forEach(p => this.applyVolume(p)); }
         if((this._tick = (this._tick||0) + 1) % 40 === 0){ this.syncPeers(); this.checkQuality(); }
-      }, 120);
+      }, this.speakMs || 120);
     }
   };
 

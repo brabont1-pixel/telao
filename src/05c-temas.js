@@ -55,6 +55,7 @@ function grabThumb(stream, key){
   return c.toDataURL('image/jpeg', 0.6);
 }
 function thumbTick(){
+  if(App.perf === 'game'){ THUMB.skip = (THUMB.skip || 0) + 1; if(THUMB.skip % 3) return; }
   if(!Voice.channel || (!Voice.screenStream && !Voice.camStream)){ THUMB.vids.clear(); return; }
   const screen = grabThumb(Voice.screenStream, 'screen'), cam = grabThumb(Voice.camStream, 'cam');
   if(!screen && !cam) return;
