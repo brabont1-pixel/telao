@@ -122,12 +122,20 @@ begin
   while exists (select 1 from profiles where username = final) loop
     n := n + 1; final := base || n;
   end loop;
-  insert into profiles (id, username, display_name, avatar_color)
-  values (new.id, final,
-          left(coalesce(nullif(trim(new.raw_user_meta_data->>'display_name'), ''),
-                        nullif(trim(new.raw_user_meta_data->>'full_name'), ''),
-                        nullif(trim(new.raw_user_meta_data->>'name'), ''), final), 32),
-          colors[1 + floor(random() * array_length(colors, 1))::int]);
+  begin
+    insert into profiles (id, username, display_name, avatar_color, avatar_url)
+    values (new.id, final,
+            left(coalesce(nullif(trim(new.raw_user_meta_data->>'display_name'), ''),
+                          nullif(trim(new.raw_user_meta_data->>'full_name'), ''),
+                          nullif(trim(new.raw_user_meta_data->>'name'), ''), final), 32),
+            colors[1 + floor(random() * array_length(colors, 1))::int],
+            nullif(new.raw_user_meta_data->>'avatar_url', ''));
+  exception when others then
+    -- nunca deixa o cadastro (e o login com Google) falhar por causa do perfil
+    insert into profiles (id, username, display_name, avatar_color)
+    values (new.id, 'user' || substr(replace(new.id::text, '-', ''), 1, 10), 'Novo usuário', '#ff6b4a')
+    on conflict (id) do nothing;
+  end;
   return new;
 end $$;
 
@@ -158,6 +166,7 @@ begin
   if auth.uid() is null then raise exception 'Não autenticado'; end if;
   select id into sid from servers where invite_code = lower(trim(p_code));
   if sid is null then raise exception 'Convite inválido'; end if;
+  if exists (select 1 from server_bans where server_id = sid and user_id = auth.uid()) then raise exception 'Você foi banido desse servidor'; end if;
   insert into server_members (server_id, user_id) values (sid, auth.uid()) on conflict do nothing;
   return sid;
 end $$;
@@ -495,6 +504,362 @@ create policy "aceitar amizade" on public.friendships for update to authenticate
 drop policy if exists "desfazer amizade" on public.friendships;
 create policy "desfazer amizade" on public.friendships for delete to authenticated using (auth.uid() in (requester, addressee));
 
+
+-- =====================================================================
+-- v5: IMPULSOS (boost) de servidor, FICHAS, LOJA TELÃO e PRESENTES
+-- =====================================================================
+alter table public.profiles add column if not exists fichas int not null default 0;
+alter table public.profiles add column if not exists streak int not null default 0;
+alter table public.profiles add column if not exists last_daily date;
+alter table public.profiles add column if not exists equipped jsonb not null default '{}'::jsonb;
+alter table public.servers add column if not exists banner_url text;
+alter table public.servers add column if not exists accent text check (accent ~ '^#[0-9a-fA-F]{6}$');
+
+-- cada assinante do Telão+ tem 3 impulsos (slots 1..3); só troca depois de 7 dias
+create table if not exists public.server_boosts (
+  user_id uuid not null references public.profiles(id) on delete cascade,
+  slot int not null check (slot between 1 and 3),
+  server_id uuid not null references public.servers(id) on delete cascade,
+  created_at timestamptz not null default now(),
+  primary key (user_id, slot)
+);
+create index if not exists server_boosts_server_idx on public.server_boosts (server_id);
+
+create or replace function public.server_boost_count(sid uuid) returns int
+language sql stable security definer set search_path = public as $$
+  select count(*)::int from server_boosts b where b.server_id = sid and public.has_plus(b.user_id);
+$$;
+-- níveis: 1 = 2 impulsos, 2 = 5 impulsos, 3 = 9 impulsos
+create or replace function public.server_level(sid uuid) returns int
+language sql stable security definer set search_path = public as $$
+  select case when n >= 9 then 3 when n >= 5 then 2 when n >= 2 then 1 else 0 end
+  from (select public.server_boost_count(sid) n) x;
+$$;
+
+create or replace function public.boost_server(p_server uuid, p_slot int) returns void
+language plpgsql security definer set search_path = public as $$
+declare old_row server_boosts;
+begin
+  if not public.has_plus(auth.uid()) then raise exception 'Impulsos são do Telão+'; end if;
+  if p_slot not between 1 and 3 then raise exception 'Impulso inválido'; end if;
+  if not public.is_member(p_server) then raise exception 'Você não está nesse servidor'; end if;
+  select * into old_row from server_boosts where user_id = auth.uid() and slot = p_slot;
+  if found then
+    if old_row.server_id = p_server then return; end if;
+    if old_row.created_at > now() - interval '7 days' then
+      raise exception 'Esse impulso só pode ser trocado em %', to_char(old_row.created_at + interval '7 days', 'DD/MM "às" HH24:MI');
+    end if;
+    update server_boosts set server_id = p_server, created_at = now() where user_id = auth.uid() and slot = p_slot;
+  else
+    insert into server_boosts (user_id, slot, server_id) values (auth.uid(), p_slot, p_server);
+  end if;
+end $$;
+
+create or replace function public.unboost_server(p_slot int) returns void
+language plpgsql security definer set search_path = public as $$
+declare c timestamptz;
+begin
+  select created_at into c from server_boosts where user_id = auth.uid() and slot = p_slot;
+  if c is null then return; end if;
+  if c > now() - interval '7 days' then
+    raise exception 'Esse impulso só pode ser retirado em %', to_char(c + interval '7 days', 'DD/MM "às" HH24:MI');
+  end if;
+  delete from server_boosts where user_id = auth.uid() and slot = p_slot;
+end $$;
+
+-- link de convite personalizado (nível 3)
+create or replace function public.set_vanity(p_server uuid, p_code text) returns text
+language plpgsql security definer set search_path = public as $$
+begin
+  if not public.has_perm(p_server, 2) then raise exception 'Sem permissão'; end if;
+  if public.server_level(p_server) < 3 then raise exception 'Convite personalizado libera no nível 3'; end if;
+  p_code := lower(trim(p_code));
+  if p_code !~ '^[a-z0-9-]{3,20}$' then raise exception 'Use 3 a 20 letras, números ou hífen'; end if;
+  if exists (select 1 from servers where invite_code = p_code and id <> p_server) then raise exception 'Esse convite já existe'; end if;
+  perform set_config('telao.priv_ok', '1', true);
+  update servers set invite_code = p_code where id = p_server;
+  perform set_config('telao.priv_ok', '', true);
+  return p_code;
+end $$;
+
+-- ---------- Loja Telão ----------
+create table if not exists public.shop_items (
+  id text primary key,
+  kind text not null check (kind in ('deco','entrance','soundpack','title','card','plus')),
+  name text not null,
+  price int not null check (price >= 0),
+  plus_only boolean not null default false,
+  data jsonb not null default '{}'::jsonb,
+  active boolean not null default true
+);
+insert into public.shop_items (id, kind, name, price, plus_only, data) values
+  ('deco_neon',     'deco', 'Neon Pulsante',      400, false, '{}'),
+  ('deco_gato',     'deco', 'Orelhinhas de Gato', 350, false, '{}'),
+  ('deco_coroa',    'deco', 'Coroa de Pixel',     600, false, '{}'),
+  ('deco_fogo',     'deco', 'Fogueira',           700, false, '{}'),
+  ('deco_chuva',    'deco', 'Nuvem de Chuva',     450, false, '{}'),
+  ('deco_estrelas', 'deco', 'Halo de Estrelas',   550, false, '{}'),
+  ('deco_folhas',   'deco', 'Folhagem Tropical',  500, false, '{}'),
+  ('deco_holo',     'deco', 'Holograma',          900, true,  '{}'),
+  ('ent_samba',     'entrance', 'Bateria de Escola de Samba', 500, false, '{}'),
+  ('ent_plantao',   'entrance', 'Plantão Urgente',            450, false, '{}'),
+  ('ent_moeda',     'entrance', 'Moedinha 8-bit',             300, false, '{}'),
+  ('ent_cosmico',   'entrance', 'Chegada Cósmica',            650, false, '{}'),
+  ('ent_trombeta',  'entrance', 'Trombeta Real',              550, true,  '{}'),
+  ('sp_zueira',     'soundpack', 'Pacote Zueira',   400, false, '{}'),
+  ('sp_arcade',     'soundpack', 'Pacote Fliperama',350, false, '{}'),
+  ('sp_cinema',     'soundpack', 'Pacote Cinema',   350, false, '{}'),
+  ('tt_madrugada',  'title', 'Lenda da Madrugada', 200, false, '{}'),
+  ('tt_mute',       'title', 'Rei do Mute',        200, false, '{}'),
+  ('tt_cinefilo',   'title', 'Cinéfilo de Sofá',   200, false, '{}'),
+  ('tt_lagado',     'title', 'Sempre Lagado',      200, false, '{}'),
+  ('tt_dj',         'title', 'DJ da Call',         250, false, '{}'),
+  ('tt_fundador',   'title', 'Fundador de Telão',  800, true,  '{}'),
+  ('cd_por_do_sol', 'card', 'Pôr do Sol na Laje', 450, false, '{}'),
+  ('cd_aurora',     'card', 'Aurora',             500, false, '{}'),
+  ('cd_vapor',      'card', 'Vaporwave',          500, false, '{}'),
+  ('cd_mata',       'card', 'Mata Atlântica',     450, false, '{}'),
+  ('cd_galaxia',    'card', 'Galáxia',            750, true,  '{}'),
+  ('plus_7',        'plus', 'Telão+ por 7 dias',  3000, false, '{"days":7}')
+on conflict (id) do update set kind = excluded.kind, name = excluded.name, price = excluded.price, plus_only = excluded.plus_only, data = excluded.data;
+
+create table if not exists public.inventory (
+  user_id uuid not null references public.profiles(id) on delete cascade,
+  item_id text not null references public.shop_items(id) on delete cascade,
+  from_user uuid references public.profiles(id) on delete set null,
+  acquired_at timestamptz not null default now(),
+  primary key (user_id, item_id)
+);
+
+create table if not exists public.gifts (
+  id uuid primary key default gen_random_uuid(),
+  from_user uuid references public.profiles(id) on delete set null,
+  to_user uuid not null references public.profiles(id) on delete cascade,
+  item_id text references public.shop_items(id) on delete set null,
+  plus_days int not null default 0,
+  note text check (char_length(note) <= 140),
+  claimed_at timestamptz,
+  created_at timestamptz not null default now()
+);
+
+-- fichas diárias: 50 + 10 por dia seguido (máx. +100); Telão+ ganha em dobro
+create or replace function public.claim_daily() returns jsonb
+language plpgsql security definer set search_path = public as $$
+declare p profiles; today date := (now() at time zone 'America/Sao_Paulo')::date; st int; gain int;
+begin
+  select * into p from profiles where id = auth.uid() for update;
+  if p.last_daily = today then raise exception 'Você já pegou as fichas de hoje. Volte amanhã!'; end if;
+  st := case when p.last_daily = today - 1 then p.streak + 1 else 1 end;
+  gain := 50 + least(st - 1, 10) * 10;
+  if public.has_plus(p.id) then gain := gain * 2; end if;
+  perform set_config('telao.priv_ok', '1', true);
+  update profiles set fichas = fichas + gain, streak = st, last_daily = today where id = p.id;
+  perform set_config('telao.priv_ok', '', true);
+  return jsonb_build_object('gain', gain, 'streak', st, 'fichas', p.fichas + gain);
+end $$;
+
+create or replace function public.grant_item(p_user uuid, p_item text, p_from uuid) returns void
+language plpgsql security definer set search_path = public as $$
+declare it shop_items;
+begin
+  select * into it from shop_items where id = p_item;
+  if it.kind = 'plus' then
+    perform set_config('telao.priv_ok', '1', true);
+    update profiles set plan_until = greatest(coalesce(plan_until, now()), now()) + make_interval(days => (it.data->>'days')::int) where id = p_user;
+    perform set_config('telao.priv_ok', '', true);
+  else
+    insert into inventory (user_id, item_id, from_user) values (p_user, p_item, p_from) on conflict do nothing;
+  end if;
+end $$;
+revoke execute on function public.grant_item(uuid, text, uuid) from public, anon, authenticated;
+
+create or replace function public.buy_item(p_item text) returns int
+language plpgsql security definer set search_path = public as $$
+declare it shop_items; bal int;
+begin
+  select * into it from shop_items where id = p_item and active;
+  if not found then raise exception 'Item não existe'; end if;
+  if it.plus_only and not public.has_plus(auth.uid()) then raise exception 'Item exclusivo do Telão+'; end if;
+  if it.kind <> 'plus' and exists (select 1 from inventory where user_id = auth.uid() and item_id = p_item) then raise exception 'Você já tem esse item'; end if;
+  select fichas into bal from profiles where id = auth.uid() for update;
+  if bal < it.price then raise exception 'Fichas insuficientes (faltam %)', it.price - bal; end if;
+  perform set_config('telao.priv_ok', '1', true);
+  update profiles set fichas = fichas - it.price where id = auth.uid();
+  perform set_config('telao.priv_ok', '', true);
+  perform public.grant_item(auth.uid(), p_item, null);
+  return bal - it.price;
+end $$;
+
+-- presente: quem dá paga em fichas; chega como cartão na DM. Admin pode dar Telão+ de graça.
+create or replace function public.send_gift(p_to uuid, p_item text, p_note text, p_plus_days int default 0) returns uuid
+language plpgsql security definer set search_path = public as $$
+declare it shop_items; bal int; gid uuid; cid uuid;
+begin
+  if p_to = auth.uid() then raise exception 'Presente é pra outra pessoa 😄'; end if;
+  if not exists (select 1 from profiles where id = p_to) then raise exception 'Pessoa não encontrada'; end if;
+  if coalesce(p_plus_days, 0) > 0 then
+    if not public.is_admin_user() then raise exception 'Presentear Telão+ com dinheiro ainda não está ativo'; end if;
+    p_plus_days := least(p_plus_days, 365);
+    p_item := null;
+  else
+    select * into it from shop_items where id = p_item and active;
+    if not found then raise exception 'Item não existe'; end if;
+    if it.kind <> 'plus' and exists (select 1 from inventory where user_id = p_to and item_id = p_item) then raise exception 'Essa pessoa já tem esse item'; end if;
+    select fichas into bal from profiles where id = auth.uid() for update;
+    if bal < it.price then raise exception 'Fichas insuficientes (faltam %)', it.price - bal; end if;
+    perform set_config('telao.priv_ok', '1', true);
+    update profiles set fichas = fichas - it.price where id = auth.uid();
+    perform set_config('telao.priv_ok', '', true);
+  end if;
+  insert into gifts (from_user, to_user, item_id, plus_days, note) values (auth.uid(), p_to, p_item, coalesce(p_plus_days, 0), left(p_note, 140)) returning id into gid;
+  cid := public.open_dm(p_to);
+  insert into messages (channel_id, author_id, content, attachments)
+    values (cid, auth.uid(), '', jsonb_build_array(jsonb_build_object('type', 'gift', 'gift', gid)));
+  return gid;
+end $$;
+
+create or replace function public.claim_gift(p_gift uuid) returns text
+language plpgsql security definer set search_path = public as $$
+declare g gifts;
+begin
+  select * into g from gifts where id = p_gift for update;
+  if not found or g.to_user <> auth.uid() then raise exception 'Esse presente não é seu'; end if;
+  if g.claimed_at is not null then raise exception 'Presente já aberto'; end if;
+  update gifts set claimed_at = now() where id = p_gift;
+  if g.plus_days > 0 then
+    perform set_config('telao.priv_ok', '1', true);
+    update profiles set plan_until = greatest(coalesce(plan_until, now()), now()) + make_interval(days => g.plus_days) where id = g.to_user;
+    perform set_config('telao.priv_ok', '', true);
+    return 'plus';
+  end if;
+  if g.item_id is not null then perform public.grant_item(g.to_user, g.item_id, g.from_user); end if;
+  return coalesce(g.item_id, '');
+end $$;
+
+-- equipar: só o que você tem (e Telão+ para itens exclusivos)
+create or replace function public.equip_item(p_kind text, p_item text) returns jsonb
+language plpgsql security definer set search_path = public as $$
+declare eq jsonb;
+begin
+  if p_kind not in ('deco','entrance','soundpack','title','card') then raise exception 'Tipo inválido'; end if;
+  if p_item is not null then
+    if not exists (select 1 from inventory i join shop_items s on s.id = i.item_id where i.user_id = auth.uid() and i.item_id = p_item and s.kind = p_kind)
+      and not public.is_admin_user() then raise exception 'Você não tem esse item'; end if;
+    if exists (select 1 from shop_items where id = p_item and plus_only) and not public.has_plus(auth.uid()) then raise exception 'Item exclusivo do Telão+'; end if;
+  end if;
+  select equipped into eq from profiles where id = auth.uid();
+  eq := case when p_item is null then coalesce(eq, '{}'::jsonb) - p_kind else jsonb_set(coalesce(eq, '{}'::jsonb), array[p_kind], to_jsonb(p_item)) end;
+  perform set_config('telao.priv_ok', '1', true);
+  update profiles set equipped = eq where id = auth.uid();
+  perform set_config('telao.priv_ok', '', true);
+  return eq;
+end $$;
+
+create or replace function public.admin_give_fichas(p_user uuid, p_amount int) returns int
+language plpgsql security definer set search_path = public as $$
+declare n int;
+begin
+  if not public.is_admin_user() then raise exception 'Só admin'; end if;
+  perform set_config('telao.priv_ok', '1', true);
+  update profiles set fichas = greatest(0, fichas + p_amount) where id = p_user returning fichas into n;
+  perform set_config('telao.priv_ok', '', true);
+  return n;
+end $$;
+
+alter table public.server_boosts enable row level security;
+alter table public.shop_items    enable row level security;
+alter table public.inventory     enable row level security;
+alter table public.gifts         enable row level security;
+drop policy if exists "ver impulsos" on public.server_boosts;
+create policy "ver impulsos" on public.server_boosts for select to authenticated using (true);
+drop policy if exists "ver loja" on public.shop_items;
+create policy "ver loja" on public.shop_items for select to authenticated using (true);
+drop policy if exists "ver inventario" on public.inventory;
+create policy "ver inventario" on public.inventory for select to authenticated using (true);
+drop policy if exists "ver presentes" on public.gifts;
+create policy "ver presentes" on public.gifts for select to authenticated using (auth.uid() in (from_user, to_user));
+
+
+-- =====================================================================
+-- v5: MODERAÇÃO (castigo no chat, silenciar/ensurdecer na call, banir)
+-- permissões novas: 64 = Moderar membros · 128 = Banir membros
+-- =====================================================================
+alter table public.server_members add column if not exists timeout_until timestamptz;
+alter table public.server_members add column if not exists voice_muted boolean not null default false;
+alter table public.server_members add column if not exists voice_deafened boolean not null default false;
+create table if not exists public.server_bans (
+  server_id uuid not null references public.servers(id) on delete cascade,
+  user_id uuid not null references public.profiles(id) on delete cascade,
+  banned_by uuid references public.profiles(id) on delete set null,
+  reason text check (char_length(reason) <= 200),
+  created_at timestamptz not null default now(),
+  primary key (server_id, user_id)
+);
+alter table public.server_bans enable row level security;
+drop policy if exists "ver banidos" on public.server_bans;
+create policy "ver banidos" on public.server_bans for select to authenticated using (public.has_perm(server_id, 128) or public.has_perm(server_id, 4));
+
+-- quem pode moderar quem: ninguém mexe no dono, e só o dono mexe em administradores
+create or replace function public.can_moderate(sid uuid, target uuid) returns boolean
+language sql stable security definer set search_path = public as $$
+  select target <> auth.uid()
+     and not exists (select 1 from servers where id = sid and owner_id = target)
+     and (public.is_server_owner(sid) or not exists (
+          select 1 from member_roles mr join server_roles r on r.id = mr.role_id
+          where mr.server_id = sid and mr.user_id = target and (r.perms & 32) <> 0));
+$$;
+create or replace function public.is_timed_out(sid uuid) returns boolean
+language sql stable security definer set search_path = public as $$
+  select exists (select 1 from server_members where server_id = sid and user_id = auth.uid() and timeout_until > now());
+$$;
+create or replace function public.moderate_member(p_server uuid, p_user uuid, p_timeout_minutes int default null, p_vmute boolean default null, p_vdeaf boolean default null) returns void
+language plpgsql security definer set search_path = public as $$
+begin
+  if not public.has_perm(p_server, 64) then raise exception 'Você não tem permissão de moderar'; end if;
+  if not public.can_moderate(p_server, p_user) then raise exception 'Você não pode moderar essa pessoa'; end if;
+  update server_members set
+    timeout_until = case when p_timeout_minutes is null then timeout_until when p_timeout_minutes <= 0 then null else now() + make_interval(mins => least(p_timeout_minutes, 40320)) end,
+    voice_muted = coalesce(p_vmute, voice_muted),
+    voice_deafened = coalesce(p_vdeaf, voice_deafened)
+  where server_id = p_server and user_id = p_user;
+end $$;
+create or replace function public.ban_member(p_server uuid, p_user uuid, p_reason text default null) returns void
+language plpgsql security definer set search_path = public as $$
+begin
+  if not public.has_perm(p_server, 128) then raise exception 'Você não tem permissão de banir'; end if;
+  if not public.can_moderate(p_server, p_user) then raise exception 'Você não pode banir essa pessoa'; end if;
+  insert into server_bans (server_id, user_id, banned_by, reason) values (p_server, p_user, auth.uid(), left(p_reason, 200))
+    on conflict (server_id, user_id) do update set reason = excluded.reason, banned_by = excluded.banned_by, created_at = now();
+  delete from member_roles where server_id = p_server and user_id = p_user;
+  delete from server_members where server_id = p_server and user_id = p_user;
+end $$;
+create or replace function public.unban_member(p_server uuid, p_user uuid) returns void
+language plpgsql security definer set search_path = public as $$
+begin
+  if not public.has_perm(p_server, 128) then raise exception 'Você não tem permissão'; end if;
+  delete from server_bans where server_id = p_server and user_id = p_user;
+end $$;
+-- castigo bloqueia mensagens e reações; expulsar respeita a hierarquia
+drop policy if exists "enviar mensagens" on public.messages;
+create policy "enviar mensagens" on public.messages for insert to authenticated with check (author_id = auth.uid() and public.can_access_channel(channel_id)
+  and not exists (select 1 from public.channels c where c.id = channel_id and c.server_id is not null and public.is_timed_out(c.server_id)));
+drop policy if exists "reagir" on public.message_reactions;
+create policy "reagir" on public.message_reactions for insert to authenticated with check (public.can_access_message(message_id)
+  and not exists (select 1 from public.messages m join public.channels c on c.id = m.channel_id where m.id = message_id and c.server_id is not null and public.is_timed_out(c.server_id)));
+drop policy if exists "sair ou expulsar" on public.server_members;
+create policy "sair ou expulsar" on public.server_members for delete to authenticated using (
+  (user_id = auth.uid() and role <> 'owner')
+  or (public.has_perm(server_id, 4) and role <> 'owner' and user_id <> auth.uid() and public.can_moderate(server_id, user_id)));
+-- expulsar também pode ser feito por RPC (e não deixa expulsar administradores sem ser o dono)
+create or replace function public.kick_member(p_server uuid, p_user uuid) returns void
+language plpgsql security definer set search_path = public as $$
+begin
+  if not public.has_perm(p_server, 4) then raise exception 'Você não tem permissão de expulsar'; end if;
+  if not public.can_moderate(p_server, p_user) then raise exception 'Você não pode expulsar essa pessoa'; end if;
+  delete from member_roles where server_id = p_server and user_id = p_user;
+  delete from server_members where server_id = p_server and user_id = p_user;
+end $$;
+
 -- impede trocar campos sensíveis via update
 create or replace function public.guard_updates() returns trigger
 language plpgsql as $$
@@ -506,6 +871,13 @@ begin
     else new.edited_at := old.edited_at; end if;
   elsif tg_table_name = 'servers' then
     new.owner_id := old.owner_id;
+    if coalesce(current_setting('telao.priv_ok', true), '') <> '1' and not public.is_privileged() then
+      -- vantagens dos impulsos
+      if new.invite_code is distinct from old.invite_code and new.invite_code !~ '^[0-9a-f]{8}$' then new.invite_code := old.invite_code; end if;
+      if new.icon_url is distinct from old.icon_url and new.icon_url ~* '\.gif($|\?)' and public.server_level(old.id) < 1 then new.icon_url := old.icon_url; end if;
+      if new.accent is distinct from old.accent and new.accent is not null and public.server_level(old.id) < 1 then new.accent := old.accent; end if;
+      if new.banner_url is distinct from old.banner_url and new.banner_url is not null and public.server_level(old.id) < 2 then new.banner_url := old.banner_url; end if;
+    end if;
   elsif tg_table_name = 'friendships' then
     new.requester := old.requester; new.addressee := old.addressee;
   elsif tg_table_name = 'profiles' then
@@ -513,6 +885,7 @@ begin
     if coalesce(current_setting('telao.username_ok', true), '') <> '1' then new.username := old.username; end if;
     if not public.is_privileged() then
       new.is_admin := old.is_admin; new.plan_until := old.plan_until; new.plus_months := old.plus_months; new.badges := old.badges;
+      new.fichas := old.fichas; new.streak := old.streak; new.last_daily := old.last_daily; new.equipped := old.equipped;
       -- recursos do Telão+ só para quem tem o plano
       if not public.has_plus(old.id) then
         if new.banner_url is distinct from old.banner_url and new.banner_url is not null then new.banner_url := old.banner_url; end if;
@@ -552,6 +925,7 @@ begin
   begin alter publication supabase_realtime add table public.message_reactions; exception when others then null; end;
   begin alter publication supabase_realtime add table public.server_roles; exception when others then null; end;
   begin alter publication supabase_realtime add table public.member_roles; exception when others then null; end;
+  begin alter publication supabase_realtime add table public.server_boosts; exception when others then null; end;
 end $$;
 
 -- ---------- Arquivos (avatar, banner, GIF) ----------

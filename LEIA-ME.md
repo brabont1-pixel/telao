@@ -166,3 +166,47 @@ O código fica na pasta `src/`. Depois de editar, rode `./build.sh` para gerar o
 
 - **Aviso automático de atualização:** o app confere o `version.json` a cada minuto. **Sempre que publicar uma versão nova, troque o número dentro dele** (ex: `"4.1"` → `"4.2"`) e também a linha `const APP_VERSION = '4.1'` no começo de `src/01-core.js`, rodando `./build.sh` depois. Quem estiver com o Telão aberto vê a barra "Nova atualização do Telão — Atualizar agora".
 - **Aviso para todos:** em ⚙️ → 👑 Painel do admin → 📢 Aviso para todos. O aviso aparece na hora, com som, para todo mundo que está online.
+
+---
+
+# Versão 5: o que tem de novo
+
+**Antes de tudo:** rode o `supabase.sql` novo inteiro no **SQL Editor** (pode rodar por cima, não apaga nada). Depois suba todos os arquivos na Vercel, **menos o `config.js`** (mantenha o seu).
+
+- **Som da tela separado da call:** quem transmite não manda mais o áudio da chamada junto com o da tela (Chrome/Edge atualizados). Cada pessoa tem **Volume da voz** e **Volume da tela** separados (clique com o botão direito no nome, ou use o controle de volume na tela em foco). Opcional: o som da tela abaixa sozinho quando alguém fala (Voz e vídeo).
+- **Prévia ao vivo:** passe o mouse em quem está com **AO VIVO** ou câmera ligada na lista da call e aparece uma miniatura atualizada da tela.
+- **Temas coloridos (Telão+):** Oceano, Floresta, Synthwave, Lava, Meia-noite dourada, Café, Sakura, Menta, Algodão-doce e Aurora animado, em Aparência.
+- **Impulsos de servidor (Telão+):** cada assinante tem 3 impulsos e só troca depois de 7 dias. Quem impulsiona ganha a insígnia **Impulsionador** e um ícone do lado do nome. Níveis: 2 impulsos (ícone GIF, cor do servidor, telas 1080p60 para todos, mais sons), 5 (banner, 1440p60, todos os pacotes de som) e 9 (convite personalizado, 4K, banner animado).
+- **Loja do Telão e fichas:** botão 🛍️ na barra da esquerda. Fichas grátis todo dia (sequência de dias dá mais; Telão+ ganha em dobro). Itens só do Telão: molduras animadas de avatar, **entradas sonoras na call** (batucada, plantão urgente, moedinha 8-bit…), pacotes de som para o soundboard, títulos no perfil, fundos de cartão e até 7 dias de Telão+.
+- **Presentes:** dê qualquer item para um amigo (botão 🎁 na loja ou no menu da pessoa). Chega como um pacote na conversa, que a pessoa abre. Você, como admin, pode presentear Telão+ de 30/90/365 dias de graça. Presentear Telão+ com dinheiro fica para quando o pagamento for ligado.
+- **Idioma:** Português, English e Español em Configurações → Idioma.
+- **Acessibilidade:** alto contraste, fonte mais legível, sublinhar links, botões maiores, contorno de foco, saturação, reduzir animações, ler mensagens em voz alta e **legendas ao vivo nas chamadas** (Chrome/Edge).
+- **Moderação:** dois cargos novos: **Moderar membros** e **Banir membros**. Quem tem cargo de moderador clica com o botão direito no membro e pode: silenciar ou ensurdecer na call (ninguém ouve a pessoa, mesmo se ela tentar burlar), desconectar da call, dar **castigo** no chat (1 min a 1 semana, sem mandar mensagem nem reagir), expulsar e **banir** (não volta nem com convite). Lista de banidos em Configurações do servidor → Banimentos. Administrador do servidor já tem tudo isso, e ninguém consegue moderar o dono.
+
+---
+
+# Corrigir o login com Google e o e-mail de confirmação
+
+## E-mail de confirmação com a cara do Telão
+
+1. **Enviar para qualquer pessoa (obrigatório):** o e-mail grátis do Supabase só envia para você e tem limite de 2 por hora; esse é o erro mais comum ("Error sending confirmation email"). Configure o SMTP do Gmail como na parte **C** acima (senha de app de 16 letras, porta **465**, Sender name **Telão**).
+2. **Para onde o link leva:** em **Authentication → URL Configuration**:
+   - **Site URL:** `https://telao-zeta-three.vercel.app`
+   - **Redirect URLs:** `https://telao-zeta-three.vercel.app/**`
+   Sem isso, o link do e-mail abre `localhost` e dá erro.
+3. **O visual:** em **Authentication → Emails → Templates**:
+   - **Confirm signup** · Assunto `Confirme sua conta no Telão` · cole o conteúdo de `emails/confirmar-conta.html` no corpo.
+   - **Reset password** · Assunto `Nova senha do Telão` · `emails/redefinir-senha.html`.
+   - **Change email address** · Assunto `Confirme seu novo e-mail` · `emails/mudar-email.html`.
+4. Quando a pessoa clicar em **Confirmar minha conta**, o Telão abre direto mostrando **"Conta confirmada! Você já pode usar o Telão"**, já com a pessoa logada.
+
+## Login com Google: o que cada erro quer dizer
+
+| O que aparece | Como resolver |
+|---|---|
+| `Erro 400: redirect_uri_mismatch` (tela do Google) | No Google Cloud → Credenciais → seu ID do cliente, em **URIs de redirecionamento autorizados**, tem que estar **exatamente** `https://wslvatpyzvbrbfszdavf.supabase.co/auth/v1/callback` |
+| `Acesso bloqueado` / "app em teste" | Google Cloud → **Tela de consentimento OAuth** → **Publicar app** (ou adicione os e-mails dos amigos em "Usuários de teste") |
+| "O login com Google ainda não foi ativado" | Supabase → Authentication → Sign In / Providers → **Google**: ligado, com o **Client ID** e o **Client Secret** |
+| "O Google recusou o login" (Unable to exchange external code) | O **Client Secret** colado no Supabase está errado ou foi trocado. Gere outro no Google Cloud e cole de novo |
+| Volta para `localhost:3000` | Arrume o **Site URL** e o **Redirect URLs** (passo 2 acima) |
+| "Database error saving new user" | Rode o `supabase.sql` da v5: ele deixa o cadastro à prova de falha e já usa a foto do Google como avatar |

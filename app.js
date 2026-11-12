@@ -9,7 +9,7 @@ const esc = s => String(s ?? '').replace(/[&<>"']/g, c => ({'&':'&amp;','<':'&lt
 const COLORS = ['#5865f2','#eb459e','#3ba55c','#faa61a','#ed4245','#f47b67','#1abc9c','#9b59b6','#e67e22','#607d8b'];
 const ls = { get(k,d){ try{ const v=localStorage.getItem(k); return v==null?d:JSON.parse(v); }catch(e){ return d; } }, set(k,v){ try{ localStorage.setItem(k, JSON.stringify(v)); }catch(e){} } };
 
-const APP_VERSION = '4.1';
+const APP_VERSION = '5.0';
 const S = {
   me: null, profiles: new Map(), servers: [], channels: new Map(), members: new Map(),
   friends: [], dms: [], dmActivity: ls.get('telao-dmact', {}), online: new Set(),
@@ -93,7 +93,7 @@ function confirmBox(title, text, label='Confirmar', danger=true){
 }
 function menu(x, y, items, cls=''){
   const el = $('#menu'); el.className = 'menu ' + cls;
-  el.innerHTML = items.map((it,i) => it === '-' ? '<hr>' : it.raw ? it.raw : it.html ? `<div style="padding:6px 10px">${it.html}</div>` : `<button data-i="${i}" class="${it.danger?'danger':''}">${esc(it.label)}<span>${it.icon||''}</span></button>`).join('');
+  el.innerHTML = items.map((it,i) => it === '-' ? '<hr>' : it.raw ? it.raw : it.html ? `<div style="padding:6px 10px">${it.html}</div>` : `<button data-i="${i}" class="${it.danger?'danger':''} ${it.cls||''}">${esc(it.label)}<span>${it.icon||''}</span></button>`).join('');
   el.classList.remove('hidden');
   const r = el.getBoundingClientRect();
   el.style.left = Math.max(8, Math.min(x, innerWidth - r.width - 8)) + 'px';
@@ -136,9 +136,15 @@ function boot(){
   App.sbUrl = url;
   const hp = new URLSearchParams(location.hash.slice(1) || location.search.slice(1));
   const linkErr = hp.get('error_description');
+  // voltou do link de confirmação do e-mail
+  if(/[?&]confirmado=1/.test(location.search) || hp.get('type') === 'signup'){ S.justConfirmed = !linkErr; history.replaceState(null, '', location.pathname + location.hash); }
   if(linkErr){
     history.replaceState(null, '', location.pathname);
-    setTimeout(() => authError(/expired|invalid/i.test(linkErr) ? 'Esse link de confirmação expirou ou já foi usado. Entre com e-mail e senha ou peça um novo link.' : linkErr.replace(/\+/g,' ')), 300);
+    const le = linkErr.replace(/\+/g,' ');
+    setTimeout(() => authError(/expired|invalid/i.test(le) ? 'Esse link de confirmação expirou ou já foi usado. Se você já confirmou, é só entrar com e-mail e senha. Se não, peça um novo link abaixo.'
+      : /database error saving new user/i.test(le) ? 'Não deu para criar sua conta agora (erro no banco). Dono do site: rode o supabase.sql de novo no SQL Editor.'
+      : /exchange external code|unable to exchange/i.test(le) ? 'O Google recusou o login. Dono do site: confira o Client Secret do Google no Supabase (veja o LEIA-ME, parte "Login com Google").'
+      : /access_denied|denied/i.test(le) ? 'Login com Google cancelado.' : le), 300);
   }
   const pr = location.hash.match(/^#plus-(ok|pendente|erro)/);
   if(pr){ S.plusReturn = pr[1] === 'ok' ? 'ok' : pr[1]; history.replaceState(null, '', location.pathname); }
@@ -146,10 +152,22 @@ function boot(){
   if(m){ S.pendingInvite = m[1].toLowerCase(); history.replaceState(null, '', location.pathname); }
   App.sb.auth.onAuthStateChange((ev, session) => {
     if(ev === 'SIGNED_OUT'){ location.reload(); return; }
-    if(session && !S.started){ S.started = true; setTimeout(() => start(session), 0); }
+    if(session && !S.started){ S.started = true; setTimeout(() => start(session), 0); if(S.justConfirmed) showConfirmed(true); }
+    else if(!session && ev === 'INITIAL_SESSION' && S.justConfirmed) showConfirmed(false);
     else if(!session && ev === 'INITIAL_SESSION') showAuth();
   });
   if('serviceWorker' in navigator) navigator.serviceWorker.register('/sw.js').catch(()=>{});
+}
+
+/* tela "conta confirmada" */
+function showConfirmed(logged){
+  S.justConfirmed = false;
+  const el = document.createElement('div'); el.className = 'confirmed';
+  el.innerHTML = `<div class="cbox2"><div class="cicon">✓</div><h1>Conta confirmada!</h1>
+    <p>${logged ? 'Tudo certo, seu e-mail foi verificado. Você já pode usar o Telão — chame seus amigos, crie um servidor e bora compartilhar a tela.' : 'Seu e-mail foi verificado. Agora é só entrar com seu e-mail e senha.'}</p>
+    <button class="btn" id="cfGo">${logged ? 'Começar a usar o Telão' : 'Entrar'}</button></div>`;
+  document.body.appendChild(el);
+  el.querySelector('#cfGo').onclick = () => { el.classList.add('out'); setTimeout(() => el.remove(), 300); };
 }
 
 /* ---------------- autenticação ---------------- */
@@ -177,7 +195,7 @@ $('#googleBtn').onclick = async () => {
 $('#resendLink').onclick = async () => {
   const email = $('#aEmail').value.trim();
   if(!email){ authError('Digite seu e-mail no campo acima.'); return; }
-  const { error } = await App.sb.auth.resend({ type:'signup', email, options:{ emailRedirectTo: location.origin + '/' } });
+  const { error } = await App.sb.auth.resend({ type:'signup', email, options:{ emailRedirectTo: location.origin + '/?confirmado=1' } });
   if(error) authError(error.message); else authOk('📧 Enviamos de novo para <b>'+esc(email)+'</b>. Pode levar 1–2 minutos; veja também o spam.');
 };
 function authOk(html){ const e = $('#authErr'); e.classList.add('ok-msg'); e.innerHTML = html; }
@@ -206,7 +224,7 @@ $('#authForm').onsubmit = async e => {
       if(!/^[a-z0-9_]{3,20}$/.test(username)){ authError('Nome de usuário: 3 a 20 caracteres, só letras minúsculas, números e _'); return; }
       const { data: taken } = await App.sb.from('profiles').select('id').eq('username', username).maybeSingle();
       if(taken){ authError('Esse nome de usuário já está em uso.'); return; }
-      const { data, error } = await App.sb.auth.signUp({ email, password, options:{ data:{ username, display_name }, emailRedirectTo: location.origin + '/' } });
+      const { data, error } = await App.sb.auth.signUp({ email, password, options:{ data:{ username, display_name }, emailRedirectTo: location.origin + '/?confirmado=1' } });
       if(error){ authError(error.message); return; }
       if(!data.session){
         setAuthMode('login'); $('#aEmail').value = email;
@@ -279,7 +297,7 @@ async function loadChannels(sid){
   S.channels.set(sid, data || []);
 }
 async function loadMembers(sid){
-  const [{ data }] = await Promise.all([App.sb.from('server_members').select('user_id, role').eq('server_id', sid), loadRoles(sid)]);
+  const [{ data }] = await Promise.all([App.sb.from('server_members').select('*').eq('server_id', sid), loadRoles(sid)]);
   S.members.set(sid, data || []);
   await ensureProfiles((data || []).map(m => m.user_id));
 }
@@ -345,6 +363,7 @@ function subscribeRealtime(){
   sb.channel('user:'+S.me.id)
     .on('broadcast', { event:'ring' }, ({payload}) => onRing(payload))
     .on('broadcast', { event:'ring-cancel' }, ({payload}) => { if(S.ringing && S.ringing.channel_id === payload.channel_id) stopRing(); })
+    .on('broadcast', { event:'mod-disconnect' }, ({payload}) => App.onModDisconnect && App.onModDisconnect(payload))
     .on('broadcast', { event:'ring-decline' }, ({payload}) => { App.toast(prof(payload.from).display_name + ' recusou a chamada.'); })
     .subscribe();
 }
@@ -357,7 +376,7 @@ function liveWatch(topic, prev, metas){
   b.forEach((m, sess) => {
     const was = a.get(sess);
     if(mine && m.voice === mine){
-      if(!was || was.voice !== mine) App.sfx('join');
+      if(!was || was.voice !== mine){ if(!(App.entrance && App.entrance(m.user_id))) App.sfx('join'); }
       else if(m.sharing && !was.sharing) App.sfx('screen');
       else if(!m.sharing && was.sharing) App.sfx('screenoff');
     }
@@ -396,6 +415,7 @@ function vpChannel(topic){
         if(topic.startsWith('vp:dm:') && S.route.kind === 'home' && S.route.dm && topicFor({kind:'dm', id:S.route.dm}) === topic) renderMain(true);
       });
     });
+    ch.on('broadcast', { event:'thumb' }, ({ payload }) => App.onThumb && App.onThumb(topic, payload));
     ch.subscribe(stt => { if(stt === 'SUBSCRIBED') res(); });
   });
   S.vpCh.set(topic, ch);
@@ -443,7 +463,12 @@ async function onChannelEvent(p){
 async function onMemberEvent(p){
   const row = p.new && p.new.server_id ? p.new : p.old;
   if(!row) return;
+  if(row.user_id === S.me.id && p.eventType === 'UPDATE'){
+    if(S.members.has(row.server_id)){ await loadMembers(row.server_id); renderMembers(); }
+    App.onModChange && App.onModChange(row); return;
+  }
   if(row.user_id === S.me.id){
+    if(p.eventType === 'DELETE') App.onRemoved && App.onRemoved(row);
     await loadServers(); renderRail();
     if(p.eventType === 'DELETE' && S.route.kind === 'server' && S.route.sid === row.server_id){
       if(Voice.channel && Voice.channel.server_id === row.server_id) Voice.leave();
@@ -451,7 +476,8 @@ async function onMemberEvent(p){
     } else renderSidebar();
     return;
   }
-  if(S.members.has(row.server_id)){ await loadMembers(row.server_id); renderMembers(); }
+  if(S.members.has(row.server_id)){ await loadMembers(row.server_id); renderMembers(); renderSidebar(); }
+  if(p.eventType === 'UPDATE' && Voice.channel) Voice.peers.forEach(pp => Voice.applyVolume(pp));
 }
 
 /* ---------------- atualizações e avisos globais ---------------- */
@@ -553,9 +579,11 @@ function renderRail(){
     h += `<button class="ricon srv ${on?'on':''} ${unread?'unread':''} ${s.icon_url?'img':''}" data-sid="${s.id}" data-tip="${esc(s.name)}" data-tipside="r" style="--sc:${esc(s.icon_color)}">${serverIcon(s)}${inVoice ? `<span class="rvoice">${ic('volume',12)}</span>` : ''}</button>`;
   });
   h += `<button class="ricon add" id="rAdd" data-tip="Adicionar um servidor" data-tipside="r">${ic('plus',24)}</button>`;
+  h += `<button class="ricon add shopb" id="rShop" data-tip="Loja do Telão" data-tipsub="fichas, itens e presentes" data-tipside="r"><span style="font-size:21px">🛍️</span>${S.me && S.me.last_daily !== new Date().toLocaleDateString('en-CA',{timeZone:'America/Sao_Paulo'}) ? '<span class="badge">🪙</span>' : ''}</button>`;
   $('#rail').innerHTML = h;
   $('#rHome').onclick = () => go({ kind:'home', dm: S.route.kind==='home' ? S.route.dm : null }, true);
   $('#rAdd').onclick = addServerModal;
+  $('#rShop').onclick = () => openSettings('user', 'shop');
   $$('#rail [data-sid]').forEach(b => b.onclick = () => go({ kind:'server', sid: b.dataset.sid }, true));
   $$('#rail [data-dmr]').forEach(b => b.onclick = () => go({ kind:'home', dm: b.dataset.dmr }));
 }
@@ -651,7 +679,7 @@ function renderSidebar(){
 function vuRow(u){
   const p = prof(u.user_id);
   return `<div class="vu" data-vuser="${u.user_id}">${avatar(p,'sm').replace('class="av ', `data-sess="${u.session}" class="av `)}<span class="nm" style="${App.roleColorOf(u.user_id) ? 'color:' + App.roleColorOf(u.user_id) : ''}">${esc(p.display_name)}</span>
-    <span class="icons">${u.camera ? `<span class="vi">${ic('video',14)}</span>` : ''}${u.sharing ? `<button class="live" data-watch="${u.voice}" data-wsess="${u.session}" data-tip="Clique para assistir">AO VIVO</button>` : ''}${u.deafened ? `<span class="vi off">${ic('headphonesOff',14)}</span>` : u.muted ? `<span class="vi off">${ic('micOff',14)}</span>` : ''}</span></div>`;
+    <span class="icons">${u.camera ? `<span class="vi">${ic('video',14)}</span>` : ''}${u.sharing ? `<button class="live" data-watch="${u.voice}" data-wsess="${u.session}" data-tip="Clique para assistir">AO VIVO</button>` : ''}${u.smod || (App.srvVoiceMuted && App.srvVoiceMuted(u.user_id)) ? `<span class="vi off smod" data-tip="Silenciado por moderador">${ic('micOff',14)}</span>` : u.deafened ? `<span class="vi off">${ic('headphonesOff',14)}</span>` : u.muted ? `<span class="vi off">${ic('micOff',14)}</span>` : ''}</span></div>`;
 }
 
 /* ---------------- painel do usuário e de voz ---------------- */
@@ -1176,8 +1204,8 @@ App.onReaction = p => {
 /* ---------- renderização ---------- */
 function attHtml(m){
   const at = m.attachments || []; if(!at.length) return '';
-  const imgs = at.filter(a => isImg(a) || isVid(a)), others = at.filter(a => !isImg(a) && !isVid(a) && a.type !== 'poll');
-  let h = at.filter(a => a.type === 'poll').map(a => pollHtml(m, a)).join('');
+  const imgs = at.filter(a => isImg(a) || isVid(a)), others = at.filter(a => !isImg(a) && !isVid(a) && a.type !== 'poll' && a.type !== 'gift');
+  let h = at.filter(a => a.type === 'poll').map(a => pollHtml(m, a)).join('') + at.filter(a => a.type === 'gift').map(a => App.giftCardHtml(a)).join('');
   if(imgs.length){
     const n = Math.min(imgs.length, 4);
     h += `<div class="mgrid g${n}">` + imgs.map((a, i) => {
@@ -1901,6 +1929,7 @@ function renderStage(){
           <span class="stats" id="stStats"></span>
           <span class="lbl">${ic('monitor',14)} ${esc(f.s.mine ? 'Sua tela (prévia)' : 'Tela de ' + prof(f.s.user_id).display_name)} ${f.s.mine ? '' : (f.s.stream.getAudioTracks().length ? ic('volume',14) : `<span class="noaud">${ic('micOff',13)} sem áudio</span>`)}</span>
           <span class="tools">
+            ${f.s.mine || !f.s.stream.getAudioTracks().length ? '' : `<span class="svol"><button id="stVolB" data-tip="Volume da tela">${ic((Voice.screenVolumes.get(f.s.user_id) ?? 1) === 0 ? 'micOff' : 'volume',18)}</button><input type="range" id="stVol" min="0" max="100" value="${Math.round((Voice.screenVolumes.get(f.s.user_id) ?? 1)*100)}"></span>`}
             <button id="stDraw" data-tip="Desenhar na tela (todos veem)" class="${DRAW.on?'on':''}">${ic('pen',18)}</button>
             <button id="stCine" data-tip="Modo cinema">${ic('film',18)}</button>
             <button id="stShot" data-tip="Tirar print">${ic('camera',18)}</button>
@@ -1960,6 +1989,10 @@ function renderStage(){
     $w('#stShot').onclick = () => screenshot(vid(), focused.s);
     $w('#stDraw').onclick = () => { DRAW.on = !DRAW.on; renderStage(); if(DRAW.on) App.toast('✏️ Desenhe na tela: todo mundo assistindo vê. Clique de novo para parar.'); };
     $w('#stCine').onclick = toggleCinema;
+    const sv = $w('#stVol'); if(sv){
+      sv.oninput = () => Voice.setScreenVolume(focused.s.user_id, sv.value / 100);
+      $w('#stVolB').onclick = () => { const cur = Voice.screenVolumes.get(focused.s.user_id) ?? 1; const nv = cur > 0 ? 0 : 1; Voice.setScreenVolume(focused.s.user_id, nv); sv.value = nv * 100; $w('#stVolB').innerHTML = ic(nv ? 'volume' : 'micOff', 18); };
+    }
     mountDraw(focused.s.session);
     $w('#stRec').onclick = () => REC.on ? stopRec() : startRec(focused.s);
     let lastB = 0, lastT = 0;
@@ -2042,7 +2075,7 @@ function playSound(id){
       boing: () => tone(180, 0, 0.5, 'sine', 0.9, 620),
       grilo: () => { for(let i=0;i<6;i++) tone(4300, i*0.09 + (i>2?0.3:0), 0.05, 'sine', 0.3); },
       laser: () => tone(1800, 0, 0.35, 'sawtooth', 0.35, 120),
-    }[id] || (()=>{}))();
+    }[id] || (EXTRA_SOUNDS[id] ? () => EXTRA_SOUNDS[id](tone, noise) : ()=>{}))();
   }catch(e){}
 }
 function floatReaction(emoji, uid){
@@ -2067,14 +2100,16 @@ function activitiesMenu(anchor){
   const el = $('#menu'); el.className = 'menu actpop';
   el.innerHTML = `<div class="pphead">${ic('sparkles',18)} Atividades</div>
     <button class="actbig" id="acWT"><span class="ai">${ic('tv',26)}</span><div><b>Assistir juntos</b><small>Vídeo do YouTube sincronizado para todo mundo na chamada</small></div></button>
+    <button class="actbig" id="acCap"><span class="ai">🗨️</span><div><b>Legendas ao vivo</b><small>Sua fala vira texto para todo mundo da chamada (acessibilidade)</small></div></button>
     <div class="actsec">${ic('music',15)} Soundboard <small>todos ouvem</small></div>
-    <div class="sboard">${SOUNDS.map(([id, e, n]) => `<button data-snd="${id}"><span>${e}</span>${n}</button>`).join('')}</div>
+    <div class="sboard">${soundList().map(([id, e, n]) => `<button data-snd="${id}"><span>${e}</span>${n}</button>`).join('')}</div>
     <div class="actsec">${ic('smile',15)} Reações na tela</div>
     <div class="quickrx">${['😂','🔥','👏','❤️','😮','💀','🎉','👀'].map(e => `<button data-fx="${e}">${e}</button>`).join('')}</div>`;
   el.classList.remove('hidden');
   el.style.left = Math.max(8, Math.min(r.left - 140, innerWidth - 380)) + 'px';
   el.style.top = Math.max(8, r.top - el.offsetHeight - 10) + 'px';
   el.querySelector('#acWT').onclick = () => { closeMenu(); wtPrompt(); };
+  el.querySelector('#acCap').onclick = () => { closeMenu(); App.toggleCaptions(); };
   el.querySelectorAll('[data-snd]').forEach(b => b.onclick = () => {
     if(Date.now() - lastSound < 1500){ App.toast('Calma! Espere um pouquinho entre os sons 😅'); return; }
     lastSound = Date.now(); Voice.sendFx({ t:'sound', id: b.dataset.snd });
@@ -2149,10 +2184,16 @@ function userMenu(uid, x, y){
     const fr = S.friends.find(f => f.uid === uid);
     if(Voice.channel && voiceUsers(Voice.channel).some(m => m.user_id === uid)){
       const vol = Math.round((Voice.userVolumes.get(uid) ?? 1) * 100);
-      items.push({ html:`<div class="uvol">${ic('volume',16)}<span>Volume</span><b id="uvL">${vol}%</b></div><input type="range" id="uvR" min="0" max="100" value="${vol}" class="range">`,
-        mount: el => { const r = el.querySelector('#uvR'); r.oninput = () => { el.querySelector('#uvL').textContent = r.value + '%'; Voice.setUserVolume(uid, r.value / 100); }; } });
+      const sharing = voiceUsers(Voice.channel).some(m => m.user_id === uid && m.sharing);
+      const svol = Math.round((Voice.screenVolumes.get(uid) ?? 1) * 100);
+      items.push({ html:`<div class="uvol">${ic('mic',16)}<span>Volume da voz</span><b id="uvL">${vol}%</b></div><input type="range" id="uvR" min="0" max="100" value="${vol}" class="range">
+          ${sharing ? `<div class="uvol" style="margin-top:8px">${ic('monitor',16)}<span>Volume da tela</span><b id="usL">${svol}%</b></div><input type="range" id="usR" min="0" max="100" value="${svol}" class="range">` : ''}`,
+        mount: el => {
+          const r = el.querySelector('#uvR'); r.oninput = () => { el.querySelector('#uvL').textContent = r.value + '%'; Voice.setUserVolume(uid, r.value / 100); };
+          const r2 = el.querySelector('#usR'); if(r2) r2.oninput = () => { el.querySelector('#usL').textContent = r2.value + '%'; Voice.setScreenVolume(uid, r2.value / 100); };
+        } });
     }
-    if(fr && fr.status === 'accepted') items.push({ label:'Mensagem', icon: ic('chat',18), onClick: () => openDM(uid) }, { label:'Ligar', icon: ic('phone',18), onClick: async () => { const d = await openDM(uid); if(d) joinVoice(d); } });
+    if(fr && fr.status === 'accepted') items.push({ label:'Mensagem', icon: ic('chat',18), onClick: () => openDM(uid) }, { label:'Ligar', icon: ic('phone',18), onClick: async () => { const d = await openDM(uid); if(d) joinVoice(d); } }, { label:'Dar presente', icon: '<span style="font-size:16px;width:18px;text-align:center">🎁</span>', onClick: () => giftModal(uid) });
     else if(!fr) items.push({ label:'Adicionar amigo', icon: ic('userPlus',18), onClick: async () => {
       const { data, error } = await App.sb.rpc('send_friend_request', { p_username: p.username });
       App.toast(error ? error.message : data === 'accepted' ? 'Agora vocês são amigos!' : 'Pedido enviado!', !!error); loadFriends().then(renderRail);
@@ -2160,10 +2201,11 @@ function userMenu(uid, x, y){
     else if(fr.status === 'pending') items.push({ html: `<div style="color:var(--mut);font-size:13px">${fr.incoming ? 'Te mandou pedido de amizade' : 'Pedido de amizade enviado'}</div>` });
     const s = curServer();
     if(s && App.hasPerm(s.id, 16) && (S.members.get(s.id) || []).some(m => m.user_id === uid)) items.push({ label:'Cargos', icon: ic('shield',18), onClick: () => App.roleAssignMenu(s, uid, x, y) });
+    if(s && App.modItems) items.push(...App.modItems(s, uid, x, y));
     if(s && App.hasPerm(s.id, 4) && uid !== s.owner_id && (S.members.get(s.id) || []).some(m => m.user_id === uid)) items.push('-', { label:'Expulsar do servidor', icon: ic('logout',18), danger:true, onClick: async () => {
       if(!(await confirmBox('Expulsar', `Expulsar <b>${esc(p.display_name)}</b> de ${esc(s.name)}?`, 'Expulsar'))) return;
-      const { error } = await App.sb.from('server_members').delete().eq('server_id', s.id).eq('user_id', uid);
-      if(error) App.toast(error.message, true);
+      const { error } = await App.sb.rpc('kick_member', { p_server: s.id, p_user: uid });
+      if(error) App.toast(error.message, true); else App.toast(p.display_name + ' foi expulso.');
     }});
   }
   if(uid === S.me.id) items.push({ label:'Editar perfil', icon: ic('edit',18), onClick: () => openSettings('user','profile') });
@@ -2276,6 +2318,8 @@ const PERMS = [
   [16, 'Gerenciar cargos', 'Criar cargos e dar cargos para as pessoas.'],
   [4, 'Expulsar membros', 'Tirar pessoas do servidor.'],
   [8, 'Gerenciar mensagens', 'Apagar e fixar mensagens de qualquer pessoa.'],
+  [64, 'Moderar membros', 'Dar castigo no chat e silenciar, ensurdecer ou desconectar pessoas da call.'],
+  [128, 'Banir membros', 'Tirar do servidor e impedir de voltar.'],
 ];
 S.roles = new Map();        // sid -> [roles]
 S.memberRoles = new Map();  // sid -> Map(uid -> Set(roleId))
@@ -2366,7 +2410,7 @@ function renderMembers(){
 function serverMenu(s, e){
   const owner = s.owner_id === S.me.id;
   const r = $('#sbHead').getBoundingClientRect();
-  const items = [{ label:'Convidar pessoas', icon: ic('userPlus',18), onClick: () => inviteModal(s) }];
+  const items = [{ label:'Impulsionar servidor', icon: BOOST_SVG(18), cls:'boostitem', onClick: () => boostServerModal(s) }, { label:'Convidar pessoas', icon: ic('userPlus',18), onClick: () => inviteModal(s) }];
   if(App.hasPerm(s.id, 2) || App.hasPerm(s.id, 16)) items.push({ label:'Configurações do servidor', icon: ic('gear',18), onClick: () => openSettings('server','overview', s) });
   if(App.hasPerm(s.id, 1)) items.push({ label:'Criar canal', icon: ic('plusCircle',18), onClick: () => createChannelModal(s, 'text') }, { label:'Criar categoria', icon: ic('folder',18), onClick: () => createCategoryModal(s) });
   items.push('-');
@@ -2435,7 +2479,7 @@ async function uploadSquare(file, folder, size, bucket='media'){
   if(error) throw error;
   return App.sb.storage.from(bucket).getPublicUrl(path).data.publicUrl;
 }
-function parseInvite(v){ v = v.trim(); const m = v.match(/convite=([a-z0-9]+)/i); return (m ? m[1] : v.split('/').pop()).toLowerCase(); }
+function parseInvite(v){ v = v.trim(); const m = v.match(/convite=([a-z0-9-]+)/i); return (m ? m[1] : v.split('/').pop()).toLowerCase(); }
 function joinServerModal(prefill){
   modal(`<form id="jsF"><div class="mh"><h2>Entrar num servidor</h2><p>Cole o link ou o código de convite que te mandaram.</p></div>
     <div class="mc"><label class="field"><span>Link ou código do convite</span><input class="inp" id="jsC" value="${esc(typeof prefill==='string'?prefill:'')}" placeholder="https://.../#convite=a1b2c3d4" required></label>
@@ -2558,7 +2602,7 @@ function applyPrefs(){
   document.body.classList.add('theme-' + P.theme);
   document.body.classList.toggle('compact', !!P.compact);
   document.documentElement.style.setProperty('--fs', P.fontSize + 'px');
-  const a = P.accent || '#ff6b4a', rs = document.documentElement.style;
+  const a = S._srvAcc || P.accent || '#ff6b4a', rs = document.documentElement.style;
   const [r,g,b] = [1,3,5].map(i => parseInt(a.slice(i, i+2), 16));
   const lum = (0.299*r + 0.587*g + 0.114*b) / 255;
   rs.setProperty('--acc', a);
@@ -2770,7 +2814,8 @@ function renderSettings(){
     nav = [
       ['h','Configurações de usuário'], ['account','Minha conta'], ['profile','Perfis'],
       ['plus', `<span style="display:inline-flex;width:18px;height:18px">${badgeSvg('plus', plusTier(me))}</span> Telão+`],
-      ['h','Configurações do app'], ['appearance','Aparência'], ['voice','Voz e vídeo'], ['notif','Notificações'], ['keys','Teclas de atalho'], ['app','App e instalação'],
+      ['shop', '🛍️ Loja e presentes'], ['boosts', `<span style="display:inline-flex">${BOOST_SVG(18)}</span> Impulsos`],
+      ['h','Configurações do app'], ['appearance','Aparência'], ['a11y','Acessibilidade'], ['lang','🌐 Idioma'], ['voice','Voz e vídeo'], ['notif','Notificações'], ['keys','Teclas de atalho'], ['app','App e instalação'],
     ];
     if(me.is_admin) nav.push(['h','Administração'], ['admin','👑 Painel do admin']);
     nav.push(['hr'], ['logout','Sair', 'danger']);
@@ -2780,8 +2825,9 @@ function renderSettings(){
     if(App.hasPerm(s.id, 2)) nav.push(['overview','Visão geral']);
     if(App.hasPerm(s.id, 16)) nav.push(['roles','Cargos']);
     if(App.hasPerm(s.id, 1)) nav.push(['channels','Canais']);
-    nav.push(['members','Membros']);
+    nav.push(['members','Membros'], ['boost', `<span style="display:inline-flex">${BOOST_SVG(16)}</span> Impulsos`]);
     if(App.hasPerm(s.id, 2)) nav.push(['invites','Convites']);
+    if(App.hasPerm(s.id, 128) || App.hasPerm(s.id, 4)) nav.push(['bans','Banimentos']);
     if(s.owner_id === S.me.id) nav.push(['hr'], ['delete','Excluir servidor','danger']);
     if(!nav.find(n => n[0] === SET.sec)) SET.sec = (nav[1] || [])[0] || 'members';
   }
@@ -2789,7 +2835,7 @@ function renderSettings(){
   SET.el.innerHTML = `<nav class="snav"><div class="in">${nav.map(n =>
       n[0] === 'h' ? `<h5>${n[1]}</h5>` : n[0] === 'hr' ? '<hr>' :
       `<button class="si ${SET.sec===n[0]?'on':''} ${n[2]||''}" data-sec="${n[0]}">${n[1]}</button>`).join('')}
-      ${SET.kind==='user' ? '<hr><div class="ver">Telão · versão 4.1</div>' : ''}</div></nav>
+      ${SET.kind==='user' ? '<hr><div class="ver">Telão · versão ' + APP_VERSION + '</div>' : ''}</div></nav>
     <div class="scontent"><div class="sclose"><button id="sClose" title="Fechar (Esc)">✕</button><span>ESC</span></div><div class="in" id="sIn"></div></div>`;
   SET.el.querySelector('#sClose').onclick = () => { if(isMobile() && SET.mobileOpen){ SET.mobileOpen = false; renderSettings(); } else closeSettings(); };
   SET.el.querySelectorAll('[data-sec]').forEach(b => b.onclick = () => {
@@ -2801,8 +2847,8 @@ function renderSettings(){
   const box = SET.el.querySelector('#sIn');
   const back = isMobile() ? `<button class="btn sec sm mobileback" id="sBack">← Voltar</button>` : '';
   const fn = SET.kind === 'user'
-    ? { account: secAccount, profile: secProfile, plus: secPlus, appearance: secAppearance, voice: secVoice, notif: secNotif, keys: secKeys, app: secApp, admin: secAdmin }[SET.sec]
-    : { overview: secSrvOverview, roles: secSrvRoles, channels: secSrvChannels, members: secSrvMembers, invites: secSrvInvites }[SET.sec];
+    ? { account: secAccount, profile: secProfile, plus: secPlus, shop: secShop, boosts: secMyBoosts, appearance: secAppearance, a11y: secA11y, lang: secLang, voice: secVoice, notif: secNotif, keys: secKeys, app: secApp, admin: secAdmin }[SET.sec]
+    : { overview: secSrvOverview, roles: secSrvRoles, channels: secSrvChannels, members: secSrvMembers, boost: secSrvBoost, bans: secSrvBans, invites: secSrvInvites }[SET.sec];
   if(fn) fn(box, back);
   const b = box.querySelector('#sBack'); if(b) b.onclick = () => { SET.mobileOpen = false; renderSettings(); };
 }
@@ -3166,6 +3212,7 @@ function secVoice(box, back){
     ${plus ? '' : `<div class="locked">🔒 1080p 60fps, 1440p, 4K e até 20 Mbps são do Telão+. <button class="btn sm" data-plus>Conhecer</button></div>`}
     <small style="color:var(--mut);display:block;margin-top:8px">O bitrate vale para cada pessoa assistindo e usa a internet (upload) de quem transmite.</small>
     <hr class="sdiv"><h3>Sons</h3>
+    ${row('Abaixar o som das telas quando alguém fala', 'Deixa a conversa por cima do som do jogo/filme que estão transmitindo.', toggle('vDuck', P.duck !== false))}
     ${row('Sons de entrar, sair e mutar', '', toggle('vSnd', P.soundVoice))}
     ${row('Bipe ao apertar o botão de falar', 'Só no modo “Pressionar para falar”.', toggle('vSndP', P.soundPtt))}`;
   const $b = s => box.querySelector(s);
@@ -3196,6 +3243,7 @@ function secVoice(box, back){
   const proc = (id, key) => $b(id).onchange = e => { P[key] = e.target.checked; savePrefs(); Voice.switchMic(); if(test) startTest(); };
   proc('#vNoise','noise'); proc('#vEcho','echo'); proc('#vAgc','agc');
   $b('#vSnd').onchange = e => { P.soundVoice = e.target.checked; savePrefs(); };
+  $b('#vDuck').onchange = e => { P.duck = e.target.checked; savePrefs(); };
   $b('#vSndP').onchange = e => { P.soundPtt = e.target.checked; savePrefs(); };
   const scr = () => {
     const [w,h,fps] = $b('#vRes').value.split('x').map(Number);
@@ -3360,7 +3408,7 @@ function secSrvOverview(box, back){
   box.innerHTML = `${back}<h2>Visão geral do servidor</h2>
     <div class="ovrow"><div><label class="upicon big" id="soIcon" style="--sc:${esc(s.icon_color)}"></label>
       <div class="ovbtns"><button class="btn sm" id="soUp">Enviar imagem</button>${'<button class="btn sm sec" id="soRm">Remover</button>'}</div><input type="file" id="soFile" accept="image/*" hidden>
-      <small class="mut">Mínimo 128×128. GIF animado só com Telão+.</small></div>
+      <small class="mut">Mínimo 128×128. GIF animado libera no nível 1 de impulsos.</small></div>
     <div style="flex:1"><label class="field"><span>Nome do servidor</span><input class="inp" id="soN" maxlength="40"></label>
       <label class="field"><span>Descrição</span><textarea class="inp" id="soD" maxlength="200" rows="3" placeholder="Sobre o que é este servidor?"></textarea></label></div></div>
     <h3>Cor do ícone</h3><div class="colors" id="soC">${COLORS.map(c => `<button type="button" data-c="${c}" style="background:${c}"></button>`).join('')}</div>
@@ -3382,7 +3430,7 @@ function secSrvOverview(box, back){
   $b('#soRm').onclick = () => { D.icon_url = null; draw(); };
   $b('#soFile').onchange = async e => {
     const f = e.target.files[0]; e.target.value = ''; if(!f) return;
-    if(f.type === 'image/gif' && !hasPlus(S.me)){ upsell('Ícone de servidor animado'); return; }
+    if(f.type === 'image/gif' && serverLevel(s.id) < 1){ App.toast('Ícone animado libera quando o servidor chega no nível 1 de impulsos (2 impulsos).', true); return; }
     App.toast('Enviando…');
     try{ D.icon_url = await uploadSquare(f, 'server', 256); draw(); }catch(err){ App.toast(err.message, true); }
   };
@@ -3516,6 +3564,971 @@ function secSrvInvites(box, back){
   };
 }
 
+/* =====================================================================
+   v5: IMPULSOS DE SERVIDOR · FICHAS · LOJA TELÃO · PRESENTES
+   ===================================================================== */
+S.boosts = [];          // linhas de server_boosts (dos meus servidores + as minhas)
+S.shop = [];            // catálogo (shop_items)
+S.inv = new Set();      // meus itens
+const GIFTS = new Map(); // cache dos presentes
+
+/* ---------- níveis dos servidores ---------- */
+const LEVELS = [
+  { need:0, nome:'Sem nível', perks:[] },
+  { need:2, nome:'Nível 1', perks:[['🎞️','Ícone animado (GIF)'],['🎨','Cor própria do servidor'],['📺','Telas em 1080p 60fps para todos'],['🔊','+ sons no soundboard das calls']] },
+  { need:5, nome:'Nível 2', perks:[['🖼️','Banner no topo do servidor'],['📺','Telas em 1440p 60fps para todos'],['🎚️','Todos os pacotes de sons liberados nas calls']] },
+  { need:9, nome:'Nível 3', perks:[['🔗','Convite personalizado (telao/seu-nome)'],['📺','Telas em 4K para todos'],['✨','Banner animado (GIF)']] },
+];
+const boostsOf = sid => S.boosts.filter(b => b.server_id === sid && hasPlus(prof(b.user_id)));
+const boostCount = sid => boostsOf(sid).length;
+function serverLevel(sid){ const n = boostCount(sid); return n >= 9 ? 3 : n >= 5 ? 2 : n >= 2 ? 1 : 0; }
+App.serverLevel = serverLevel;
+const isBooster = (uid, sid) => S.boosts.some(b => b.user_id === uid && (!sid || b.server_id === sid)) && hasPlus(prof(uid));
+const BOOST_SVG = s => `<svg viewBox="0 0 24 24" width="${s}" height="${s}"><defs><linearGradient id="bstg" x1="0" y1="0" x2="1" y2="1"><stop offset="0" stop-color="#ff9ae6"/><stop offset="1" stop-color="#b44dff"/></linearGradient></defs><path d="M12 2.5l6.2 5.2-1.6 9.1L12 21.5l-4.6-4.7-1.6-9.1z" fill="url(#bstg)"/><path d="M12 2.5v19M5.8 7.7L12 11l6.2-3.3" stroke="#fff" stroke-opacity=".6" stroke-width="1" fill="none"/></svg>`;
+
+async function loadBoosts(){
+  const ids = S.servers.map(s => s.id);
+  const [a, b] = await Promise.all([
+    ids.length ? App.sb.from('server_boosts').select('*').in('server_id', ids) : { data: [] },
+    App.sb.from('server_boosts').select('*').eq('user_id', S.me.id),
+  ]);
+  const all = new Map();
+  [...(a.data || []), ...(b.data || [])].forEach(r => all.set(r.user_id + ':' + r.slot, r));
+  S.boosts = [...all.values()];
+  await ensureProfiles(S.boosts.map(r => r.user_id));
+}
+const _loadServers = loadServers;
+loadServers = async function(){
+  await _loadServers();
+  try{ await loadBoosts(); }catch(e){}
+  if(!S._v5init){ S._v5init = true; v5Init(); }
+};
+function v5Init(){
+  App.sb.channel('boosts-rt').on('postgres_changes', { event:'*', schema:'public', table:'server_boosts' }, async () => {
+    await loadBoosts(); renderSidebar(); renderMembers(); if(SET) renderSettings();
+  }).subscribe();
+  loadInventory(); applyPrefs();
+  // lembrete das fichas do dia
+  setTimeout(() => { if(S.me && S.me.last_daily !== todayBR()) App.toast(`🪙 Suas fichas de hoje estão esperando${S.me.streak ? ` · ${S.me.streak} dia(s) seguidos` : ''}!`, false, { label:'Pegar', fn: claimDaily }); }, 4000);
+}
+const todayBR = () => new Date().toLocaleDateString('en-CA', { timeZone:'America/Sao_Paulo' });
+
+/* marquinha de impulso do lado do nome (dentro do servidor) */
+const _nameHtml = nameHtml;
+nameHtml = function(p){
+  const s = S.route && S.route.kind === 'server' ? curServer() : null;
+  const mark = s && p && isBooster(p.id, s.id) ? `<span class="bstmark" data-tip="Impulsionando este servidor">${BOOST_SVG(14)}</span>` : '';
+  return _nameHtml(p) + mark;
+};
+/* insígnia Impulsionador */
+BADGES.splice(3, 0, { id:'boost', nome:'Impulsionador de servidor', desc:'Dá impulso nos servidores dos amigos' });
+const _badgeSvg = badgeSvg;
+badgeSvg = function(id, tier){
+  if(id === 'boost') return '<svg viewBox="0 0 24 24"><defs><linearGradient id="bstb" x1="0" y1="0" x2="1" y2="1"><stop offset="0" stop-color="#ff9ae6"/><stop offset="1" stop-color="#b44dff"/></linearGradient></defs><rect x="1" y="1" width="22" height="22" rx="6" fill="#3b1250"/><path d="M12 4.5l5.2 4.3-1.3 7.5L12 20l-3.9-3.7-1.3-7.5z" fill="url(#bstb)"/><path d="M12 4.5V20M6.8 8.8L12 11.6l5.2-2.8" stroke="#fff" stroke-opacity=".6" stroke-width=".9" fill="none"/></svg>';
+  return _badgeSvg(id, tier);
+};
+const _earned = earnedBadges;
+earnedBadges = function(p){
+  const r = _earned(p);
+  if(p && isBooster(p.id) && !r.some(b => b.id === 'boost')){ r.push(BADGES.find(b => b.id === 'boost')); }
+  return r;
+};
+/* qualidade da tela melhora com o nível do servidor da chamada */
+const _clamp = clampScreen;
+clampScreen = function(st){
+  const lv = Voice.channel && Voice.channel.server_id ? serverLevel(Voice.channel.server_id) : 0;
+  if(hasPlus(S.me) || lv >= 3) return st;
+  const r = { ...st };
+  if(lv === 2){ if(r.h > 1440){ r.w = 2560; r.h = 1440; r.fps = 60; } if(r.bitrate > 12000000) r.bitrate = 12000000; return r; }
+  if(lv === 1){ if(r.h > 1080){ r.w = 1920; r.h = 1080; r.fps = 60; } if(r.bitrate > 10000000) r.bitrate = 10000000; return r; }
+  return _clamp(st);
+};
+/* cor e banner do servidor */
+const _renderSidebar = renderSidebar;
+renderSidebar = function(){
+  _renderSidebar.apply(this, arguments);
+  const s = S.route && S.route.kind === 'server' ? curServer() : null;
+  const head = $('#sbHead'), lv = s ? serverLevel(s.id) : 0;
+  if(s && head){
+    const t = head.querySelector('.hero-t b');
+    if(t && boostCount(s.id)) t.insertAdjacentHTML('afterend', `<span class="lvlchip" data-tip="${boostCount(s.id)} impulso(s)" data-tipsub="${LEVELS[lv].nome}">${BOOST_SVG(12)} ${lv ? 'Nv. ' + lv : boostCount(s.id)}</span>`);
+    const bn = lv >= 2 && s.banner_url && (!/\.gif($|\?)/i.test(s.banner_url) || lv >= 3) ? s.banner_url : null;
+    head.classList.toggle('withbanner', !!bn);
+    head.style.backgroundImage = bn ? `linear-gradient(180deg,transparent 30%,rgba(0,0,0,.75)),url('${bn}')` : '';
+  }
+  const acc = s && lv >= 1 && s.accent ? s.accent : null;
+  if(acc !== S._srvAcc){ S._srvAcc = acc; applyPrefs(); }
+};
+
+/* ---------- impulsionar ---------- */
+function boostSlots(){
+  return [1,2,3].map(slot => {
+    const b = S.boosts.find(x => x.user_id === S.me.id && x.slot === slot);
+    const unlock = b ? new Date(new Date(b.created_at).getTime() + 7 * 864e5) : null;
+    return { slot, b, unlock, locked: unlock && unlock > new Date() };
+  });
+}
+async function boostServerModal(s){
+  if(!hasPlus(S.me)){ upsell('Impulsionar servidores'); return; }
+  const slots = boostSlots();
+  const free = slots.find(x => !x.b) || slots.find(x => !x.locked && x.b.server_id !== s.id);
+  const mineHere = slots.filter(x => x.b && x.b.server_id === s.id).length;
+  modal(`<div class="mh"><h2>${BOOST_SVG(22)} Impulsionar ${esc(s.name)}</h2><p>Você tem 3 impulsos com o Telão+. Depois de usar, ele fica nesse servidor por pelo menos 7 dias.</p></div>
+    <div class="mc"><div class="slots">${slots.map(x => {
+      const srv = x.b && S.servers.find(z => z.id === x.b.server_id);
+      return `<button class="slot ${x.b ? 'used' : ''} ${x.locked ? 'locked' : ''}" data-slot="${x.slot}" ${x.locked && x.b.server_id !== s.id ? 'disabled' : ''}>
+        <span class="g">${BOOST_SVG(26)}</span><b>Impulso ${x.slot}</b>
+        <small>${!x.b ? 'Livre' : x.b.server_id === s.id ? 'Já neste servidor' : 'Em ' + esc(srv ? srv.name : 'outro servidor')}${x.locked && x.b.server_id !== s.id ? `<br>troca em ${x.unlock.toLocaleDateString('pt-BR')}` : ''}</small></button>`;
+    }).join('')}</div>
+    <p class="mut small" style="margin-top:12px">Você já deu ${mineHere} impulso(s) aqui. Este servidor tem ${boostCount(s.id)} — ${LEVELS[serverLevel(s.id)].nome}.</p></div>
+    <div class="mf"><button class="btn sec" data-close>Fechar</button>${free ? `<button class="btn" id="bsGo">${BOOST_SVG(16)} Usar impulso ${free.slot}</button>` : ''}</div>`, m => {
+    const go = async slot => {
+      const { error } = await App.sb.rpc('boost_server', { p_server: s.id, p_slot: slot });
+      if(error){ App.toast(error.message, true); return; }
+      closeModal(); await loadBoosts(); renderSidebar(); renderMembers();
+      App.toast(`🚀 Você impulsionou ${s.name}!`); boostCelebrate();
+    };
+    const g = m.querySelector('#bsGo'); if(g) g.onclick = () => go(free.slot);
+    m.querySelectorAll('[data-slot]').forEach(b => b.onclick = () => { const x = slots.find(y => y.slot === +b.dataset.slot); if(x.b && x.b.server_id === s.id) return; go(x.slot); });
+  });
+}
+function boostCelebrate(){
+  const L = document.createElement('div'); L.className = 'boostburst';
+  L.innerHTML = Array.from({ length: 22 }, (_, i) => `<i style="--a:${i * 16}deg;--d:${(0.6 + (i % 5) * 0.12).toFixed(2)}s">${BOOST_SVG(18)}</i>`).join('');
+  document.body.appendChild(L); setTimeout(() => L.remove(), 1600);
+}
+
+/* ---------- catálogo (visual de cada item) ---------- */
+const ITEM_LOOK = {
+  deco_neon:['💠','Um anel neon que respira em volta do avatar.'], deco_gato:['🐱','Orelhinhas fofas em cima do avatar.'],
+  deco_coroa:['👑','Coroa em pixel art, pra quem manda na call.'], deco_fogo:['🔥','Chamas dançando em volta de você.'],
+  deco_chuva:['🌧️','Uma nuvenzinha chovendo em cima de você.'], deco_estrelas:['⭐','Estrelinhas girando como um halo.'],
+  deco_folhas:['🌿','Folhas tropicais emoldurando a foto.'], deco_holo:['🪩','Brilho holográfico que muda de cor (Telão+).'],
+  ent_samba:['🥁','Quando você entra na call, todo mundo ouve uma batucada.'], ent_plantao:['🚨','A vinheta de plantão urgente anuncia sua chegada.'],
+  ent_moeda:['🪙','Plim! O som clássico de moedinha de fliperama.'], ent_cosmico:['🌌','Um whoosh espacial quando você chega.'],
+  ent_trombeta:['🎺','Fanfarra real: chegou a realeza (Telão+).'],
+  sp_zueira:['🤡','Risada, “não!”, peido e tchan-tchan-tchan no soundboard.'], sp_arcade:['👾','Pulo, power-up, game over e 1-UP.'],
+  sp_cinema:['🎬','Tambor de suspense, plateia “ohhh” e vinheta épica.'],
+  tt_madrugada:['🌙','Título no seu perfil.'], tt_mute:['🔇','Título no seu perfil.'], tt_cinefilo:['🍿','Título no seu perfil.'],
+  tt_lagado:['🐢','Título no seu perfil.'], tt_dj:['🎧','Título no seu perfil.'], tt_fundador:['🏛️','Título raro no seu perfil (Telão+).'],
+  cd_por_do_sol:['🌇','Fundo do cartão de perfil com pôr do sol.'], cd_aurora:['🌌','Fundo de aurora boreal no cartão.'],
+  cd_vapor:['🌴','Vaporwave rosa e ciano no cartão.'], cd_mata:['🦜','Verde da Mata Atlântica no cartão.'], cd_galaxia:['🪐','Galáxia animada no cartão (Telão+).'],
+  plus_7:['💎','Uma semana de Telão+ completo. Dá pra trocar fichas por isso!'],
+};
+const KINDS = [['all','Tudo'],['deco','Decorações'],['entrance','Entradas na call'],['soundpack','Pacotes de som'],['title','Títulos'],['card','Fundos de perfil'],['plus','Telão+']];
+const itemById = id => S.shop.find(i => i.id === id);
+async function loadShop(){
+  if(S.shop.length) return;
+  const { data } = await App.sb.from('shop_items').select('*').eq('active', true).order('price');
+  S.shop = data || [];
+}
+async function loadInventory(){
+  const { data } = await App.sb.from('inventory').select('item_id').eq('user_id', S.me.id);
+  S.inv = new Set((data || []).map(r => r.item_id));
+}
+const owns = id => S.inv.has(id) || S.me.is_admin;
+const equippedOf = p => (p && p.equipped && typeof p.equipped === 'object') ? p.equipped : {};
+const usable = (p, id) => { const it = itemById(id); return !it || !it.plus_only || hasPlus(p); };
+
+/* decoração no avatar */
+const _avatar = avatar;
+avatar = function(p, cls='', status=false){
+  const h = _avatar(p, cls, status);
+  const d = p && equippedOf(p).deco;
+  if(!d || /\bxs\b/.test(cls) || !usable(p, d)) return h;
+  return h.replace(/^<div class="av ([^"]*)"/, '<div class="av $1 hasdeco"').replace(/<\/div>$/, `<i class="deco ${esc(d)}"></i></div>`);
+};
+/* título e fundo no cartão de perfil */
+const _profileCard = profileCard;
+profileCard = function(p, extra=''){
+  let h = _profileCard(p, extra);
+  const eq = equippedOf(p);
+  if(eq.card && usable(p, eq.card) && !(hasPlus(p) && p.theme_a)) h = h.replace('class="pcard2 ', `class="pcard2 cardbg ${esc(eq.card)} `);
+  if(eq.title && usable(p, eq.title)){ const it = itemById(eq.title); const look = ITEM_LOOK[eq.title]; if(it || look) h = h.replace('<div class="un">', `<div class="ptitle">${look ? look[0] : '🏷️'} ${esc(it ? it.name : eq.title.replace('tt_',''))}</div><div class="un">`); }
+  return h;
+};
+
+/* ---------- sons: entradas na call e pacotes do soundboard ---------- */
+let entCtx = null;
+function synth(fn){
+  try{
+    if(!entCtx) entCtx = new (window.AudioContext || window.webkitAudioContext)();
+    const c = entCtx, out = c.createGain(); out.gain.value = 0.3; out.connect(c.destination);
+    const t = c.currentTime;
+    const tone = (f, s, d, type='sine', v=1, f2) => { const o = c.createOscillator(), g = c.createGain(); o.type = type; o.frequency.setValueAtTime(f, t+s); if(f2) o.frequency.exponentialRampToValueAtTime(f2, t+s+d); g.gain.setValueAtTime(0.0001, t+s); g.gain.exponentialRampToValueAtTime(v, t+s+0.015); g.gain.exponentialRampToValueAtTime(0.0001, t+s+d); o.connect(g).connect(out); o.start(t+s); o.stop(t+s+d+0.05); };
+    const noise = (s, d, v=1, hp=0) => { const b = c.createBuffer(1, Math.max(1, c.sampleRate*d|0), c.sampleRate), x = b.getChannelData(0); for(let i=0;i<x.length;i++) x[i] = (Math.random()*2-1) * (1 - i/x.length); const n = c.createBufferSource(); n.buffer = b; const g = c.createGain(); g.gain.value = v; let node = n; if(hp){ const f = c.createBiquadFilter(); f.type = 'highpass'; f.frequency.value = hp; n.connect(f); node = f; } node.connect(g).connect(out); n.start(t+s); };
+    fn(tone, noise);
+  }catch(e){}
+}
+const ENTRANCES = {
+  ent_samba: (tone, noise) => { [0,.15,.3,.38,.45,.6,.75,.83].forEach((s,i) => { tone(i%3 ? 95 : 70, s, .12, 'sine', 1, 45); noise(s, .05, .35, 3000); }); tone(1800, .9, .25, 'square', .12); },
+  ent_plantao: tone => { [[659,0],[659,.18],[784,.36],[659,.6],[880,.8]].forEach(([f,s]) => tone(f, s, .2, 'sawtooth', .3)); tone(523, 1, .5, 'sawtooth', .3); },
+  ent_moeda: tone => { tone(988, 0, .08, 'square', .3); tone(1319, .08, .4, 'square', .3); },
+  ent_cosmico: (tone, noise) => { tone(80, 0, 1.2, 'sine', .9, 900); tone(1200, .5, .8, 'sine', .3, 2400); noise(0, 1, .25, 2000); },
+  ent_trombeta: tone => { [[523,0,.15],[523,.17,.15],[523,.34,.15],[659,.5,.5],[784,1.02,.7]].forEach(([f,s,d]) => { tone(f, s, d, 'sawtooth', .35); tone(f*2, s, d, 'square', .08); }); },
+};
+App.entrance = uid => {
+  const p = prof(uid), e = equippedOf(p).entrance;
+  if(!e || !ENTRANCES[e] || !usable(p, e) || (App.prefs || {}).soundVoice === false) return false;
+  synth(ENTRANCES[e]); return true;
+};
+const SOUND_PACKS = {
+  sp_zueira: [
+    ['risada','🤣','Risada', tone => { for(let i=0;i<6;i++) tone(520 - i*25, i*.13, .1, 'square', .25, 380 - i*20); }],
+    ['nao','🙅','Nããão', tone => tone(300, 0, 1, 'sawtooth', .35, 120)],
+    ['pum','💨','Pum', (tone, noise) => { tone(90, 0, .45, 'sawtooth', .5, 60); noise(0, .4, .2, 0); }],
+    ['tchan','🎻','Tchan tchan', tone => { tone(294, 0, .25, 'sawtooth', .35); tone(277, .3, .25, 'sawtooth', .35); tone(262, .6, .9, 'sawtooth', .4); }],
+  ],
+  sp_arcade: [
+    ['pulo','🍄','Pulo', tone => tone(300, 0, .25, 'square', .3, 900)],
+    ['power','⭐','Power-up', tone => [523,659,784,1047,1319].forEach((f,i) => tone(f, i*.06, .08, 'square', .25))],
+    ['gameover','💀','Game over', tone => [494,466,440,415].forEach((f,i) => tone(f, i*.3, .32, 'triangle', .4))],
+    ['oneup','💚','1-UP', tone => [659,784,1319,1047,1175,1568].forEach((f,i) => tone(f, i*.09, .1, 'square', .25))],
+  ],
+  sp_cinema: [
+    ['tambores','🥁','Rufar', (tone, noise) => { for(let i=0;i<18;i++) noise(i*.06, .05, .5, 800); tone(70, 1.15, .6, 'sine', 1, 40); }],
+    ['ohhh','😮','Plateia ohhh', tone => [220,277,330].forEach(f => tone(f, 0, 1.2, 'sawtooth', .12, f*.9))],
+    ['epico','🎬','Épico', tone => { [131,196,262].forEach(f => tone(f, 0, 1.6, 'sawtooth', .22)); tone(523, .4, 1.2, 'triangle', .25); }],
+    ['pipoca','🍿','Pipoca', (tone, noise) => { for(let i=0;i<9;i++) noise(Math.random()*1.2, .03, .9, 2500); }],
+  ],
+};
+const EXTRA_SOUNDS = {};
+Object.values(SOUND_PACKS).forEach(list => list.forEach(([id, , , fn]) => EXTRA_SOUNDS[id] = fn));
+/* sons que posso tocar nesta chamada: base + pacotes que tenho + liberados pelo nível do servidor */
+function soundList(){
+  const lv = Voice.channel && Voice.channel.server_id ? serverLevel(Voice.channel.server_id) : 0;
+  const list = SOUNDS.slice();
+  Object.entries(SOUND_PACKS).forEach(([pack, arr], i) => {
+    if(owns(pack) || lv >= 2 || (lv >= 1 && i === 0)) arr.forEach(([id, e, n]) => list.push([id, e, n]));
+  });
+  return list;
+}
+
+/* ---------- fichas ---------- */
+async function claimDaily(){
+  const { data, error } = await App.sb.rpc('claim_daily');
+  if(error){ App.toast(error.message, true); return; }
+  const { data: me } = await App.sb.from('profiles').select('*').eq('id', S.me.id).single();
+  if(me){ S.me = me; S.profiles.set(me.id, me); }
+  App.toast(`🪙 +${data.gain} fichas! Sequência: ${data.streak} dia(s)${hasPlus(S.me) ? ' · bônus Telão+ em dobro' : ''}`);
+  coinRain();
+  if(SET && SET.sec === 'shop') renderSettings();
+}
+function coinRain(){
+  const L = document.createElement('div'); L.className = 'coinrain';
+  L.innerHTML = Array.from({ length: 18 }, (_, i) => `<i style="--x:${(i * 53) % 100}%;--d:${(0.9 + (i % 4) * 0.2).toFixed(2)}s;--dl:${(i * 0.05).toFixed(2)}s">🪙</i>`).join('');
+  document.body.appendChild(L); setTimeout(() => L.remove(), 2200);
+}
+const fichasHtml = n => `<span class="fichas">${'🪙'} ${Number(n || 0).toLocaleString('pt-BR')}</span>`;
+
+/* ---------- Loja ---------- */
+async function secShop(box, back){
+  box.innerHTML = `${back}<div class="spin" style="margin:40px auto"></div>`;
+  await Promise.all([loadShop(), loadInventory()]);
+  if(!SET || SET.sec !== 'shop') return;
+  const me = S.me, tab = SET.shopTab || 'loja', kind = SET.shopKind || 'all';
+  const claimed = me.last_daily === todayBR();
+  const items = S.shop.filter(i => kind === 'all' || i.kind === kind);
+  const eq = equippedOf(me);
+  box.innerHTML = `${back}
+    <div class="shophero">
+      <div><h1>Loja do Telão</h1><p>Coisas que só existem aqui: entradas sonoras, molduras, títulos e muito mais. Tudo comprado com <b>fichas</b> — que você ganha só por aparecer.</p></div>
+      <div class="wallet">${fichasHtml(me.fichas)}<small>${me.streak ? `🔥 ${me.streak} dia(s) seguidos` : 'Comece sua sequência hoje'}</small>
+        <button class="btn ${claimed ? 'sec' : ''}" id="shDaily" ${claimed ? 'disabled' : ''}>${claimed ? 'Volte amanhã ✔' : 'Pegar fichas do dia'}</button></div>
+    </div>
+    <div class="tabs2"><button data-tab="loja" class="${tab==='loja'?'on':''}">Loja</button><button data-tab="meus" class="${tab==='meus'?'on':''}">Meus itens (${S.inv.size})</button></div>
+    ${tab === 'loja' ? `<div class="chips">${KINDS.map(([k,l]) => `<button data-kind="${k}" class="${kind===k?'on':''}">${l}</button>`).join('')}</div>
+      <div class="shopgrid">${items.map(it => itemCard(it, eq)).join('') || '<p class="mut">Nada aqui ainda.</p>'}</div>`
+    : `<div class="shopgrid">${S.shop.filter(i => S.inv.has(i.id) || (me.is_admin && i.kind !== 'plus')).map(it => itemCard(it, eq, true)).join('') || '<p class="mut">Você ainda não tem itens. Pegue suas fichas do dia e passe na loja!</p>'}</div>`}
+    <p class="mut small" style="margin-top:18px">Como ganhar fichas: entre todo dia (+50, e +10 a cada dia seguido, até +150). Assinantes do Telão+ ganham em dobro. Fichas não são dinheiro e não podem ser sacadas.</p>`;
+  const $b = q => box.querySelector(q);
+  $b('#shDaily').onclick = claimDaily;
+  box.querySelectorAll('[data-tab]').forEach(b => b.onclick = () => { SET.shopTab = b.dataset.tab; renderSettings(); });
+  box.querySelectorAll('[data-kind]').forEach(b => b.onclick = () => { SET.shopKind = b.dataset.kind; renderSettings(); });
+  box.querySelectorAll('[data-buy]').forEach(b => b.onclick = () => buyItem(b.dataset.buy));
+  box.querySelectorAll('[data-gift]').forEach(b => b.onclick = () => giftModal(null, b.dataset.gift));
+  box.querySelectorAll('[data-equip]').forEach(b => b.onclick = () => equipItem(b.dataset.kindx, b.dataset.equip === '-' ? null : b.dataset.equip));
+  box.querySelectorAll('[data-try]').forEach(b => b.onclick = () => previewItem(b.dataset.try));
+}
+function itemCard(it, eq, mineTab){
+  const look = ITEM_LOOK[it.id] || ['🎁', ''];
+  const have = it.kind !== 'plus' && owns(it.id), on = eq[it.kind] === it.id;
+  const locked = it.plus_only && !hasPlus(S.me);
+  return `<div class="item k-${it.kind} ${on ? 'on' : ''}">
+    <div class="ipv" data-try="${it.id}" title="Ver como fica">${itemPreview(it)}</div>
+    <b>${esc(it.name)}</b>${it.plus_only ? '<span class="plustag">TELÃO+</span>' : ''}
+    <small>${esc(look[1])}</small>
+    <div class="ibtns">${have
+      ? (it.kind === 'title' || it.kind === 'deco' || it.kind === 'card' || it.kind === 'entrance' || it.kind === 'soundpack'
+          ? (it.kind === 'soundpack' ? '<span class="mut small">✔ Liberado nas calls</span>' : on ? `<button class="btn sec sm" data-equip="-" data-kindx="${it.kind}">Tirar</button>` : `<button class="btn sm" data-equip="${it.id}" data-kindx="${it.kind}" ${locked ? 'disabled' : ''}>Usar</button>`) : '')
+      : `<button class="btn sm" data-buy="${it.id}" ${locked ? 'disabled' : ''}>${fichasHtml(it.price)}</button>`}
+      ${mineTab ? '' : `<button class="btn sec sm" data-gift="${it.id}" data-tip="Dar de presente">🎁</button>`}</div></div>`;
+}
+function itemPreview(it){
+  const me = S.me;
+  if(it.kind === 'deco') return _avatar(me, 'xl').replace(/^<div class="av ([^"]*)"/, '<div class="av $1 hasdeco"').replace(/<\/div>$/, `<i class="deco ${it.id}"></i></div>`);
+  if(it.kind === 'card') return `<div class="cardmini cardbg ${it.id}"></div>`;
+  return `<span class="ie">${(ITEM_LOOK[it.id] || ['🎁'])[0]}</span>`;
+}
+function previewItem(id){
+  const it = itemById(id); if(!it) return;
+  if(it.kind === 'entrance') synth(ENTRANCES[id]);
+  else if(it.kind === 'soundpack') SOUND_PACKS[id].forEach(([, , , fn], i) => setTimeout(() => synth(fn), i * 1400));
+  else if(it.kind === 'title' || it.kind === 'card'){
+    const fake = { ...S.me, equipped: { ...equippedOf(S.me), [it.kind]: id } };
+    if(it.kind === 'card'){ fake.theme_a = null; }
+    modal(`<div class="mc" style="padding:18px">${profileCard(fake)}</div><div class="mf"><button class="btn" data-close>Fechar</button></div>`);
+  }
+}
+async function buyItem(id){
+  const it = itemById(id); if(!it) return;
+  if(!(await confirmBox('Comprar', `Comprar <b>${esc(it.name)}</b> por ${fichasHtml(it.price)}?`, 'Comprar'))) return;
+  const { error } = await App.sb.rpc('buy_item', { p_item: id });
+  if(error){ App.toast(error.message, true); return; }
+  await refreshMe(); await loadInventory();
+  App.toast(it.kind === 'plus' ? '💎 Telão+ ativado! Aproveite.' : `🛍️ ${it.name} é seu!`); coinRain();
+  renderAll(); if(SET) renderSettings();
+}
+async function equipItem(kind, id){
+  const { data, error } = await App.sb.rpc('equip_item', { p_kind: kind, p_item: id });
+  if(error){ App.toast(error.message, true); return; }
+  S.me.equipped = data; S.profiles.set(S.me.id, S.me);
+  App.toast(id ? 'Equipado! ✨' : 'Removido.'); renderAll(); if(SET) renderSettings();
+}
+async function refreshMe(){
+  const { data } = await App.sb.from('profiles').select('*').eq('id', S.me.id).single();
+  if(data){ S.me = data; S.profiles.set(data.id, data); }
+}
+
+/* ---------- presentes ---------- */
+async function giftModal(toUid, itemId){
+  await loadShop();
+  const friends = S.friends.filter(f => f.status === 'accepted').map(f => prof(f.uid));
+  if(!friends.length){ App.toast('Adicione amigos para dar presentes 🎁', true); return; }
+  let to = toUid || friends[0].id, item = itemId || null, plusDays = 0;
+  const admin = S.me.is_admin;
+  const opts = S.shop.map(i => `<option value="${i.id}" ${i.id===item?'selected':''}>${(ITEM_LOOK[i.id]||['🎁'])[0]} ${esc(i.name)} — ${i.price} fichas</option>`).join('');
+  modal(`<form id="gF"><div class="mh"><h2>🎁 Dar um presente</h2><p>Chega como um pacote na conversa — a pessoa abre quando quiser.</p></div>
+    <div class="mc">
+      <label class="field"><span>Para</span><select class="inp" id="gTo">${friends.map(p => `<option value="${p.id}" ${p.id===to?'selected':''}>${esc(p.display_name)} (@${esc(p.username)})</option>`).join('')}</select></label>
+      <label class="field"><span>Presente</span><select class="inp" id="gIt">
+        ${admin ? '<optgroup label="Admin (grátis)"><option value="plus:30">💎 Telão+ 30 dias</option><option value="plus:90">💎 Telão+ 90 dias</option><option value="plus:365">💎 Telão+ 1 ano</option></optgroup>' : ''}
+        <optgroup label="Loja (paga com suas fichas)">${opts}</optgroup></select></label>
+      ${!admin ? `<div class="giftplus"><b>💎 Telão+ de presente</b><small>${CFG.PAYMENTS ? 'Pague e a pessoa ganha 1 mês.' : 'Presentear Telão+ com dinheiro chega em breve. Por enquanto dá pra dar 7 dias usando fichas!'}</small></div>` : ''}
+      <label class="field"><span>Mensagem (opcional)</span><input class="inp" id="gNote" maxlength="140" placeholder="feliz aniversário!! 🎉"></label>
+      <div class="err" id="gE"></div><div id="gCost" class="mut small"></div></div>
+    <div class="mf"><button type="button" class="btn sec" data-close>Cancelar</button><button class="btn">Enviar presente</button></div></form>`, m => {
+    const sel = m.querySelector('#gIt'), cost = () => {
+      const v = sel.value; if(v.startsWith('plus:')){ m.querySelector('#gCost').textContent = 'De graça (você é o admin).'; return; }
+      const it = itemById(v); m.querySelector('#gCost').innerHTML = it ? `Custa ${fichasHtml(it.price)} · você tem ${fichasHtml(S.me.fichas)}` : '';
+    };
+    if(!item && !admin) sel.value = (S.shop[0] || {}).id; sel.onchange = cost; cost();
+    m.querySelector('#gF').onsubmit = async e => {
+      e.preventDefault();
+      const v = sel.value, isPlus = v.startsWith('plus:');
+      const { error } = await App.sb.rpc('send_gift', { p_to: m.querySelector('#gTo').value, p_item: isPlus ? null : v, p_note: m.querySelector('#gNote').value.trim() || null, p_plus_days: isPlus ? +v.split(':')[1] : 0 });
+      if(error){ m.querySelector('#gE').textContent = error.message; return; }
+      closeModal(); await refreshMe(); App.toast('🎁 Presente enviado!'); boostCelebrate();
+      if(SET) renderSettings();
+    };
+  });
+}
+function giftCardHtml(a){ return `<div class="giftcard" data-giftid="${esc(a.gift)}"><div class="gbox">🎁</div><div class="gt"><b>Presente</b><small>Carregando…</small></div></div>`; }
+App.giftCardHtml = giftCardHtml;
+async function hydrateGift(el){
+  const id = el.dataset.giftid; el.dataset.ld = '1';
+  let g = GIFTS.get(id);
+  if(!g){ const { data } = await App.sb.from('gifts').select('*').eq('id', id).maybeSingle(); g = data; if(g) GIFTS.set(id, g); }
+  await loadShop();
+  if(!g){ el.querySelector('.gt').innerHTML = '<b>Presente</b><small>Esse presente não é pra você 👀</small>'; return; }
+  const it = g.item_id ? itemById(g.item_id) : null;
+  const name = g.plus_days ? `Telão+ por ${g.plus_days} dias` : it ? it.name : 'Item';
+  const look = g.plus_days ? '💎' : (ITEM_LOOK[g.item_id] || ['🎁'])[0];
+  const mine = g.to_user === S.me.id, from = prof(g.from_user);
+  el.classList.toggle('opened', !!g.claimed_at);
+  el.innerHTML = `<div class="gbox">${g.claimed_at ? look : '🎁'}</div><div class="gt">
+      <b>${g.claimed_at || !mine ? esc(name) : 'Você ganhou um presente!'}</b>
+      <small>${mine ? `de ${esc(from.display_name)}` : `para ${esc(prof(g.to_user).display_name)}`}${g.note ? ` · “${esc(g.note)}”` : ''}</small></div>
+    ${mine && !g.claimed_at ? `<button class="btn sm" data-opengift="${id}">Abrir</button>` : g.claimed_at ? '<span class="mut small">Aberto ✔</span>' : '<span class="mut small">Ainda fechado</span>'}`;
+}
+new MutationObserver(() => { document.querySelectorAll('.giftcard:not([data-ld])').forEach(hydrateGift); }).observe(document.body, { childList:true, subtree:true });
+document.addEventListener('click', async e => {
+  const b = e.target.closest('[data-opengift]'); if(!b) return;
+  b.disabled = true;
+  const box = b.closest('.giftcard'); box.classList.add('shake');
+  const { error } = await App.sb.rpc('claim_gift', { p_gift: b.dataset.opengift });
+  if(error){ App.toast(error.message, true); b.disabled = false; return; }
+  GIFTS.delete(b.dataset.opengift);
+  await Promise.all([refreshMe(), loadInventory()]);
+  setTimeout(() => { box.classList.remove('shake'); boostCelebrate(); coinRain(); hydrateGift(box); renderAll(); App.toast('🎉 Presente aberto! Veja em Loja › Meus itens.'); }, 650);
+});
+
+/* ---------- configurações: meus impulsos (usuário) e impulsos do servidor ---------- */
+function secMyBoosts(box, back){
+  const slots = boostSlots(), plus = hasPlus(S.me);
+  box.innerHTML = `${back}<h2>${BOOST_SVG(22)} Impulsos de servidor</h2>
+    <p class="mut">Com o Telão+ você tem <b>3 impulsos</b> para dar nos servidores que curte. Cada impulso fica no mínimo <b>7 dias</b> antes de poder trocar. Quem impulsiona ganha a insígnia <b>Impulsionador</b> e um ícone ao lado do nome.</p>
+    ${plus ? '' : `<div class="upsellbox">Os impulsos fazem parte do Telão+. <button class="btn sm" id="mbPlus">Ver Telão+</button></div>`}
+    <div class="slots big">${slots.map(x => {
+      const srv = x.b && S.servers.find(z => z.id === x.b.server_id);
+      return `<div class="slot ${x.b ? 'used' : ''} ${x.locked ? 'locked' : ''}"><span class="g">${BOOST_SVG(30)}</span><b>Impulso ${x.slot}</b>
+        <small>${!x.b ? 'Livre — abra um servidor e escolha “Impulsionar”' : 'Em ' + esc(srv ? srv.name : 'um servidor')}${x.b ? (x.locked ? `<br>🔒 troca liberada em ${x.unlock.toLocaleString('pt-BR',{day:'2-digit',month:'2-digit',hour:'2-digit',minute:'2-digit'})}` : '<br>✔ pode trocar ou retirar') : ''}</small>
+        ${x.b && !x.locked ? `<button class="btn sec sm" data-unb="${x.slot}">Retirar</button>` : ''}</div>`;
+    }).join('')}</div>
+    <h3>O que os impulsos liberam</h3>${levelsHtml(-1)}`;
+  const p = box.querySelector('#mbPlus'); if(p) p.onclick = () => setSec('plus');
+  box.querySelectorAll('[data-unb]').forEach(b => b.onclick = async () => {
+    const { error } = await App.sb.rpc('unboost_server', { p_slot: +b.dataset.unb });
+    if(error){ App.toast(error.message, true); return; }
+    await loadBoosts(); renderSettings(); renderSidebar();
+  });
+}
+function levelsHtml(cur){
+  return `<div class="levels">${LEVELS.slice(1).map((L, i) => `<div class="lvl ${cur >= i+1 ? 'got' : ''}"><div class="lh"><b>${L.nome}</b><small>${L.need} impulsos</small>${cur >= i+1 ? '<span class="ok">✔ liberado</span>' : ''}</div>
+    ${L.perks.map(([e, t]) => `<div class="perkrow"><span>${e}</span>${t}</div>`).join('')}</div>`).join('')}</div>`;
+}
+function secSrvBoost(box, back){
+  const s = SET.server, n = boostCount(s.id), lv = serverLevel(s.id), next = LEVELS[lv + 1];
+  const pct = next ? Math.round((n - LEVELS[lv].need) / (next.need - LEVELS[lv].need) * 100) : 100;
+  const boosters = [...new Set(boostsOf(s.id).map(b => b.user_id))];
+  const canEdit = App.hasPerm(s.id, 2);
+  box.innerHTML = `${back}<h2>${BOOST_SVG(22)} Impulsos do servidor</h2>
+    <div class="boostbar"><div class="bt"><b>${LEVELS[lv].nome}</b><span>${n} impulso(s)${next ? ` · faltam ${next.need - n} para o ${next.nome}` : ' · nível máximo!'}</span></div>
+      <div class="track"><i style="width:${Math.max(4, pct)}%"></i></div>
+      <button class="btn" id="sbB">${BOOST_SVG(16)} Impulsionar este servidor</button></div>
+    ${canEdit ? `<h3>Personalização liberada</h3>
+      ${row('Cor do servidor' + (lv < 1 ? ' 🔒' : ''), lv < 1 ? 'Libera no nível 1.' : 'Muda a cor de destaque para todo mundo dentro do servidor.', `<input type="color" id="sbAcc" value="${esc(s.accent || '#ff6b4a')}" ${lv < 1 ? 'disabled' : ''}>${s.accent ? ' <button class="btn sec sm" id="sbAccX">Tirar</button>' : ''}`)}
+      ${row('Banner do servidor' + (lv < 2 ? ' 🔒' : ''), lv < 2 ? 'Libera no nível 2 (GIF no nível 3).' : 'Aparece no topo da lista de canais.', `<button class="btn sm" id="sbBan" ${lv < 2 ? 'disabled' : ''}>Enviar imagem</button>${s.banner_url ? ' <button class="btn sec sm" id="sbBanX">Tirar</button>' : ''}<input type="file" id="sbBanF" accept="image/*" hidden>`)}
+      ${row('Convite personalizado' + (lv < 3 ? ' 🔒' : ''), lv < 3 ? 'Libera no nível 3.' : 'Ex.: telao…/?convite=galera', `<input class="inp" id="sbVan" style="width:160px" placeholder="galera" value="${/^[0-9a-f]{8}$/.test(s.invite_code) ? '' : esc(s.invite_code)}" ${lv < 3 ? 'disabled' : ''}> <button class="btn sm" id="sbVanOk" ${lv < 3 ? 'disabled' : ''}>Salvar</button>`)}` : ''}
+    <h3>Níveis</h3>${levelsHtml(lv)}
+    <h3>Quem está impulsionando (${boosters.length})</h3>
+    <div class="boosters">${boosters.map(u => `<div class="mem">${avatar(prof(u),'',false)}<span>${nameHtml(prof(u))}</span><small class="mut">${boostsOf(s.id).filter(b => b.user_id === u).length}×</small></div>`).join('') || '<p class="mut">Ninguém ainda — seja o primeiro!</p>'}</div>`;
+  const $b = q => box.querySelector(q);
+  $b('#sbB').onclick = () => boostServerModal(s);
+  const upd = async v => { const { error } = await App.sb.from('servers').update(v).eq('id', s.id); if(error){ App.toast(error.message, true); return false; } await loadServers(); SET.server = S.servers.find(x => x.id === s.id) || s; renderSidebar(); renderSettings(); return true; };
+  if(!canEdit) return;
+  const acc = $b('#sbAcc'); if(acc && lv >= 1) acc.onchange = () => upd({ accent: acc.value });
+  const ax = $b('#sbAccX'); if(ax) ax.onclick = () => upd({ accent: null });
+  const ban = $b('#sbBan'); if(ban && lv >= 2){ ban.onclick = () => $b('#sbBanF').click(); $b('#sbBanF').onchange = async e => {
+    const f = e.target.files[0]; if(!f) return;
+    if(f.type === 'image/gif' && lv < 3){ App.toast('Banner animado libera no nível 3.', true); return; }
+    App.toast('Enviando…');
+    try{ const url = await uploadBanner(f); await upd({ banner_url: url }); }catch(err){ App.toast(err.message, true); }
+  }; }
+  const bx = $b('#sbBanX'); if(bx) bx.onclick = () => upd({ banner_url: null });
+  const vo = $b('#sbVanOk'); if(vo && lv >= 3) vo.onclick = async () => {
+    const { error } = await App.sb.rpc('set_vanity', { p_server: s.id, p_code: $b('#sbVan').value });
+    if(error){ App.toast(error.message, true); return; }
+    await loadServers(); SET.server = S.servers.find(x => x.id === s.id) || s; App.toast('Convite personalizado salvo!'); renderSettings();
+  };
+}
+async function uploadBanner(file){
+  let blob = file, type = file.type;
+  if(type !== 'image/gif'){
+    const bmp = await createImageBitmap(file), W = Math.min(960, bmp.width), H = Math.round(W * 0.38);
+    const cv = document.createElement('canvas'); cv.width = W; cv.height = H;
+    const sh = Math.min(bmp.height, bmp.width * 0.38), sw = sh / 0.38;
+    cv.getContext('2d').drawImage(bmp, (bmp.width - sw)/2, (bmp.height - sh)/2, sw, sh, 0, 0, W, H);
+    blob = await new Promise(r => cv.toBlob(r, 'image/webp', 0.85)); type = blob.type || 'image/webp';
+  }
+  const path = `${S.me.id}/srvbanner-${Date.now().toString(36)}.${type.split('/')[1]}`;
+  const { error } = await App.sb.storage.from('media').upload(path, blob, { contentType: type, cacheControl:'31536000' });
+  if(error) throw error;
+  return App.sb.storage.from('media').getPublicUrl(path).data.publicUrl;
+}
+/* =====================================================================
+   v5: TEMAS COLORIDOS (Telão+) · PRÉVIA AO VIVO DAS TELAS E CÂMERAS · ACESSIBILIDADE
+   ===================================================================== */
+
+/* ---------- temas coloridos ---------- */
+const BASE_THEMES = [['dark','Escuro','#15151d','#22222c'],['amoled','Preto (AMOLED)','#000','#17171d'],['light','Claro','#fff','#ebe7e4']];
+const PLUS_THEMES = [
+  ['oceano','Oceano','#0b2238','#0f3b5c','#38bdf8'], ['floresta','Floresta','#0e1f17','#173a29','#2bd17e'],
+  ['synth','Synthwave','#1a0b2e','#3b1060','#ff3df0'], ['lava','Lava','#1f0a07','#4a140b','#ff6a2b'],
+  ['meianoite','Meia-noite dourada','#0b0f24','#1b2147','#ffc94a'], ['cafe','Café','#1f1712','#3a2b21','#e0a96d'],
+  ['sakura','Sakura','#fff1f5','#ffd6e3','#ff5c8a'], ['menta','Menta','#effcf6','#c9f2df','#14b87a'],
+  ['algodao','Algodão-doce','#f6efff','#ffd9f1','#a855f7'], ['aurora','Aurora (animado)','#071a1f','#2a0f3d','#5eead4'],
+];
+const ALL_THEMES = BASE_THEMES.map(t => t[0]).concat(PLUS_THEMES.map(t => t[0]));
+const _applyPrefs = applyPrefs;
+applyPrefs = function(){
+  const want = P.theme, wantAcc = P.accent;
+  if(PLUS_THEMES.some(t => t[0] === want) && S.me && !hasPlus(S.me)) P.theme = 'dark';
+  const pt = PLUS_THEMES.find(t => t[0] === P.theme);
+  if(pt && !P.accentSet) P.accent = pt[4];
+  document.body.classList.remove(...ALL_THEMES.map(t => 'theme-' + t));
+  _applyPrefs();
+  document.body.classList.toggle('lighttheme', ['light','sakura','menta','algodao'].includes(P.theme));
+  P.theme = want; P.accent = wantAcc;
+  applyA11y();
+};
+const _secAppearance = secAppearance;
+secAppearance = function(box, back){
+  _secAppearance(box, back);
+  const plus = hasPlus(S.me);
+  const themes = box.querySelector('.themes');
+  themes.insertAdjacentHTML('afterend', `<h3 style="display:flex;align-items:center;gap:8px">Temas coloridos <span class="plustag">TELÃO+</span></h3>
+    <div class="themes colorful">${PLUS_THEMES.map(([v, l, a, b, c]) => `<button data-pt="${v}" class="${P.theme === v ? 'on' : ''} ${plus ? '' : 'locked'}">
+      <span class="tprev" style="background:linear-gradient(135deg,${a} 0 55%,${b} 55%)"><i style="background:${c}"></i>${plus ? '' : '<em>🔒</em>'}</span>${l}</button>`).join('')}</div>
+    ${plus ? '' : '<p class="mut small">Assine o Telão+ para pintar o app inteiro do seu jeito.</p>'}`);
+  box.querySelectorAll('[data-pt]').forEach(b => b.onclick = () => {
+    if(!plus){ upsell('Temas coloridos'); return; }
+    P.theme = b.dataset.pt; P.accentSet = false; savePrefs(); renderSettings();
+  });
+  box.querySelectorAll('[data-acc]').forEach(b => b.addEventListener('click', () => { P.accentSet = true; savePrefs(); }));
+  box.querySelector('#apAcc').addEventListener('input', () => { P.accentSet = true; ls.set('telao-prefs', P); });
+};
+
+/* ---------- prévia ao vivo (miniatura) de quem está transmitindo ou com câmera ---------- */
+S.thumbs = new Map();    // session -> { screen, cam, at }
+const THUMB = { vids: new Map(), timer: null };
+function grabThumb(stream, key){
+  if(!stream) return null;
+  let v = THUMB.vids.get(key);
+  if(!v || v.srcObject !== stream){ v = document.createElement('video'); v.muted = true; v.playsInline = true; v.srcObject = stream; v.play().catch(() => {}); THUMB.vids.set(key, v); return null; }
+  if(!v.videoWidth) return null;
+  const W = 320, H = Math.round(W * v.videoHeight / v.videoWidth) || 180;
+  const c = grabThumb.c || (grabThumb.c = document.createElement('canvas')); c.width = W; c.height = Math.min(H, 240);
+  c.getContext('2d').drawImage(v, 0, 0, c.width, c.height);
+  return c.toDataURL('image/jpeg', 0.6);
+}
+function thumbTick(){
+  if(!Voice.channel || (!Voice.screenStream && !Voice.camStream)){ THUMB.vids.clear(); return; }
+  const screen = grabThumb(Voice.screenStream, 'screen'), cam = grabThumb(Voice.camStream, 'cam');
+  if(!screen && !cam) return;
+  const ch = S.vpCh.get(Voice.topic); if(!ch) return;
+  const pl = { sess: Voice.SESSION, uid: S.me.id, screen, cam, voice: Voice.channel.id };
+  ch.send({ type:'broadcast', event:'thumb', payload: pl });
+  App.onThumb(Voice.topic, pl);
+}
+THUMB.timer = setInterval(thumbTick, 6000);
+setInterval(() => { const now = Date.now(); S.thumbs.forEach((t, k) => { if(now - t.at > 30000) S.thumbs.delete(k); }); }, 10000);
+App.onThumb = (topic, pl) => {
+  if(!pl || !pl.sess) return;
+  S.thumbs.set(pl.sess, { screen: pl.screen, cam: pl.cam, uid: pl.uid, voice: pl.voice, at: Date.now() });
+  const pop = document.getElementById('livePop');
+  if(pop && pop.dataset.sess === pl.sess){ const img = pop.querySelector('img'); const src = pop.dataset.kind === 'cam' ? pl.cam : (pl.screen || pl.cam); if(img && src) img.src = src; }
+};
+function livePop(row){
+  const av = row.querySelector('[data-sess]'); if(!av) return;
+  const sess = av.dataset.sess, meta = [...S.vp.values()].flat().find(m => m.session === sess);
+  if(!meta || (!meta.sharing && !meta.camera)) return;
+  const t = S.thumbs.get(sess), kind = meta.sharing ? 'screen' : 'cam', src = t && (kind === 'cam' ? t.cam : (t.screen || t.cam));
+  let pop = document.getElementById('livePop');
+  if(!pop){ pop = document.createElement('div'); pop.id = 'livePop'; pop.className = 'livepop'; document.body.appendChild(pop);
+    pop.addEventListener('mouseleave', () => pop.remove()); }
+  pop.dataset.sess = sess; pop.dataset.kind = kind;
+  const p = prof(meta.user_id);
+  pop.innerHTML = `<div class="lpimg">${src ? `<img src="${src}" alt="">` : `<div class="lpwait">${ic(kind === 'cam' ? 'video' : 'screenUp', 28)}<small>prévia chegando…</small></div>`}<span class="lptag">${kind === 'cam' ? '📷 CÂMERA' : '🔴 AO VIVO'}</span></div>
+    <div class="lpb"><b>${esc(p.display_name)}</b><small>${kind === 'cam' ? 'está com a câmera ligada' : 'está compartilhando a tela'}</small>
+    <button class="btn sm" data-watch="${meta.voice}" data-wsess="${sess}">${Voice.channel && Voice.channel.id === meta.voice ? 'Assistir' : 'Entrar e assistir'}</button></div>`;
+  const r = row.getBoundingClientRect();
+  pop.style.left = Math.min(innerWidth - 300, r.right + 10) + 'px';
+  pop.style.top = Math.max(8, Math.min(innerHeight - 260, r.top - 60)) + 'px';
+  pop.querySelector('[data-watch]').onclick = () => { pop.remove(); watchLive(meta.voice, sess); };
+}
+let lpTimer = null;
+document.addEventListener('mouseover', e => {
+  const row = e.target.closest('.vu');
+  if(row){ clearTimeout(lpTimer); lpTimer = setTimeout(() => livePop(row), 250); return; }
+  if(e.target.closest('#livePop')){ clearTimeout(lpTimer); return; }
+  clearTimeout(lpTimer);
+  lpTimer = setTimeout(() => { const p = document.getElementById('livePop'); if(p && !p.matches(':hover')) p.remove(); }, 300);
+});
+/* no celular: segurar o nome mostra a prévia */
+document.addEventListener('contextmenu', e => { const row = e.target.closest('.vu'); if(row && isMobile()){ e.preventDefault(); livePop(row); } });
+
+/* ---------- acessibilidade ---------- */
+const A11Y_DEF = { a11yMotion:false, a11yContrast:false, a11yFont:false, a11yLinks:false, a11yBig:false, a11ySat:100, a11yTTS:false, a11yCaps:false, a11yCapsShow:true, a11yFocus:true, a11yAltWarn:false };
+Object.keys(A11Y_DEF).forEach(k => { if(P[k] === undefined) P[k] = A11Y_DEF[k]; });
+function applyA11y(){
+  const b = document.body.classList, sysMotion = matchMedia('(prefers-reduced-motion: reduce)').matches;
+  b.toggle('a11y-motion', !!P.a11yMotion || sysMotion);
+  b.toggle('a11y-contrast', !!P.a11yContrast);
+  b.toggle('a11y-links', !!P.a11yLinks);
+  b.toggle('a11y-big', !!P.a11yBig);
+  b.toggle('a11y-focus', P.a11yFocus !== false);
+  b.toggle('a11y-font', !!P.a11yFont);
+  if(P.a11yFont && !document.getElementById('a11yFontCss')){
+    const l = document.createElement('link'); l.id = 'a11yFontCss'; l.rel = 'stylesheet';
+    l.href = 'https://fonts.googleapis.com/css2?family=Atkinson+Hyperlegible:wght@400;700&display=swap'; document.head.appendChild(l);
+  }
+  document.documentElement.style.filter = P.a11ySat !== 100 ? `saturate(${P.a11ySat / 100})` : '';
+}
+applyA11y();
+/* rótulos para leitor de tela: botões só com ícone ganham o texto da dica */
+function ariaFix(root){
+  (root || document).querySelectorAll('button[data-tip]:not([aria-label]), [data-tip][role="button"]:not([aria-label])').forEach(b => b.setAttribute('aria-label', b.dataset.tip));
+  (root || document).querySelectorAll('button[title]:not([aria-label])').forEach(b => b.setAttribute('aria-label', b.title));
+}
+new MutationObserver(muts => { for(const m of muts) m.addedNodes.forEach(n => n.nodeType === 1 && ariaFix(n)); }).observe(document.body, { childList:true, subtree:true });
+
+/* ler mensagens em voz alta */
+const _addMessage = addMessage;
+addMessage = function(m){
+  const isNew = m && M.cid === m.channel_id && !M.list.find(x => x.id === m.id);
+  _addMessage.apply(this, arguments);
+  if(isNew && P.a11yTTS && m.author_id !== S.me.id && 'speechSynthesis' in window){
+    const txt = (m.content || '').replace(/https?:\/\/\S+/g, 'link').replace(/<[^>]+>/g, '').slice(0, 300) || 'enviou um anexo';
+    speak(`${prof(m.author_id).display_name}: ${txt}`);
+  }
+};
+function speak(text){
+  try{
+    const u = new SpeechSynthesisUtterance(text);
+    u.lang = ({ en:'en-US', es:'es-ES' })[P.lang] || 'pt-BR'; u.rate = P.ttsRate || 1;
+    speechSynthesis.speak(u);
+  }catch(e){}
+}
+
+/* legendas ao vivo nas chamadas (reconhecimento de voz do navegador) */
+const CAP = { rec: null, on: false, lines: new Map() };
+const SR = window.SpeechRecognition || window.webkitSpeechRecognition;
+function startCaptions(){
+  if(!SR){ App.toast('Seu navegador não tem reconhecimento de voz. Use o Chrome ou o Edge para legendas.', true); return false; }
+  if(CAP.on) return true;
+  const r = new SR(); r.continuous = true; r.interimResults = true; r.lang = ({ en:'en-US', es:'es-ES' })[P.lang] || 'pt-BR';
+  let last = 0;
+  r.onresult = e => {
+    const res = e.results[e.results.length - 1], text = res[0].transcript.trim();
+    if(!text || Voice.muted || Voice.deafened || !Voice.micEnabled()) return;
+    if(!res.isFinal && Date.now() - last < 700) return;
+    last = Date.now();
+    Voice.sendFx({ t:'cap', uid: S.me.id, text: text.slice(-160), fin: res.isFinal });
+  };
+  r.onend = () => { if(CAP.on && Voice.channel) try{ r.start(); }catch(e){} };
+  r.onerror = ev => { if(ev.error === 'not-allowed'){ CAP.on = false; App.toast('Permita o microfone para as legendas funcionarem.', true); } };
+  try{ r.start(); }catch(e){}
+  CAP.rec = r; CAP.on = true; return true;
+}
+function stopCaptions(){ CAP.on = false; try{ CAP.rec && CAP.rec.stop(); }catch(e){} CAP.rec = null; }
+const _onFx = Voice.onFx;
+Voice.onFx = (pl, mine) => {
+  if(pl && pl.t === 'cap'){ showCaption(pl); return; }
+  if(pl && pl.t === 'sound' && !SOUNDS.find(x => x[0] === pl.id)){
+    playSound(pl.id);
+    const meta = Object.values(SOUND_PACKS).flat().find(x => x[0] === pl.id); if(meta) floatReaction(meta[1], pl.uid);
+    return;
+  }
+  _onFx(pl, mine);
+};
+function showCaption(pl){
+  if(P.a11yCapsShow === false && !CAP.on) return;
+  let box = document.getElementById('capBox');
+  if(!box){ box = document.createElement('div'); box.id = 'capBox'; box.className = 'capbox'; box.setAttribute('aria-live', 'polite'); document.body.appendChild(box); }
+  const prev = CAP.lines.get(pl.uid); if(prev) clearTimeout(prev.t);
+  let line = box.querySelector(`[data-cu="${pl.uid}"]`);
+  if(!line){ line = document.createElement('div'); line.dataset.cu = pl.uid; box.appendChild(line); }
+  line.innerHTML = `<b>${esc(prof(pl.uid).display_name)}</b> ${esc(pl.text)}`;
+  CAP.lines.set(pl.uid, { t: setTimeout(() => { line.remove(); CAP.lines.delete(pl.uid); if(!box.children.length) box.remove(); }, pl.fin ? 5000 : 7000) });
+}
+/* liga sozinho ao entrar na chamada, se escolhido */
+const _joinVoice = joinVoice;
+joinVoice = async function(){ const r = await _joinVoice.apply(this, arguments); if(P.a11yCaps && Voice.channel) startCaptions(); return r; };
+const _leaveVoice = leaveVoice;
+leaveVoice = async function(){ stopCaptions(); const b = document.getElementById('capBox'); if(b) b.remove(); return _leaveVoice.apply(this, arguments); };
+App.toggleCaptions = () => { if(CAP.on){ stopCaptions(); App.toast('Legendas desligadas'); } else if(startCaptions()) App.toast('🗨️ Legendas ligadas — o que você fala aparece para todos na chamada'); };
+
+function secA11y(box, back){
+  box.innerHTML = `${back}<h2>Acessibilidade</h2>
+    <h3>Visão</h3>
+    ${row('Alto contraste', 'Textos e bordas mais fortes, mais fácil de ler.', toggle('aCon', P.a11yContrast))}
+    ${row('Fonte mais legível', 'Usa a Atkinson Hyperlegible, feita para baixa visão e dislexia.', toggle('aFont', P.a11yFont))}
+    ${row('Sublinhar links', '', toggle('aLnk', P.a11yLinks))}
+    ${row('Botões e áreas de toque maiores', '', toggle('aBig', P.a11yBig))}
+    ${row('Contorno de foco bem visível', 'Ajuda quem navega pelo teclado (Tab).', toggle('aFoc', P.a11yFocus !== false))}
+    <div class="srow"><div class="t"><b>Saturação das cores · <span id="aSatL">${P.a11ySat}%</span></b><small>Diminua se as cores incomodam; 0% deixa tudo em tons de cinza.</small></div></div>
+    <input type="range" class="range" id="aSat" min="0" max="100" step="5" value="${P.a11ySat}">
+    <hr class="sdiv"><h3>Movimento</h3>
+    ${row('Reduzir animações', 'Desliga partículas, brilhos e transições. Também segue a configuração do seu sistema.', toggle('aMot', P.a11yMotion))}
+    <hr class="sdiv"><h3>Leitura e audição</h3>
+    ${row('Ler mensagens novas em voz alta', 'Lê as mensagens que chegam na conversa aberta.', toggle('aTTS', P.a11yTTS))}
+    <div class="srow"><div class="t"><b>Velocidade da leitura · <span id="aRateL">${(P.ttsRate || 1).toFixed(1)}×</span></b></div><button class="btn sec sm" id="aTest">Testar</button></div>
+    <input type="range" class="range" id="aRate" min="0.6" max="1.8" step="0.1" value="${P.ttsRate || 1}">
+    ${row('Legendas ao vivo nas chamadas', SR ? 'Transforma sua fala em texto e mostra para todo mundo da chamada. Liga sozinho quando você entra.' : 'Seu navegador não suporta. Use Chrome ou Edge.', toggle('aCaps', P.a11yCaps))}
+    ${row('Mostrar legendas dos outros', 'Exibe o que as pessoas com legenda ligada estão falando.', toggle('aCapsS', P.a11yCapsShow !== false))}
+    <hr class="sdiv"><h3>Leitor de tela</h3>
+    <p class="mut small">Todos os botões com ícone têm nome para leitores de tela (NVDA, VoiceOver, TalkBack), e as legendas são anunciadas automaticamente.</p>`;
+  const $b = q => box.querySelector(q);
+  const bind = (id, key, after) => $b(id).onchange = e => { P[key] = e.target.checked; savePrefs(); after && after(e.target.checked); };
+  bind('#aCon', 'a11yContrast'); bind('#aFont', 'a11yFont'); bind('#aLnk', 'a11yLinks'); bind('#aBig', 'a11yBig'); bind('#aFoc', 'a11yFocus'); bind('#aMot', 'a11yMotion');
+  bind('#aTTS', 'a11yTTS', on => on && speak('Leitura de mensagens ligada'));
+  bind('#aCaps', 'a11yCaps', on => { if(Voice.channel) on ? startCaptions() : stopCaptions(); });
+  bind('#aCapsS', 'a11yCapsShow');
+  $b('#aSat').oninput = e => { P.a11ySat = +e.target.value; $b('#aSatL').textContent = P.a11ySat + '%'; savePrefs(); };
+  $b('#aRate').oninput = e => { P.ttsRate = +e.target.value; $b('#aRateL').textContent = P.ttsRate.toFixed(1) + '×'; savePrefs(); };
+  $b('#aTest').onclick = () => speak('Oi! Assim eu leio as mensagens do Telão.');
+}
+/* =====================================================================
+   v5: IDIOMAS — Português · English · Español
+   Traduz a interface (nunca o que as pessoas escrevem).
+   ===================================================================== */
+const LANGS = [['pt','Português (Brasil)','🇧🇷'],['en','English','🇺🇸'],['es','Español','🇪🇸']];
+if(!P.lang){ const n = (navigator.language || 'pt').slice(0, 2); P.lang = ['en','es'].includes(n) ? n : 'pt'; }
+// [português, inglês, espanhol]
+const DICT_RAW = [
+  ['Início · amigos e conversas','Home · friends and chats','Inicio · amigos y chats'],['Adicionar um servidor','Add a server','Añadir un servidor'],
+  ['Loja do Telão','Telão Shop','Tienda de Telão'],['Amigos','Friends','Amigos'],['Mensagens diretas','Direct messages','Mensajes directos'],
+  ['Online','Online','En línea'],['Todos','All','Todos'],['Pendentes','Pending','Pendientes'],['Adicionar amigo','Add friend','Añadir amigo'],
+  ['Mensagem','Message','Mensaje'],['Ligar','Call','Llamar'],['Dar presente','Send a gift','Regalar'],['Copiar usuário','Copy username','Copiar usuario'],
+  ['Editar perfil','Edit profile','Editar perfil'],['Desfazer amizade','Remove friend','Eliminar amigo'],['Aceitar','Accept','Aceptar'],['Recusar','Decline','Rechazar'],
+  ['Canais de texto','Text channels','Canales de texto'],['Canais de voz','Voice channels','Canales de voz'],['Convidar pessoas','Invite people','Invitar personas'],
+  ['Impulsionar servidor','Boost server','Impulsar servidor'],['Configurações do servidor','Server settings','Ajustes del servidor'],['Criar canal','Create channel','Crear canal'],
+  ['Criar categoria','Create category','Crear categoría'],['Sair do servidor','Leave server','Salir del servidor'],['Excluir servidor','Delete server','Eliminar servidor'],
+  ['Membros','Members','Miembros'],['Dono do servidor','Server owner','Dueño del servidor'],['Em chamada','In a call','En llamada'],['AO VIVO','LIVE','EN VIVO'],
+  ['Clique para assistir','Click to watch','Haz clic para ver'],['Assistir','Watch','Ver'],['Entrar e assistir','Join and watch','Entrar y ver'],
+  ['Sair da chamada','Leave call','Salir de la llamada'],['Silenciar','Mute','Silenciar'],['Ativar microfone','Unmute','Activar micrófono'],
+  ['Ensurdecer','Deafen','Ensordecer'],['Configurações','Settings','Ajustes'],['Compartilhar tela','Share screen','Compartir pantalla'],['Parar de compartilhar','Stop sharing','Dejar de compartir'],
+  ['Câmera','Camera','Cámara'],['Atividades','Activities','Actividades'],['Atividades e soundboard','Activities and soundboard','Actividades y soundboard'],
+  ['Assistir juntos','Watch together','Ver juntos'],['Legendas ao vivo','Live captions','Subtítulos en vivo'],['Reações na tela','On-screen reactions','Reacciones en pantalla'],
+  ['Efeitos da câmera','Camera effects','Efectos de cámara'],['Tela cheia','Fullscreen','Pantalla completa'],['Modo cinema','Cinema mode','Modo cine'],['Tirar print','Screenshot','Captura'],
+  ['Janela flutuante','Picture-in-picture','Ventana flotante'],['Desenhar na tela (todos veem)','Draw on screen (everyone sees)','Dibujar en pantalla (todos lo ven)'],
+  ['Volume da tela','Screen volume','Volumen de la pantalla'],['Volume da voz','Voice volume','Volumen de la voz'],
+  ['Responder','Reply','Responder'],['Editar','Edit','Editar'],['Mais','More','Más'],['Reagir','React','Reaccionar'],['Adicionar reação','Add reaction','Añadir reacción'],
+  ['Apagar mensagem','Delete message','Eliminar mensaje'],['Copiar texto','Copy text','Copiar texto'],['Copiar link','Copy link','Copiar enlace'],['Fixar','Pin','Fijar'],
+  ['Anexar arquivos','Attach files','Adjuntar archivos'],['Emoji','Emoji','Emoji'],['Mensagem de voz','Voice message','Mensaje de voz'],['Buscar','Search','Buscar'],
+  ['Buscar nesta conversa','Search this chat','Buscar en este chat'],['Buscar ou ir para…','Search or jump to…','Buscar o ir a…'],['Para onde você quer ir?','Where do you want to go?','¿A dónde quieres ir?'],
+  ['Mensagens fixadas','Pinned messages','Mensajes fijados'],['Nenhuma mensagem fixada ainda.','No pinned messages yet.','Aún no hay mensajes fijados.'],
+  ['novas mensagens','new messages','mensajes nuevos'],['editado','edited','editado'],['Solte para enviar','Drop to send','Suelta para enviar'],['Respondendo a','Replying to','Respondiendo a'],
+  ['Carregando…','Loading…','Cargando…'],['Cancelar','Cancel','Cancelar'],['Salvar','Save','Guardar'],['Salvar alterações','Save changes','Guardar cambios'],['Fechar','Close','Cerrar'],
+  ['Fechar (Esc)','Close (Esc)','Cerrar (Esc)'],['Confirmar','Confirm','Confirmar'],['Remover','Remove','Quitar'],['Redefinir','Reset','Restablecer'],['Enviar','Send','Enviar'],
+  ['Criar','Create','Crear'],['Copiar','Copy','Copiar'],['Apagar','Delete','Eliminar'],['Abrir','Open','Abrir'],['Baixar','Download','Descargar'],['Mostrar','Show','Mostrar'],
+  ['Em breve','Coming soon','Próximamente'],['Padrão','Default','Predeterminado'],['Nenhum','None','Ninguno'],['Usar','Use','Usar'],['Tirar','Take off','Quitar'],['Retirar','Withdraw','Retirar'],
+  ['Cuidado — você tem alterações não salvas!','Careful — you have unsaved changes!','¡Cuidado, tienes cambios sin guardar!'],
+  ['Configurações de usuário','User settings','Ajustes de usuario'],['Minha conta','My account','Mi cuenta'],['Perfis','Profiles','Perfiles'],['Perfil','Profile','Perfil'],
+  ['Loja e presentes','Shop and gifts','Tienda y regalos'],['Impulsos','Boosts','Impulsos'],['Configurações do app','App settings','Ajustes de la app'],['Aparência','Appearance','Apariencia'],
+  ['Acessibilidade','Accessibility','Accesibilidad'],['Idioma','Language','Idioma'],['Voz e vídeo','Voice and video','Voz y video'],['Notificações','Notifications','Notificaciones'],
+  ['Teclas de atalho','Keybinds','Atajos de teclado'],['App e instalação','App and install','App e instalación'],['Administração','Administration','Administración'],
+  ['Painel do admin','Admin panel','Panel de admin'],['Sair','Log out','Cerrar sesión'],['Visão geral','Overview','Vista general'],['Cargos','Roles','Roles'],['Canais','Channels','Canales'],
+  ['Convites','Invites','Invitaciones'],['Nome de exibição','Display name','Nombre visible'],['Nome de usuário','Username','Nombre de usuario'],['E-mail','Email','Correo'],
+  ['Senha','Password','Contraseña'],['Mudar senha','Change password','Cambiar contraseña'],['Excluir conta','Delete account','Eliminar cuenta'],['Remoção de conta','Account removal','Eliminación de cuenta'],
+  ['Entrar com','Sign-in method','Inicio de sesión con'],['Sobre mim','About me','Sobre mí'],['Membro desde','Member since','Miembro desde'],['Pronomes','Pronouns','Pronombres'],
+  ['Insígnias','Badges','Insignias'],['Links','Links','Enlaces'],['Banner','Banner','Banner'],['Avatar','Avatar','Avatar'],['Cor do avatar','Avatar color','Color del avatar'],
+  ['Cor do banner','Banner color','Color del banner'],['Prévia','Preview','Vista previa'],['Tema','Theme','Tema'],['Temas coloridos','Colorful themes','Temas de colores'],
+  ['Escuro','Dark','Oscuro'],['Claro','Light','Claro'],['Preto (AMOLED)','Black (AMOLED)','Negro (AMOLED)'],['Cor de destaque','Accent color','Color de acento'],
+  ['Escolher outra cor','Pick another color','Elegir otro color'],['Modo compacto','Compact mode','Modo compacto'],['Tamanho da fonte das conversas','Chat font size','Tamaño de letra del chat'],
+  ['Configurações de voz','Voice settings','Ajustes de voz'],['Dispositivo de entrada','Input device','Dispositivo de entrada'],['Dispositivo de saída','Output device','Dispositivo de salida'],
+  ['Testar microfone','Test microphone','Probar micrófono'],['Modo de entrada','Input mode','Modo de entrada'],['Processamento de voz','Voice processing','Procesamiento de voz'],
+  ['Qualidade','Quality','Calidad'],['Resolução','Resolution','Resolución'],['Bitrate máximo','Max bitrate','Bitrate máximo'],
+  ['Abaixar o som das telas quando alguém fala','Lower screen audio when someone talks','Bajar el audio de las pantallas cuando alguien habla'],
+  ['Sons de entrar, sair e mutar','Join, leave and mute sounds','Sonidos de entrar, salir y silenciar'],
+  ['Telão+','Telão+','Telão+'],['Turbine seu perfil e suas transmissões.','Supercharge your profile and your streams.','Potencia tu perfil y tus transmisiones.'],
+  ['Compare','Compare','Comparar'],['Grátis','Free','Gratis'],['Seus pagamentos','Your payments','Tus pagos'],
+  ['Loja','Shop','Tienda'],['Meus itens','My items','Mis artículos'],['Tudo','All','Todo'],['Decorações','Decorations','Decoraciones'],['Entradas na call','Call entrances','Entradas a la llamada'],
+  ['Pacotes de som','Sound packs','Paquetes de sonido'],['Títulos','Titles','Títulos'],['Fundos de perfil','Profile backgrounds','Fondos de perfil'],
+  ['Pegar fichas do dia','Claim daily coins','Reclamar fichas del día'],['Volte amanhã ✔','Come back tomorrow ✔','Vuelve mañana ✔'],['Pegar','Claim','Reclamar'],
+  ['Dar um presente','Send a gift','Hacer un regalo'],['Para','To','Para'],['Presente','Gift','Regalo'],['Mensagem (opcional)','Message (optional)','Mensaje (opcional)'],
+  ['Enviar presente','Send gift','Enviar regalo'],['Você ganhou um presente!','You got a gift!','¡Recibiste un regalo!'],['Aberto ✔','Opened ✔','Abierto ✔'],['Ainda fechado','Still wrapped','Aún cerrado'],
+  ['Impulsos de servidor','Server boosts','Impulsos de servidor'],['Impulsos do servidor','Server boosts','Impulsos del servidor'],['Impulsionar este servidor','Boost this server','Impulsar este servidor'],
+  ['O que os impulsos liberam','What boosts unlock','Lo que desbloquean los impulsos'],['Níveis','Levels','Niveles'],['Personalização liberada','Unlocked customization','Personalización desbloqueada'],
+  ['Ninguém ainda — seja o primeiro!','Nobody yet — be the first!','Nadie aún, ¡sé el primero!'],['Impulsionando este servidor','Boosting this server','Impulsando este servidor'],
+  ['Visão','Vision','Visión'],['Movimento','Motion','Movimiento'],['Leitura e audição','Reading and hearing','Lectura y audición'],['Leitor de tela','Screen reader','Lector de pantalla'],
+  ['Alto contraste','High contrast','Alto contraste'],['Fonte mais legível','More legible font','Fuente más legible'],['Sublinhar links','Underline links','Subrayar enlaces'],
+  ['Botões e áreas de toque maiores','Bigger buttons and touch areas','Botones y áreas táctiles más grandes'],['Contorno de foco bem visível','Clearly visible focus outline','Contorno de foco bien visible'],
+  ['Reduzir animações','Reduce motion','Reducir animaciones'],['Ler mensagens novas em voz alta','Read new messages aloud','Leer mensajes nuevos en voz alta'],
+  ['Legendas ao vivo nas chamadas','Live captions in calls','Subtítulos en vivo en llamadas'],['Mostrar legendas dos outros','Show other people\'s captions','Mostrar subtítulos de otros'],['Testar','Test','Probar'],
+  ['Entrar','Log in','Entrar'],['Cadastre-se','Sign up','Regístrate'],['Continuar com Google','Continue with Google','Continuar con Google'],['Boas-vindas de volta!','Welcome back!','¡Bienvenido de nuevo!'],
+  ['Que bom te ver de novo.','Great to see you again.','Qué bueno verte otra vez.'],['Precisa de uma conta?','Need an account?','¿Necesitas una cuenta?'],['Não chegou o e-mail?','Didn\'t get the email?','¿No te llegó el correo?'],
+  ['Reenviar confirmação','Resend confirmation','Reenviar confirmación'],['Adicione amigos para conversar','Add friends to chat','Añade amigos para chatear'],
+  ['Enviar pedido de amizade','Send friend request','Enviar solicitud de amistad'],['Nova conversa','New chat','Nuevo chat'],['Definir um status personalizado','Set a custom status','Definir un estado personalizado'],
+  ['Disponível','Online','Disponible'],['Ausente','Idle','Ausente'],['Não perturbe','Do not disturb','No molestar'],['Invisível','Invisible','Invisible'],
+  ['Entrar num servidor','Join a server','Unirse a un servidor'],['Criar o meu','Create my own','Crear el mío'],['Entrar no servidor','Join server','Unirse al servidor'],
+  ['Nome do servidor','Server name','Nombre del servidor'],['Nome do canal','Channel name','Nombre del canal'],['Descrição','Description','Descripción'],['Texto','Text','Texto'],
+  ['Atender','Answer','Contestar'],['Desconectar','Disconnect','Desconectar'],['Instalar','Install','Instalar'],['Instalar Telão','Install Telão','Instalar Telão'],
+  ['Nova atualização do Telão disponível!','A new Telão update is available!','¡Hay una nueva actualización de Telão!'],['Atualizar agora','Update now','Actualizar ahora'],
+  ['Clique aqui para ativar o som da chamada','Click here to enable call audio','Haz clic aquí para activar el audio de la llamada'],
+  ['Esse servidor ainda não tem canais','This server has no channels yet','Este servidor aún no tiene canales'],['Nada encontrado','Nothing found','No se encontró nada'],
+  ['Nada encontrado.','Nothing found.','No se encontró nada.'],['Digite para buscar mensagens.','Type to search messages.','Escribe para buscar mensajes.'],
+  ['Procurar membro','Search member','Buscar miembro'],['Procurar emoji','Search emoji','Buscar emoji'],['O que está rolando?','What\'s up?','¿Qué pasa?'],
+];
+const DICT = new Map(DICT_RAW.map(([pt, en, es]) => [pt, { en, es }]));
+// textos com partes que mudam
+const RULES = [
+  [/^Hoje às (.+)$/, { en:'Today at $1', es:'Hoy a las $1' }], [/^Ontem às (.+)$/, { en:'Yesterday at $1', es:'Ayer a las $1' }],
+  [/^(\d+) online · (\d+) membros?$/, { en:'$1 online · $2 members', es:'$1 en línea · $2 miembros' }],
+  [/^Online — (\d+)$/, { en:'Online — $1', es:'En línea — $1' }], [/^Offline — (\d+)$/, { en:'Offline — $1', es:'Desconectado — $1' }],
+  [/^Todos os amigos — (\d+)$/, { en:'All friends — $1', es:'Todos los amigos — $1' }], [/^Pendentes — (\d+)$/, { en:'Pending — $1', es:'Pendientes — $1' }],
+  [/^Conversar em (.+)$/, { en:'Message $1', es:'Escribir en $1' }], [/^Mensagem para (.+)$/, { en:'Message $1', es:'Mensaje para $1' }],
+  [/^Meus itens \((\d+)\)$/, { en:'My items ($1)', es:'Mis artículos ($1)' }], [/^Impulso (\d)$/, { en:'Boost $1', es:'Impulso $1' }],
+  [/^Nível (\d)$/, { en:'Level $1', es:'Nivel $1' }], [/^(\d+) impulsos$/, { en:'$1 boosts', es:'$1 impulsos' }],
+  [/^(.+) está digitando…$/, { en:'$1 is typing…', es:'$1 está escribiendo…' }],
+];
+function tr(text){
+  if(P.lang === 'pt' || !text) return null;
+  const t = text.trim(); if(!t || t.length > 120) return null;
+  const d = DICT.get(t); if(d) return text.replace(t, d[P.lang]);
+  for(const [re, o] of RULES) if(re.test(t)) return text.replace(t, t.replace(re, o[P.lang]));
+  return null;
+}
+// nunca traduz o que é conteúdo dos usuários
+const SKIP = '.ct, .bub .ct, .editbox, .dn, .un, .cst, .pcard2 p, .plinks, .nm, .hd b, .mt .nm, .vu .nm, .rpl, .emb, .poll, .gt small, input, textarea, [contenteditable], [data-noi18n], script, style, code, pre';
+function trNode(n){
+  if(n.nodeType === 3){
+    const p = n.parentElement; if(!p || p.closest(SKIP) || n.nodeValue === n._trOut) return;
+    const out = tr(n.nodeValue); if(out != null && out !== n.nodeValue){ n._trOut = out; n.nodeValue = out; }
+    return;
+  }
+  if(n.nodeType !== 1 || n.matches(SKIP)) return;
+  for(const a of ['placeholder','data-tip','data-tipsub','title','aria-label']){
+    const v = n.getAttribute(a); if(!v || v === (n._trA || {})[a]) continue;
+    const out = tr(v); if(out != null && out !== v){ (n._trA ||= {})[a] = out; n.setAttribute(a, out); }
+  }
+  for(const c of n.childNodes) trNode(c);
+}
+let i18nObs = null;
+function applyLang(){
+  document.documentElement.lang = ({ pt:'pt-BR', en:'en', es:'es' })[P.lang] || 'pt-BR';
+  if(P.lang === 'pt'){ if(i18nObs){ i18nObs.disconnect(); i18nObs = null; } return; }
+  trNode(document.body);
+  if(!i18nObs){
+    i18nObs = new MutationObserver(muts => {
+      for(const m of muts){
+        if(m.type === 'characterData') trNode(m.target);
+        else if(m.type === 'attributes') trNode(m.target);
+        else m.addedNodes.forEach(trNode);
+      }
+    });
+    i18nObs.observe(document.body, { childList:true, subtree:true, characterData:true, attributes:true, attributeFilter:['placeholder','data-tip','title','aria-label'] });
+  }
+}
+applyLang();
+// toasts e confirmações também
+const _toast = App.toast;
+App.toast = (t, err, action) => _toast(tr(t) ?? t, err, action);
+
+function secLang(box, back){
+  box.innerHTML = `${back}<h2>Idioma</h2>
+    <p class="mut">Muda os textos do Telão. As mensagens das pessoas continuam como foram escritas.</p>
+    <div class="langs">${LANGS.map(([v, l, f]) => `<button data-lang="${v}" class="${P.lang === v ? 'on' : ''}"><span class="fl">${f}</span><b>${l}</b>${P.lang === v ? '<span class="ok">✔</span>' : ''}</button>`).join('')}</div>
+    <p class="mut small" style="margin-top:14px">Algumas partes novas podem aparecer em português até a próxima atualização.</p>`;
+  box.querySelectorAll('[data-lang]').forEach(b => b.onclick = () => {
+    const was = P.lang; P.lang = b.dataset.lang; savePrefs();
+    if(was !== 'pt' && P.lang !== was){ location.reload(); return; }   // volta os textos originais
+    applyLang(); renderAll(); renderSettings();
+  });
+}
+/* =====================================================================
+   v5: MODERAÇÃO — castigo no chat, silenciar/ensurdecer/desconectar na call, banir
+   ===================================================================== */
+const memberRow = (sid, uid) => (S.members.get(sid) || []).find(m => m.user_id === uid);
+const timedOut = (sid, uid) => { const m = memberRow(sid, uid); return m && m.timeout_until && new Date(m.timeout_until) > new Date() ? new Date(m.timeout_until) : null; };
+// a voz de alguém silenciado por moderador fica muda para todos da chamada
+App.srvVoiceMuted = uid => {
+  const sid = Voice.channel && Voice.channel.server_id; if(!sid) return false;
+  const m = memberRow(sid, uid); return !!(m && (m.voice_muted));
+};
+function canModUser(s, uid){
+  if(uid === S.me.id || uid === s.owner_id) return false;
+  if(s.owner_id === S.me.id) return true;
+  return !rolesOf(s.id, uid).some(r => r.perms & 32);
+}
+async function modCall(s, uid, args, okMsg){
+  const { error } = await App.sb.rpc('moderate_member', { p_server: s.id, p_user: uid, ...args });
+  if(error){ App.toast(error.message, true); return; }
+  await loadMembers(s.id); renderMembers(); renderSidebar(); Voice.peers.forEach(p => Voice.applyVolume(p));
+  if(okMsg) App.toast(okMsg);
+}
+App.modItems = (s, uid, x, y) => {
+  if(!(S.members.get(s.id) || []).some(m => m.user_id === uid) || !canModUser(s, uid)) return [];
+  const out = [], p = prof(uid), m = memberRow(s.id, uid) || {}, to = timedOut(s.id, uid);
+  const inCall = Voice.channel && Voice.channel.server_id === s.id && voiceUsers(Voice.channel).some(v => v.user_id === uid);
+  const anyCall = [...S.vp.values()].flat().find(v => v.user_id === uid && v.voice && (findChannel(v.voice) || {}).server_id === s.id);
+  if(App.hasPerm(s.id, 64)){
+    out.push('-', { html: `<div class="modh">${ic('shield',14)} Moderação</div>` });
+    out.push({ label: m.voice_muted ? 'Tirar silêncio da call' : 'Silenciar na call', icon: ic(m.voice_muted ? 'mic' : 'micOff', 18), cls:'moditem',
+      onClick: () => modCall(s, uid, { p_vmute: !m.voice_muted }, m.voice_muted ? `${p.display_name} pode falar de novo.` : `🔇 ${p.display_name} foi silenciado na call.`) });
+    out.push({ label: m.voice_deafened ? 'Tirar ensurdecer' : 'Ensurdecer na call', icon: ic('headphonesOff', 18), cls:'moditem',
+      onClick: () => modCall(s, uid, { p_vdeaf: !m.voice_deafened }, m.voice_deafened ? `${p.display_name} voltou a ouvir.` : `${p.display_name} foi ensurdecido.`) });
+    if(anyCall || inCall) out.push({ label:'Desconectar da call', icon: ic('phoneOff', 18), cls:'moditem', onClick: () => {
+      sendToUser(uid, 'mod-disconnect', { server_id: s.id, by: S.me.id });
+      App.toast(`${p.display_name} foi desconectado da call.`);
+    }});
+    out.push(to
+      ? { label: `Tirar castigo (até ${to.toLocaleTimeString('pt-BR',{hour:'2-digit',minute:'2-digit'})})`, icon: ic('clock', 18), cls:'moditem', onClick: () => modCall(s, uid, { p_timeout_minutes: 0 }, `${p.display_name} saiu do castigo.`) }
+      : { label:'Castigo no chat…', icon: ic('clock', 18), cls:'moditem', onClick: () => timeoutModal(s, uid) });
+  }
+  if(App.hasPerm(s.id, 128)) out.push({ label:'Banir do servidor', icon: ic('slash', 18), danger:true, onClick: () => banModal(s, uid) });
+  return out;
+};
+function timeoutModal(s, uid){
+  const p = prof(uid);
+  const opts = [[1,'1 minuto'],[5,'5 minutos'],[10,'10 minutos'],[60,'1 hora'],[1440,'1 dia'],[10080,'1 semana']];
+  modal(`<div class="mh"><h2>⏳ Castigo para ${esc(p.display_name)}</h2><p>Durante o castigo a pessoa continua no servidor, mas não consegue mandar mensagens nem reagir.</p></div>
+    <div class="mc"><div class="tochips">${opts.map(([v, l]) => `<button data-to="${v}">${l}</button>`).join('')}</div></div>
+    <div class="mf"><button class="btn sec" data-close>Cancelar</button></div>`, m => {
+    m.querySelectorAll('[data-to]').forEach(b => b.onclick = () => { closeModal(); modCall(s, uid, { p_timeout_minutes: +b.dataset.to }, `⏳ ${p.display_name} está de castigo por ${b.textContent}.`); });
+  });
+}
+function banModal(s, uid){
+  const p = prof(uid);
+  modal(`<form id="bnF"><div class="mh"><h2>Banir ${esc(p.display_name)}?</h2><p>A pessoa sai de <b>${esc(s.name)}</b> e não consegue entrar de novo, nem com convite.</p></div>
+    <div class="mc"><label class="field"><span>Motivo (opcional)</span><input class="inp" id="bnR" maxlength="200" placeholder="spam, ofensa…"></label></div>
+    <div class="mf"><button type="button" class="btn sec" data-close>Cancelar</button><button class="btn red">Banir</button></div></form>`, m => {
+    m.querySelector('#bnF').onsubmit = async e => {
+      e.preventDefault();
+      const { error } = await App.sb.rpc('ban_member', { p_server: s.id, p_user: uid, p_reason: m.querySelector('#bnR').value.trim() || null });
+      if(error){ App.toast(error.message, true); return; }
+      closeModal(); App.toast(`🔨 ${p.display_name} foi banido.`); await loadMembers(s.id); renderMembers();
+    };
+  });
+}
+/* do lado de quem foi moderado */
+App.onModChange = row => {
+  const s = S.servers.find(x => x.id === row.server_id); if(!s) return;
+  if(Voice.channel && Voice.channel.server_id === row.server_id){
+    const was = [Voice.forceMuted, Voice.forceDeaf];
+    Voice.setForced(row.voice_muted, row.voice_deafened);
+    if(!was[0] && row.voice_muted) App.toast(`🔇 Um moderador silenciou você em ${s.name}.`, true);
+    if(!was[1] && row.voice_deafened) App.toast(`🔇 Um moderador ensurdeceu você em ${s.name}.`, true);
+    renderUserPanel(); renderStage();
+  }
+  const to = row.timeout_until && new Date(row.timeout_until) > new Date();
+  if(to) App.toast(`⏳ Você está de castigo em ${s.name} até ${new Date(row.timeout_until).toLocaleTimeString('pt-BR',{hour:'2-digit',minute:'2-digit'})}.`, true);
+  composerTimeout();
+};
+App.onModDisconnect = pl => {
+  if(!pl || !Voice.channel || Voice.channel.server_id !== pl.server_id) return;
+  const s = S.servers.find(x => x.id === pl.server_id);
+  if(!s || !(s.owner_id === pl.by || (S.roles.get(s.id) || []).some(r => (r.perms & (64|32)) && (S.memberRoles.get(s.id)?.get(pl.by) || new Set()).has(r.id)))) return;
+  leaveVoice(); App.toast('Um moderador desconectou você da chamada.', true);
+};
+App.onRemoved = row => { /* expulso ou banido: o aviso padrão já aparece */ };
+/* ao entrar numa call, aplica silêncio do moderador */
+const _joinVoiceM = joinVoice;
+joinVoice = async function(ch){
+  const r = await _joinVoiceM.apply(this, arguments);
+  if(Voice.channel && Voice.channel.server_id){ const m = memberRow(Voice.channel.server_id, S.me.id) || {}; Voice.setForced(m.voice_muted, m.voice_deafened); }
+  return r;
+};
+const _leaveVoiceM = leaveVoice;
+leaveVoice = async function(){ Voice.forceMuted = Voice.forceDeaf = false; return _leaveVoiceM.apply(this, arguments); };
+/* caixa de mensagem em castigo */
+function composerTimeout(){
+  const c = $('#cmp'); if(!c) return;
+  const ch = findChannel(M.cid), sid = ch && ch.server_id, to = sid && timedOut(sid, S.me.id);
+  const form = $('#cmpF');
+  c.disabled = !!to; form && form.classList.toggle('timedout', !!to);
+  if(to){ c.dataset.ph = c.dataset.ph || c.placeholder; c.placeholder = `⏳ Você está de castigo até ${to.toLocaleTimeString('pt-BR',{hour:'2-digit',minute:'2-digit'})}`; c.value = ''; }
+  else if(c.dataset.ph){ c.placeholder = c.dataset.ph; delete c.dataset.ph; }
+}
+new MutationObserver(() => { const c = $('#cmp'); if(c && !c._toChecked){ c._toChecked = true; composerTimeout(); } }).observe(document.body, { childList:true, subtree:true });
+setInterval(composerTimeout, 15000);
+
+/* configurações do servidor: lista de banidos */
+async function secSrvBans(box, back){
+  const s = SET.server;
+  box.innerHTML = `${back}<h2>Banimentos</h2><p class="mut">Pessoas banidas não conseguem voltar, nem com convite.</p><div id="bnL" class="mut">Carregando…</div>`;
+  const { data, error } = await App.sb.from('server_bans').select('*').eq('server_id', s.id).order('created_at', { ascending:false });
+  const el = box.querySelector('#bnL'); if(!el) return;
+  if(error){ el.textContent = error.message; return; }
+  await ensureProfiles((data || []).flatMap(b => [b.user_id, b.banned_by]));
+  el.innerHTML = (data || []).length ? (data || []).map(b => `<div class="banrow">${avatar(prof(b.user_id))}<div class="t"><b>${esc(prof(b.user_id).display_name)}</b><small>${b.reason ? esc(b.reason) + ' · ' : ''}por ${esc(prof(b.banned_by).display_name)} em ${new Date(b.created_at).toLocaleDateString('pt-BR')}</small></div>
+    ${App.hasPerm(s.id, 128) ? `<button class="btn sec sm" data-unban="${b.user_id}">Desbanir</button>` : ''}</div>`).join('') : 'Ninguém banido. 🕊️';
+  el.querySelectorAll('[data-unban]').forEach(b => b.onclick = async () => {
+    const { error } = await App.sb.rpc('unban_member', { p_server: s.id, p_user: b.dataset.unban });
+    if(error){ App.toast(error.message, true); return; } renderSettings();
+  });
+}
 /* ---------------- PWA ---------------- */
 window.addEventListener('beforeinstallprompt', e => {
   e.preventDefault(); S.installEvt = e;

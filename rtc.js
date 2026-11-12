@@ -72,7 +72,7 @@
     },
     micEnabled(){
       const P = this.prefs();
-      return !this.muted && !this.deafened && (P.mode !== 'ptt' || this.pttDown);
+      return !this.muted && !this.deafened && !this.forceMuted && !this.forceDeaf && (P.mode !== 'ptt' || this.pttDown);
     },
     setPtt(down){
       if(this.pttDown === down) return;
@@ -153,7 +153,7 @@
       try{
         await this.presenceCh.track({
           session: SESSION, user_id: me.id, voice: this.channel.id,
-          muted: this.muted || !this.micStream, deafened: this.deafened,
+          muted: this.muted || this.forceMuted || !this.micStream, deafened: this.deafened || this.forceDeaf, smod: !!(this.forceMuted || this.forceDeaf),
           sharing: !!this.screenStream, screen: this.screenStream ? this.screenStream.id : null,
           camera: !!this.camStream, cam: this.camStream ? this.camStream.id : null,
           at: Date.now()
@@ -333,19 +333,38 @@
       this.peers.forEach(p => p.audioEls.forEach(a => a.play().catch(()=>{})));
     },
 
+    screenVolumes: new Map(),
+    ducking: false,
     applyVolume(p){
-      const info = this.infos.get(p.remote);
-      const v = info ? (this.userVolumes.get(info.user_id) ?? 1) : 1;
-      p.audioEls.forEach(a => { a.muted = this.deafened; a.volume = Math.min(1, v); });
+      const info = this.infos.get(p.remote), uid = info && info.user_id;
+      const voice = uid ? (this.userVolumes.get(uid) ?? 1) : 1;
+      const scr = (uid ? (this.screenVolumes.get(uid) ?? 1) : 1) * (this.ducking ? 0.25 : 1);
+      p.streams.forEach((s, id) => {
+        const a = p.audioEls.get(id); if(!a) return;
+        const isScreen = s.getVideoTracks().length > 0 || (info && info.screen === id);
+        a.muted = this.deafened || this.forceDeaf;
+        // silenciado por um moderador: ninguém ouve a voz dele (vale mesmo se ele tentar burlar)
+        const modMuted = !isScreen && uid && App.srvVoiceMuted && App.srvVoiceMuted(uid);
+        a.volume = modMuted ? 0 : Math.max(0, Math.min(1, isScreen ? scr : voice));
+      });
     },
     setUserVolume(userId, v){ this.userVolumes.set(userId, v); this.peers.forEach(p => this.applyVolume(p)); },
+    setScreenVolume(userId, v){ this.screenVolumes.set(userId, v); this.peers.forEach(p => this.applyVolume(p)); },
 
+    forceMuted: false, forceDeaf: false,
+    setForced(m, d){
+      const ch = this.forceMuted !== m || this.forceDeaf !== d;
+      this.forceMuted = !!m; this.forceDeaf = !!d;
+      if(ch){ this.applyMicState(); App.sfx(m || d ? 'mute' : 'unmute'); }
+    },
     toggleMute(){
+      if(this.forceMuted || this.forceDeaf){ App.toast('🔇 Um moderador silenciou você nesta chamada.', true); return; }
       if(this.deafened){ this.deafened = false; this.muted = false; }
       else this.muted = !this.muted;
       this.applyMicState(); App.sfx(this.muted ? 'mute' : 'unmute');
     },
     toggleDeafen(){
+      if(this.forceDeaf){ App.toast('🔇 Um moderador ensurdeceu você nesta chamada.', true); return; }
       this.deafened = !this.deafened;
       this.applyMicState(); App.sfx(this.deafened ? 'mute' : 'unmute');
     },
@@ -364,7 +383,8 @@
       try{
         s = await navigator.mediaDevices.getDisplayMedia({
           video: { width:{ideal:st.w}, height:{ideal:st.h}, frameRate:{ideal:st.fps, max:st.fps} },
-          audio: { echoCancellation:false, noiseSuppression:false, autoGainControl:false, suppressLocalAudioPlayback:false },
+          // restrictOwnAudio: tira o som da própria chamada da captura (senão todo mundo ouve a call de novo pela tela)
+          audio: { echoCancellation:false, noiseSuppression:false, autoGainControl:false, suppressLocalAudioPlayback:false, restrictOwnAudio:true },
           systemAudio:'include', surfaceSwitching:'include', selfBrowserSurface:'exclude'
         });
       }catch(e){ if(e.name !== 'NotAllowedError') App.toast('Não foi possível capturar: '+e.message, true); return; }
@@ -375,7 +395,11 @@
       s.getAudioTracks().forEach(t => { if('contentHint' in t) t.contentHint = 'music'; });
       vt.addEventListener('ended', () => this.stopScreen());
       this.peers.forEach(p => { s.getTracks().forEach(t => p.screenSenders.push(p.pc.addTrack(t, s))); });
-      if(!s.getAudioTracks().length) App.toast('⚠️ Tela SEM áudio. Para mandar som: “Tela inteira” + “Compartilhar áudio do sistema”, ou uma aba + “Compartilhar áudio da aba”.', true);
+      const sup = navigator.mediaDevices.getSupportedConstraints ? navigator.mediaDevices.getSupportedConstraints() : {};
+      const surface = (vt.getSettings && vt.getSettings().displaySurface) || '';
+      if(s.getAudioTracks().length && !sup.restrictOwnAudio && surface === 'monitor')
+        App.toast('Dica: seu navegador ainda não separa o som da chamada da tela inteira. Use fone de ouvido, ou compartilhe só uma aba/janela do jogo, para ninguém ouvir eco.');
+      else if(!s.getAudioTracks().length) App.toast('⚠️ Tela SEM áudio. Para mandar som: “Tela inteira” + “Compartilhar áudio do sistema”, ou uma aba + “Compartilhar áudio da aba”.', true);
       else App.toast('Compartilhando tela com áudio 🎧');
       this.track(); this.onChange();
     },
@@ -504,6 +528,11 @@
           if(talking !== this.speaking.has(sess)){ talking ? this.speaking.add(sess) : this.speaking.delete(sess); changed = true; }
         });
         if(changed) this.onSpeaking();
+        // abaixa o som das telas enquanto alguém fala (com 1s de "soltura" pra não ficar pulsando)
+        const talkingNow = this.prefs().duck !== false && [...this.speaking].some(x => x !== SESSION) && this.peers.size > 0 && this.screens().some(sc => !sc.mine);
+        if(talkingNow) this._duckUntil = Date.now() + 1000;
+        const duck = talkingNow || Date.now() < (this._duckUntil || 0);
+        if(duck !== this.ducking){ this.ducking = duck; this.peers.forEach(p => this.applyVolume(p)); }
         if((this._tick = (this._tick||0) + 1) % 40 === 0){ this.syncPeers(); this.checkQuality(); }
       }, 120);
     }
