@@ -92,7 +92,10 @@ function renderMembers(){
   groups.forEach(g => { if(g.list.length) h += `<h4>${esc(g.name)} — ${g.list.length}</h4>${g.list.map(row).join('')}`; });
   if(online.length) h += `<h4>Online — ${online.length}</h4>${online.map(row).join('')}`;
   if(off.length) h += `<h4>Offline — ${off.length}</h4>${off.map(row).join('')}`;
+  // como painel por cima (celular e telas menores): cabeçalho com botão de fechar
+  if(innerWidth <= 1100) h = `<div class="memhead"><b>Membros <span>${mem.length}</span></b><button class="ibtn" id="memX" aria-label="Fechar membros">${ic('x', 20)}</button></div>` + h;
   el.innerHTML = h;
+  const mx = el.querySelector('#memX'); if(mx) mx.onclick = () => { S.memOverlay = false; renderMembers(); const hb = document.getElementById('hMembers'); if(hb) hb.classList.remove('on'); };
   el.querySelectorAll('[data-watch]').forEach(b => b.onclick = e => { e.stopPropagation(); watchLive(b.dataset.watch, b.dataset.wsess); });
   el.querySelectorAll('[data-u]').forEach(r => r.onclick = e => { if(e.target.closest('[data-watch]')) return; const b = r.getBoundingClientRect(); userMenu(r.dataset.u, b.left - 330, b.top); });
 }

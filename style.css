@@ -1655,3 +1655,20 @@ html.touch .wkeys{display:none}
 /* avisos flutuantes não bloqueiam toques no que está embaixo (só os botões deles são tocáveis) */
 .toast{pointer-events:none}.toast button,.toast a{pointer-events:auto}
 @media (max-width:760px){ .toast{bottom:calc(78px + env(safe-area-inset-bottom));max-width:calc(100vw - 24px)} body.m-main .toast,body.set-sec .toast{bottom:calc(84px + env(safe-area-inset-bottom))} }
+
+/* ===== v6.13: app do iPhone (barra de status) e painel de membros ===== */
+.memhead{display:flex;align-items:center;justify-content:space-between;gap:8px;position:sticky;top:-8px;z-index:2;margin:-8px -8px 6px;padding:10px 8px 8px 14px;background:var(--bg2);border-bottom:1px solid var(--line)}
+.memhead b{font-size:15px;color:var(--txt)}.memhead b span{color:var(--mut);font-weight:600;margin-left:4px}
+.memhead .ibtn{width:36px;height:36px}
+@media (max-width:1100px){ body.mem-open #members{top:calc(8px + env(safe-area-inset-top))} }
+@media (max-width:760px){
+  .settings .sclose{top:calc(10px + env(safe-area-inset-top))}
+  .settings .mobileback{top:calc(12px + env(safe-area-inset-top))}
+  .settings.sec-open .scontent .in{padding-top:calc(58px + env(safe-area-inset-top))}
+  .settings.sec-open{padding-top:0}
+  .explore{padding-top:env(safe-area-inset-top)}
+  #menu{max-height:calc(100dvh - 16px - env(safe-area-inset-top))}
+}
+@media (max-width:760px){ .modal{padding-top:calc(16px + env(safe-area-inset-top))} }
+#menuShade{position:fixed;inset:0;z-index:59;background:rgba(5,5,10,.5);animation:fade .15s}
+#menuShade.hidden{display:none}

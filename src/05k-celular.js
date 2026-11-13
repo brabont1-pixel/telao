@@ -132,3 +132,12 @@ renderMain = function(){
   _renderMainK.apply(this, arguments);
   const ta = $('#cmp'); if(ta && isMobile() && !ta.disabled) ta.placeholder = ta.placeholder.replace(/ — digite \/ para comandos$/, '');
 };
+
+/* menus no celular: fundo escuro atrás da gaveta; tocar nele fecha (no iPhone não existe botão voltar) */
+(() => {
+  const mn = document.getElementById('menu'); if(!mn) return;
+  const shade = document.createElement('div'); shade.id = 'menuShade'; shade.className = 'hidden'; document.body.appendChild(shade);
+  const close = e => { e.preventDefault(); e.stopPropagation(); closeMenu(); };
+  shade.addEventListener('pointerdown', close); shade.addEventListener('click', close);
+  new MutationObserver(() => shade.classList.toggle('hidden', !isMobile() || mn.classList.contains('hidden'))).observe(mn, { attributes: true, attributeFilter: ['class'] });
+})();

@@ -343,3 +343,10 @@ O "Spotify direto" (com Ouvir junto) continua opcional e só aparece se você co
 - Busca (Ctrl+K) já abre com o teclado; o seletor de emojis não abre mais o teclado sozinho por cima dos emojis.
 - Avisos flutuantes não bloqueiam mais toques no que está atrás deles.
 - Testado tocando em todos os botões de todas as telas num celular de 390×800 e num de 360×640.
+
+# Versão 6.13: app do iPhone (tela de início)
+
+- No app do iPhone, a barra de status (relógio, sinal, bateria) não cobre mais o **Voltar** e o **X** das configurações, nem os botões do topo do Explorar, das janelas e dos menus.
+- **Membros do servidor:** o painel ganhou um cabeçalho com **X** para fechar (no iPhone não existe botão voltar do aparelho).
+- **Menus no celular** (menu do servidor, do canal, da mensagem…) agora têm um fundo escuro atrás; tocar nele fecha o menu.
+- Testado no "modo iPhone": todas as telas, janelas e menus fecham só pelo que aparece na tela, sem usar o voltar do aparelho.

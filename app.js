@@ -9,7 +9,7 @@ const esc = s => String(s ?? '').replace(/[&<>"']/g, c => ({'&':'&amp;','<':'&lt
 const COLORS = ['#5865f2','#eb459e','#3ba55c','#faa61a','#ed4245','#f47b67','#1abc9c','#9b59b6','#e67e22','#607d8b'];
 const ls = { get(k,d){ try{ const v=localStorage.getItem(k); return v==null?d:JSON.parse(v); }catch(e){ return d; } }, set(k,v){ try{ localStorage.setItem(k, JSON.stringify(v)); }catch(e){} } };
 
-const APP_VERSION = '6.12';
+const APP_VERSION = '6.13';
 const S = {
   me: null, profiles: new Map(), servers: [], channels: new Map(), members: new Map(),
   friends: [], dms: [], dmActivity: ls.get('telao-dmact', {}), online: new Set(),
@@ -2546,7 +2546,10 @@ function renderMembers(){
   groups.forEach(g => { if(g.list.length) h += `<h4>${esc(g.name)} — ${g.list.length}</h4>${g.list.map(row).join('')}`; });
   if(online.length) h += `<h4>Online — ${online.length}</h4>${online.map(row).join('')}`;
   if(off.length) h += `<h4>Offline — ${off.length}</h4>${off.map(row).join('')}`;
+  // como painel por cima (celular e telas menores): cabeçalho com botão de fechar
+  if(innerWidth <= 1100) h = `<div class="memhead"><b>Membros <span>${mem.length}</span></b><button class="ibtn" id="memX" aria-label="Fechar membros">${ic('x', 20)}</button></div>` + h;
   el.innerHTML = h;
+  const mx = el.querySelector('#memX'); if(mx) mx.onclick = () => { S.memOverlay = false; renderMembers(); const hb = document.getElementById('hMembers'); if(hb) hb.classList.remove('on'); };
   el.querySelectorAll('[data-watch]').forEach(b => b.onclick = e => { e.stopPropagation(); watchLive(b.dataset.watch, b.dataset.wsess); });
   el.querySelectorAll('[data-u]').forEach(r => r.onclick = e => { if(e.target.closest('[data-watch]')) return; const b = r.getBoundingClientRect(); userMenu(r.dataset.u, b.left - 330, b.top); });
 }
@@ -6084,6 +6087,15 @@ renderMain = function(){
   _renderMainK.apply(this, arguments);
   const ta = $('#cmp'); if(ta && isMobile() && !ta.disabled) ta.placeholder = ta.placeholder.replace(/ — digite \/ para comandos$/, '');
 };
+
+/* menus no celular: fundo escuro atrás da gaveta; tocar nele fecha (no iPhone não existe botão voltar) */
+(() => {
+  const mn = document.getElementById('menu'); if(!mn) return;
+  const shade = document.createElement('div'); shade.id = 'menuShade'; shade.className = 'hidden'; document.body.appendChild(shade);
+  const close = e => { e.preventDefault(); e.stopPropagation(); closeMenu(); };
+  shade.addEventListener('pointerdown', close); shade.addEventListener('click', close);
+  new MutationObserver(() => shade.classList.toggle('hidden', !isMobile() || mn.classList.contains('hidden'))).observe(mn, { attributes: true, attributeFilter: ['class'] });
+})();
 /* =====================================================================
    v6.7: DESEMPENHO — Qualidade · Equilibrado · Modo jogo (máximo de FPS)
    ===================================================================== */
