@@ -126,8 +126,9 @@ async function openExplore(){
     g.querySelectorAll('[data-exjoin]').forEach(b => b.onclick = async () => {
       const sid = b.dataset.exjoin;
       if(b.dataset.mem !== '1'){
-        const { error } = await App.sb.rpc('join_public_server', { p_server: sid });
-        if(error){ App.toast(error.message, true); return; }
+        const r = await App.joinWithRules('join_public_server', { p_server: sid });
+        if(r.cancelled) return;
+        if(r.error){ App.toast(r.error.message, true); return; }
         await loadServers(); App.toast('Você entrou na comunidade.');
       }
       close(); go({ kind: 'server', sid });

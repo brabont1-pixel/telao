@@ -161,7 +161,8 @@ begin
   return sid;
 end $$;
 
-create or replace function public.join_server(p_code text) returns uuid
+drop function if exists public.join_server(text);
+create or replace function public.join_server(p_code text, p_accept boolean default false) returns uuid
 language plpgsql security definer set search_path = public as $$
 declare sid uuid;
 begin
@@ -169,6 +170,11 @@ begin
   select id into sid from servers where invite_code = lower(trim(p_code));
   if sid is null then raise exception 'Convite inválido'; end if;
   if exists (select 1 from server_bans where server_id = sid and user_id = auth.uid()) then raise exception 'Você foi banido desse servidor'; end if;
+  -- v6.15: servidor com regras: quem é novo precisa aceitar antes de entrar
+  if not p_accept and not exists (select 1 from server_members where server_id = sid and user_id = auth.uid())
+     and exists (select 1 from servers where id = sid and coalesce((to_jsonb(servers)->>'rules_on')::boolean, false)) then
+    raise exception 'RULES_REQUIRED:%', sid;
+  end if;
   insert into server_members (server_id, user_id) values (sid, auth.uid()) on conflict do nothing;
   return sid;
 end $$;
@@ -1142,11 +1148,16 @@ language sql stable security definer set search_path = public as $$
   order by (select count(*) from server_members m where m.server_id = s.id) desc, s.public_since desc nulls last
   limit 60;
 $$;
-create or replace function public.join_public_server(p_server uuid) returns uuid
+drop function if exists public.join_public_server(uuid);
+create or replace function public.join_public_server(p_server uuid, p_accept boolean default false) returns uuid
 language plpgsql security definer set search_path = public as $$
 begin
   if not exists (select 1 from servers where id = p_server and is_public) then raise exception 'Esse servidor não está aberto para a comunidade'; end if;
   if exists (select 1 from server_bans where server_id = p_server and user_id = auth.uid()) then raise exception 'Você foi banido desse servidor'; end if;
+  if not p_accept and not exists (select 1 from server_members where server_id = p_server and user_id = auth.uid())
+     and exists (select 1 from servers where id = p_server and coalesce((to_jsonb(servers)->>'rules_on')::boolean, false)) then
+    raise exception 'RULES_REQUIRED:%', p_server;
+  end if;
   insert into server_members (server_id, user_id, role) values (p_server, auth.uid(), 'member') on conflict do nothing;
   return p_server;
 end $$;
@@ -1291,6 +1302,7 @@ create policy "ver musica" on public.voice_music for select to authenticated usi
 create or replace function public.music_control(p_channel uuid, p_action text, p_arg jsonb default null) returns jsonb
 language plpgsql security definer set search_path = public as $$
 declare r voice_music; nowms bigint := (extract(epoch from clock_timestamp()) * 1000)::bigint; t jsonb; q jsonb; pos bigint;
+  rad boolean; srv uuid; modr boolean; votes jsonb; nlis int; need int;
 begin
   if not public.can_access_channel(p_channel) or not exists (select 1 from channels where id = p_channel and kind in ('voice','dm')) then
     raise exception 'Você não tem acesso a este canal de voz';
@@ -1298,6 +1310,31 @@ begin
   insert into voice_music (channel_id) values (p_channel) on conflict do nothing;
   select * into r from voice_music where channel_id = p_channel for update;
   q := coalesce(r.queue, '[]'::jsonb);
+  -- v6.15: rádio do servidor: qualquer um pede música; pausar/pular direto só a moderação (os outros votam)
+  select coalesce((to_jsonb(c)->>'radio')::boolean, false), c.server_id into rad, srv from channels c where c.id = p_channel;
+  modr := srv is null or public.has_perm(srv, 1) or public.has_perm(srv, 8);
+  if rad and not modr then
+    if p_action in ('pause', 'resume', 'seek', 'shuffle', 'loop', 'stop', 'skip') then raise exception 'Na rádio, só a moderação faz isso. Vote para pular a música.'; end if;
+    if p_action = 'add' and (select count(*) from jsonb_array_elements(q) x where x->>'by' = auth.uid()::text) >= 3 then
+      raise exception 'Você já tem 3 músicas na fila da rádio. Espere elas tocarem.';
+    end if;
+    if p_action = 'remove' and not exists (select 1 from jsonb_array_elements(q) x where x->>'key' = p_arg->>'key' and x->>'by' = auth.uid()::text) then
+      raise exception 'Você só pode tirar da fila as músicas que você pediu.';
+    end if;
+  end if;
+  if p_action = 'vote' then
+    if r.current is null or r.current->>'key' is distinct from p_arg->>'key' then return jsonb_build_object('now', nowms, 'state', to_jsonb(r)); end if;
+    votes := coalesce(r.current->'votes', '[]'::jsonb);
+    if not votes ? auth.uid()::text then votes := votes || to_jsonb(auth.uid()::text); end if;
+    select count(distinct user_id) into nlis from voice_sessions where channel_id = p_channel and last_seen > now() - interval '2 minutes';
+    need := greatest(1, ceil(greatest(nlis, 1) / 2.0)::int);
+    if jsonb_array_length(votes) >= need or r.current->>'by' = auth.uid()::text then p_action := 'skip';
+    else
+      r.current := r.current || jsonb_build_object('votes', votes, 'need', need);
+      update voice_music set current = r.current, updated_by = auth.uid(), updated_at = now() where channel_id = p_channel returning * into r;
+      return jsonb_build_object('now', nowms, 'state', to_jsonb(r));
+    end if;
+  end if;
   if p_action = 'add' then
     if jsonb_array_length(q) >= 100 then raise exception 'A fila já tem 100 músicas'; end if;
     t := p_arg || jsonb_build_object('key', md5(random()::text || clock_timestamp()::text), 'by', auth.uid());
@@ -1912,7 +1949,7 @@ begin
     if coalesce(x->>'kind', '') not in ('text', 'voice') then continue; end if;
     select array_agg((rmap->>r)::uuid) into ar from jsonb_array_elements_text(case when jsonb_typeof(x->'allowed_roles') = 'array' then x->'allowed_roles' else '[]'::jsonb end) r where rmap ? r;
     -- campos que faltarem (ex.: templates do Discord) ficam com o padrão
-    base := '{"position":0,"nsfw":false,"slowmode":0,"readonly":false,"user_limit":0,"bitrate":96,"video_quality":"auto","no_links":false,"no_media":false,"ptt_only":false,"no_camera":false,"no_screen":false,"stage":false}'::jsonb
+    base := '{"position":0,"nsfw":false,"slowmode":0,"readonly":false,"user_limit":0,"bitrate":96,"video_quality":"auto","no_links":false,"no_media":false,"ptt_only":false,"no_camera":false,"no_screen":false,"stage":false,"radio":false}'::jsonb
       || jsonb_strip_nulls(x - 'id' - 'allowed_roles') || jsonb_build_object('id', gen_random_uuid(), 'server_id', p_server, 'created_at', now(),
       'slowmode', 0, 'readonly', false, 'no_links', false, 'no_media', false, 'allowed_roles', null, 'dm_a', null, 'dm_b', null, 'owner_id', null, 'dm_status', 'ok', 'dm_requester', null);
     ch := jsonb_populate_record(null::channels, base);
@@ -1959,6 +1996,204 @@ create policy "prefs own insert" on public.user_prefs for insert with check (use
 drop policy if exists "prefs own update" on public.user_prefs;
 create policy "prefs own update" on public.user_prefs for update using (user_id = auth.uid()) with check (user_id = auth.uid());
 grant select, insert, update on public.user_prefs to authenticated;
+
+-- =====================================================================
+-- v6.15: RÁDIO, CLIPES DA SEMANA, MURAL, CONQUISTAS, ANIVERSÁRIOS, RETROSPECTIVA, JOGOS e REGRAS DA COMUNIDADE
+-- =====================================================================
+alter table public.channels add column if not exists radio boolean not null default false;
+alter table public.servers add column if not exists rules_on boolean not null default false;
+alter table public.servers add column if not exists rules_text text check (rules_text is null or char_length(rules_text) <= 4000);
+alter table public.server_members add column if not exists rules_accepted_at timestamptz;
+alter table public.profiles add column if not exists bday_show boolean not null default false;
+alter table public.profiles add column if not exists bday_greeted int;
+create index if not exists messages_author_idx on public.messages (author_id, created_at);
+create index if not exists reactions_user_idx on public.message_reactions (user_id);
+
+-- regras antes de entrar: quem ainda não é membro vê nome, ícone e o texto
+create or replace function public.server_rules_preview(p_server uuid default null, p_code text default null) returns jsonb
+language sql stable security definer set search_path = public as $$
+  select jsonb_build_object('id', s.id, 'name', s.name, 'icon_url', s.icon_url, 'icon_color', s.icon_color, 'rules_on', s.rules_on, 'rules_text', s.rules_text,
+    'members', (select count(*) from server_members m where m.server_id = s.id))
+  from servers s
+  where (p_server is not null and s.id = p_server and (s.is_public or public.is_member(s.id)))
+     or (p_code is not null and s.invite_code = lower(trim(p_code)))
+  limit 1;
+$$;
+-- marca quando a pessoa aceitou (o join chama com p_accept = true)
+create or replace function public.mark_rules_accepted() returns trigger
+language plpgsql security definer set search_path = public as $$
+begin
+  if exists (select 1 from servers where id = new.server_id and rules_on) then new.rules_accepted_at := now(); end if;
+  return new;
+end $$;
+drop trigger if exists mark_rules_accepted on public.server_members;
+create trigger mark_rules_accepted before insert on public.server_members for each row execute function public.mark_rules_accepted();
+
+-- clipes da semana (votos = quantas pessoas reagiram)
+create or replace function public.server_top_clips(p_server uuid, p_week int default 0) returns table (
+  message_id uuid, channel_id uuid, author_id uuid, content text, attachments jsonb, created_at timestamptz, votes int, mine boolean)
+language plpgsql stable security definer set search_path = public as $$
+declare w0 timestamptz := date_trunc('week', now() at time zone 'America/Sao_Paulo') at time zone 'America/Sao_Paulo' - make_interval(weeks => greatest(p_week, 0));
+begin
+  if not public.is_member(p_server) then raise exception 'Só membros veem os clipes do servidor'; end if;
+  return query
+  select m.id, m.channel_id, m.author_id, m.content, m.attachments, m.created_at,
+    (select count(distinct r.user_id)::int from message_reactions r where r.message_id = m.id and r.emoji not like 'opt:%'),
+    exists (select 1 from message_reactions r where r.message_id = m.id and r.user_id = auth.uid() and r.emoji = '🔥')
+  from messages m join channels c on c.id = m.channel_id
+  where c.server_id = p_server and m.created_at >= w0 and m.created_at < w0 + interval '7 days'
+    and public.can_access_channel(c.id)
+    and exists (select 1 from jsonb_array_elements(case when jsonb_typeof(m.attachments) = 'array' then m.attachments else '[]'::jsonb end) a
+                where (a->>'clip')::boolean is true or (a->>'type') like 'video/%')
+  order by 7 desc, m.created_at desc
+  limit 30;
+end $$;
+
+-- mural do servidor: mensagens marcadas com ⭐
+create or replace function public.server_wall(p_server uuid, p_before timestamptz default null) returns table (
+  message_id uuid, channel_id uuid, author_id uuid, content text, attachments jsonb, created_at timestamptz, stars int, starred_at timestamptz, mine boolean)
+language plpgsql stable security definer set search_path = public as $$
+begin
+  if not public.is_member(p_server) then raise exception 'Só membros veem o mural'; end if;
+  return query
+  select m.id, m.channel_id, m.author_id, m.content, m.attachments, m.created_at, st.n, st.last, st.mine
+  from (select r.message_id, count(*)::int n, max(r.created_at) last, bool_or(r.user_id = auth.uid()) mine
+        from message_reactions r join channels c on c.id = r.channel_id
+        where c.server_id = p_server and r.emoji = '⭐' group by r.message_id) st
+  join messages m on m.id = st.message_id
+  where public.can_access_channel(m.channel_id) and (p_before is null or st.last < p_before)
+  order by st.last desc
+  limit 40;
+end $$;
+
+-- tempo jogando (o app do Windows detecta o jogo aberto)
+create table if not exists public.game_sessions (
+  id uuid primary key default gen_random_uuid(),
+  user_id uuid not null default auth.uid() references public.profiles(id) on delete cascade,
+  game text not null check (char_length(game) between 1 and 60),
+  started_at timestamptz not null default now(),
+  last_seen timestamptz not null default now()
+);
+create index if not exists game_sessions_user_idx on public.game_sessions (user_id, started_at);
+alter table public.game_sessions enable row level security;
+drop policy if exists "meus jogos" on public.game_sessions;
+create policy "meus jogos" on public.game_sessions for select to authenticated using (user_id = auth.uid());
+create or replace function public.game_ping(p_session uuid, p_game text) returns uuid
+language plpgsql security definer set search_path = public as $$
+declare id_ uuid;
+begin
+  if auth.uid() is null or coalesce(trim(p_game), '') = '' then return null; end if;
+  if p_session is not null then
+    update game_sessions set last_seen = now() where id = p_session and user_id = auth.uid() and game = left(trim(p_game), 60) and last_seen > now() - interval '5 minutes' returning id into id_;
+    if id_ is not null then return id_; end if;
+  end if;
+  insert into game_sessions (user_id, game) values (auth.uid(), left(trim(p_game), 60)) returning id into id_;
+  return id_;
+end $$;
+
+-- conquistas: números de cada pessoa (calculados na hora)
+create or replace function public.user_achievements(p_user uuid) returns jsonb
+language sql stable security definer set search_path = public as $$
+  select jsonb_build_object(
+    'voice_min', coalesce((select sum(extract(epoch from (last_seen - started_at)) / 60)::int from voice_sessions where user_id = p_user), 0),
+    'game_min', coalesce((select sum(extract(epoch from (last_seen - started_at)) / 60)::int from game_sessions where user_id = p_user), 0),
+    'messages', (select count(*) from messages where author_id = p_user),
+    'friends', (select count(*) from friendships where status = 'accepted' and p_user in (requester, addressee)),
+    'servers_owned', (select count(*) from servers where owner_id = p_user),
+    'servers', (select count(*) from server_members where user_id = p_user),
+    'game_wins', coalesce((select sum(wins) from game_scores where user_id = p_user), 0),
+    'clips', (select count(*) from messages m where m.author_id = p_user and m.attachments @> '[{"clip": true}]'),
+    'reacts_got', (select count(*) from message_reactions r join messages m on m.id = r.message_id where m.author_id = p_user and r.user_id <> p_user),
+    'stars_got', (select count(*) from message_reactions r join messages m on m.id = r.message_id where m.author_id = p_user and r.emoji = '⭐' and r.user_id <> p_user),
+    'streak', coalesce((select streak from profiles where id = p_user), 0),
+    'first_in', (select count(*) from server_members sm where sm.user_id = p_user and sm.role <> 'owner'
+                 and not exists (select 1 from server_members o where o.server_id = sm.server_id and o.role <> 'owner' and o.joined_at < sm.joined_at)),
+    'boosts', (select count(*) from server_boosts where user_id = p_user),
+    'since', (select created_at from profiles where id = p_user));
+$$;
+
+-- aniversários: quem mostra o aniversário e faz hoje (horário de Brasília)
+create or replace function public.bday_today(d date) returns boolean
+language sql stable as $$
+  select d is not null and (
+    to_char(d, 'MM-DD') = to_char((now() at time zone 'America/Sao_Paulo')::date, 'MM-DD')
+    or (to_char(d, 'MM-DD') = '02-29' and to_char((now() at time zone 'America/Sao_Paulo')::date, 'MM-DD') = '02-28'
+        and not (extract(year from now())::int % 4 = 0 and (extract(year from now())::int % 100 <> 0 or extract(year from now())::int % 400 = 0))));
+$$;
+create or replace function public.server_birthdays(p_server uuid) returns setof uuid
+language sql stable security definer set search_path = public as $$
+  select p.id from server_members m join profiles p on p.id = m.user_id
+  where m.server_id = p_server and public.is_member(p_server) and p.bday_show and public.bday_today(p.birthdate);
+$$;
+create or replace function public.friends_birthdays() returns setof uuid
+language sql stable security definer set search_path = public as $$
+  select p.id from friendships f join profiles p on p.id = case when f.requester = auth.uid() then f.addressee else f.requester end
+  where f.status = 'accepted' and auth.uid() in (f.requester, f.addressee) and p.bday_show and public.bday_today(p.birthdate);
+$$;
+-- parabéns da conta oficial, uma vez por ano
+create or replace function public.birthday_greet() returns boolean
+language plpgsql security definer set search_path = public as $$
+declare bot uuid := public.telao_bot(); me profiles; cid uuid; y int := extract(year from now() at time zone 'America/Sao_Paulo')::int;
+begin
+  select * into me from profiles where id = auth.uid();
+  if me.id is null or not public.bday_today(me.birthdate) or coalesce(me.bday_greeted, 0) >= y or not exists (select 1 from profiles where id = bot) then return false; end if;
+  update profiles set bday_greeted = y where id = me.id;
+  select id into cid from channels where kind = 'dm' and dm_a = least(bot, me.id) and dm_b = greatest(bot, me.id);
+  if cid is null then insert into channels (name, kind, dm_a, dm_b, dm_status) values ('dm', 'dm', least(bot, me.id), greatest(bot, me.id), 'ok') returning id into cid; end if;
+  delete from dm_closed where channel_id = cid and user_id = me.id;
+  insert into messages (channel_id, author_id, content, attachments)
+  values (cid, bot, '🎂 Feliz aniversário, ' || me.display_name || '!', jsonb_build_array(jsonb_build_object('type', 'announce', 'title', '🎂 Feliz aniversário, ' || left(me.display_name, 60) || '!',
+    'body', 'Hoje o dia é seu! A galera do Telão te deseja tudo de bom. 🎉' || E'\n\n' || 'Hoje você aparece com o selo 🎂 de aniversariante nos servidores.')));
+  return true;
+end $$;
+
+-- retrospectiva do ano
+create or replace function public.my_wrapped(p_year int default null) returns jsonb
+language plpgsql stable security definer set search_path = public as $$
+declare me uuid := auth.uid(); y int := coalesce(p_year, extract(year from now() at time zone 'America/Sao_Paulo')::int);
+  a timestamptz := make_timestamptz(y, 1, 1, 0, 0, 0, 'America/Sao_Paulo'); b timestamptz := make_timestamptz(y + 1, 1, 1, 0, 0, 0, 'America/Sao_Paulo'); r jsonb;
+begin
+  if me is null then raise exception 'Entre na sua conta'; end if;
+  select jsonb_build_object(
+    'year', y,
+    'voice_min', coalesce((select sum(extract(epoch from (last_seen - started_at)) / 60)::int from voice_sessions where user_id = me and started_at >= a and started_at < b), 0),
+    'longest_call', coalesce((select max(extract(epoch from (last_seen - started_at)) / 60)::int from voice_sessions where user_id = me and started_at >= a and started_at < b), 0),
+    'messages', (select count(*) from messages where author_id = me and created_at >= a and created_at < b),
+    'days', (select count(distinct d) from (select (created_at at time zone 'America/Sao_Paulo')::date d from messages where author_id = me and created_at >= a and created_at < b
+                                            union select (started_at at time zone 'America/Sao_Paulo')::date from voice_sessions where user_id = me and started_at >= a and started_at < b) x),
+    'hour', (select extract(hour from created_at at time zone 'America/Sao_Paulo')::int from messages where author_id = me and created_at >= a and created_at < b group by 1 order by count(*) desc limit 1),
+    'top_server', (select jsonb_build_object('id', s.id, 'name', s.name, 'icon_url', s.icon_url, 'icon_color', s.icon_color, 'n', x.n) from (
+        select c.server_id sid, count(*) n from messages m join channels c on c.id = m.channel_id where m.author_id = me and c.server_id is not null and m.created_at >= a and m.created_at < b group by 1 order by 2 desc limit 1) x join servers s on s.id = x.sid),
+    'top_channel', (select jsonb_build_object('name', c.name, 'server', s.name, 'n', count(*)) from messages m join channels c on c.id = m.channel_id join servers s on s.id = c.server_id
+        where m.author_id = me and m.created_at >= a and m.created_at < b and c.kind = 'text' group by c.id, c.name, s.name order by count(*) desc limit 1),
+    'top_friend', (select jsonb_build_object('id', o, 'n', n) from (
+        select case when c.dm_a = me then c.dm_b else c.dm_a end o, count(*) n from messages m join channels c on c.id = m.channel_id
+        where c.kind = 'dm' and me in (c.dm_a, c.dm_b) and m.created_at >= a and m.created_at < b and public.telao_bot() not in (c.dm_a, c.dm_b) group by 1 order by 2 desc limit 1) x),
+    'top_emoji', (select jsonb_build_object('e', emoji, 'n', count(*)) from message_reactions where user_id = me and emoji not like 'opt:%' and created_at >= a and created_at < b group by emoji order by count(*) desc limit 1),
+    'reacts_got', (select count(*) from message_reactions r join messages m on m.id = r.message_id where m.author_id = me and r.user_id <> me and r.created_at >= a and r.created_at < b),
+    'clips', (select count(*) from messages where author_id = me and created_at >= a and created_at < b and attachments @> '[{"clip": true}]'),
+    'new_friends', (select count(*) from friendships where status = 'accepted' and me in (requester, addressee) and created_at >= a and created_at < b),
+    'top_game', (select jsonb_build_object('name', game, 'min', sum(extract(epoch from (last_seen - started_at)) / 60)::int) from game_sessions
+        where user_id = me and started_at >= a and started_at < b group by game order by sum(last_seen - started_at) desc limit 1),
+    'game_wins', coalesce((select sum(wins) from game_scores where user_id = me and last_at >= a and last_at < b), 0),
+    'joined', (select count(*) from server_members where user_id = me and joined_at >= a and joined_at < b)
+  ) into r;
+  return r;
+end $$;
+
+grant execute on function public.server_rules_preview(uuid, text), public.server_top_clips(uuid, int), public.server_wall(uuid, timestamptz), public.game_ping(uuid, text),
+  public.user_achievements(uuid), public.server_birthdays(uuid), public.friends_birthdays(), public.birthday_greet(), public.my_wrapped(int) to authenticated;
+
+insert into public.app_notices (kind, title, body, version)
+select 'update', 'Chegou a versão 6.15 do Telão',
+'- **📻 Rádio do servidor:** canais de voz com música que todo mundo pede e ouve junto. Vote para pular.
+- **📺 Assistir juntos melhorou:** fila de vídeos, passa sozinho para o próximo, velocidade sincronizada, e quem entra depois já cai no vídeo.
+- **🎬 Clipes da semana:** vote com 🔥 nos melhores clipes do servidor e assista todos juntos na call.
+- **⭐ Mural do servidor:** guarde os melhores prints, memes e frases (menu da mensagem → Pôr no mural).
+- **🏅 Conquistas** no perfil, **🎂 aniversários** (ative em Perfil) e a sua **🎬 Retrospectiva do ano** (clique no seu nome lá embaixo).
+- **🎮 Jogando agora:** no app do Windows, o jogo aberto aparece sozinho no seu perfil.
+- Servidores da comunidade podem pedir para quem entra **aceitar as regras**.', '6.15'
+where not exists (select 1 from public.app_notices where version = '6.15');
 
 -- impede trocar campos sensíveis via update
 create or replace function public.guard_updates() returns trigger

@@ -136,6 +136,7 @@ editChannelModal = function(c){
           ${row('Bloquear câmera', 'Ninguém liga a câmera neste canal (moderadores sim).', toggle('ecNoCam', c.no_camera))}
           ${row('Bloquear compartilhar tela', 'Ninguém compartilha a tela neste canal (moderadores sim).', toggle('ecNoScr', c.no_screen))}
           <hr class="sdiv">
+          ${row('📻 Rádio do servidor', 'Quem entra ouve a mesma música junto. Qualquer um pede músicas (até 3 na fila); a moderação pausa e pula, os outros votam para pular.', toggle('ecRadio', c.radio))}
           ${row('Modo palco', 'Para lives, aulas e anúncios: só quem está no palco fala. Quem entra fica na plateia ouvindo e pode levantar a mão. Moderadores chamam para o palco.', toggle('ecStage', c.stage))}
           <label class="field ${c.stage ? '' : 'hidden'}" id="ecStT"><span>Assunto do palco</span><input class="inp" id="ecStTopic" maxlength="120" value="${esc(c.stage_topic || '')}" placeholder="Ex.: Sexta do karaokê, aula de violão…"></label>`
         : `
@@ -169,7 +170,7 @@ editChannelModal = function(c){
       const roleIds = q('#ecPriv').checked ? [...m.querySelectorAll('#ecRoles input:checked')].map(x => x.value) : [];
       if(q('#ecPriv').checked && !roleIds.length){ App.toast('Escolha pelo menos um cargo para o canal privado.', true); return; }
       const up = { name, category: q('#ecC').value.trim() || null, nsfw: q('#ecNs').checked, allowed_roles: roleIds.length ? roleIds : null };
-      if(voice) Object.assign(up, { user_limit: +q('#ecLim').value, bitrate: +q('#ecBr').value, video_quality: q('#ecVq').value, ptt_only: q('#ecPtt').checked, no_camera: q('#ecNoCam').checked, no_screen: q('#ecNoScr').checked, stage: q('#ecStage').checked, stage_topic: q('#ecStTopic').value.trim() || null });
+      if(voice) Object.assign(up, { user_limit: +q('#ecLim').value, bitrate: +q('#ecBr').value, video_quality: q('#ecVq').value, ptt_only: q('#ecPtt').checked, no_camera: q('#ecNoCam').checked, no_screen: q('#ecNoScr').checked, radio: q('#ecRadio').checked, stage: q('#ecStage').checked, stage_topic: q('#ecStTopic').value.trim() || null });
       else Object.assign(up, { topic: q('#ecT').value.trim() || null, slowmode: +q('#ecSlow').value, readonly: q('#ecRo').checked, no_links: q('#ecNoL').checked, no_media: q('#ecNoM').checked });
       const { error } = await App.sb.from('channels').update(up).eq('id', c.id);
       if(error){ App.toast(error.message, true); return; }

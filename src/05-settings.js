@@ -185,6 +185,7 @@ window.addEventListener('keydown', e => {
     return;
   }
   if(e.key === 'Escape'){
+    if(!$('#menu').classList.contains('hidden')){ closeMenu(); return; }
     if(!$('#modal').classList.contains('hidden')) return;
     if(SET){ closeSettings(); return; }
   }

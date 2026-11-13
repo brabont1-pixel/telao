@@ -455,6 +455,7 @@ function msgMenu(mid, x, y){
     { raw: `<div class="quickrx">${EMOJI.QUICK.map(e => `<button data-q="${e}">${e}</button>`).join('')}</div>`, mount: el => el.querySelectorAll('[data-q]').forEach(b => b.onclick = () => { closeMenu(); toggleReact(mid, b.dataset.q); }) },
     { label:'Adicionar reação', icon: ic('smilePlus',18), onClick: () => emojiPicker(x, y, em => toggleReact(mid, em)) },
     { label:'Responder', icon: ic('reply',18), onClick: () => startReply(mid) },
+    ...(App.msgMenuExtra ? App.msgMenuExtra(m) : []),
   ];
   if(mine) items.push({ label:'Editar mensagem', icon: ic('edit',18), onClick: () => { M.editing = mid; rerenderOne(mid); } });
   if(mod) items.push({ label: m.pinned ? 'Desafixar' : 'Fixar mensagem', icon: ic('pin',18), onClick: () => pinMsg(m) });

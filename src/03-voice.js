@@ -418,7 +418,8 @@ function userMenu(uid, x, y){
       if(error) App.toast(error.message, true); else App.toast(p.display_name + ' foi expulso.');
     }});
   }
-  if(uid === S.me.id) items.push({ label:'Editar perfil', icon: ic('edit',18), onClick: () => openSettings('user','profile') });
+  if(uid === S.me.id) items.push({ label:'Editar perfil', icon: ic('edit',18), onClick: () => openSettings('user','profile') }, ...(App.selfMenuExtra ? App.selfMenuExtra() : []));
+  if(App.userMenuExtra) items.push(...App.userMenuExtra(uid));
   items.push({ label:'Copiar usuário', icon: ic('copy',18), onClick: () => copy(p.username) });
   menu(x, y, items, 'pp');
 }

@@ -9,7 +9,7 @@ const esc = s => String(s ?? '').replace(/[&<>"']/g, c => ({'&':'&amp;','<':'&lt
 const COLORS = ['#5865f2','#eb459e','#3ba55c','#faa61a','#ed4245','#f47b67','#1abc9c','#9b59b6','#e67e22','#607d8b'];
 const ls = { get(k,d){ try{ const v=localStorage.getItem(k); return v==null?d:JSON.parse(v); }catch(e){ return d; } }, set(k,v){ try{ localStorage.setItem(k, JSON.stringify(v)); }catch(e){} } };
 
-const APP_VERSION = '6.14';
+const APP_VERSION = '6.15';
 const S = {
   me: null, profiles: new Map(), servers: [], channels: new Map(), members: new Map(),
   friends: [], dms: [], dmActivity: ls.get('telao-dmact', {}), online: new Set(),
@@ -795,7 +795,7 @@ function statusMenu(e){
   items.push('-', { label: p.custom_status ? 'Editar status personalizado' : 'Definir status personalizado', icon: ic('smile',18), onClick: customStatusModal });
   items.push({ label: S.manualAct ? 'Mudar atividade' : 'Definir atividade', icon: ic('gamepad',18), onClick: () => App.activityModal() });
   if(p.custom_status) items.push({ label:'Limpar status personalizado', icon: ic('x',18), onClick: () => saveCustomStatus(null, null) });
-  items.push({ label:'Editar perfil', icon: ic('edit',18), onClick: () => openSettings('user','profile') }, { label:'Copiar usuário', icon: ic('copy',18), onClick: () => copy(p.username) });
+  items.push({ label:'Editar perfil', icon: ic('edit',18), onClick: () => openSettings('user','profile') }, ...(App.selfMenuExtra ? App.selfMenuExtra() : []), { label:'Copiar usuário', icon: ic('copy',18), onClick: () => copy(p.username) });
   menu(r.left + 8, r.top - 520, items, 'pp');
   $('#menu').style.top = Math.max(8, r.top - $('#menu').offsetHeight - 8) + 'px';
 }

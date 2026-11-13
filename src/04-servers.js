@@ -107,6 +107,7 @@ function serverMenu(s, e){
   const items = [{ label:'Impulsionar servidor', icon: BOOST_SVG(18), cls:'boostitem', onClick: () => boostServerModal(s) }, { label:'Convidar pessoas', icon: ic('userPlus',18), onClick: () => inviteModal(s) }, { label:'Estatísticas do servidor', icon: ic('poll',18), onClick: () => openSettings('server','stats', s) }];
   if(App.hasPerm(s.id, 2) || App.hasPerm(s.id, 16)) items.push({ label:'Configurações do servidor', icon: ic('gear',18), onClick: () => openSettings('server','overview', s) });
   if(App.hasPerm(s.id, 1)) items.push({ label:'Criar canal', icon: ic('plusCircle',18), onClick: () => createChannelModal(s, 'text') }, { label:'Criar categoria', icon: ic('folder',18), onClick: () => createCategoryModal(s) }, { label:'Ordenar canais e categorias', icon: ic('sliders',18), onClick: () => App.orderModal(s) });
+  if(App.srvMenuExtra) items.push(...App.srvMenuExtra(s));
   items.push('-');
   if(owner) items.push({ label:'Excluir servidor', danger:true, icon: ic('trash',18), onClick: () => deleteServer(s) });
   else items.push({ label:'Sair do servidor', danger:true, icon: ic('logout',18), onClick: () => leaveServer(s) });
@@ -186,7 +187,9 @@ function joinServerModal(prefill){
     m.querySelector('#jsBack').onclick = addServerModal;
     m.querySelector('#jsF').onsubmit = async e => {
       e.preventDefault();
-      const { data: sid, error } = await App.sb.rpc('join_server', { p_code: parseInvite(m.querySelector('#jsC').value) });
+      const r = await App.joinWithRules('join_server', { p_code: parseInvite(m.querySelector('#jsC').value) });
+      if(r.cancelled) return;
+      const { data: sid, error } = r;
       if(error){ App.toast(error.message.includes('Convite') ? 'Convite inválido ou expirado.' : error.message, true); return; }
       closeModal(); await loadServers(); go({ kind:'server', sid }); App.toast('Bem-vindo(a) ao servidor');
     };
@@ -224,20 +227,21 @@ function createChannelModal(s, kind, category){
   modal(`<form id="ccF"><div class="mh"><h2>Criar canal</h2></div>
     <div class="mc">
       <div class="ctype"><label><input type="radio" name="k" value="text" ${kind!=='voice'?'checked':''}><span class="ci">${ic('hash',22)}</span><div><b>Texto</b><small>Mensagens, imagens, GIFs, emojis e opiniões</small></div></label>
-        <label><input type="radio" name="k" value="voice" ${kind==='voice'?'checked':''}><span class="ci">${ic('volume',22)}</span><div><b>Voz</b><small>Chamada, câmera e compartilhar tela</small></div></label></div>
+        <label><input type="radio" name="k" value="voice" ${kind==='voice'?'checked':''}><span class="ci">${ic('volume',22)}</span><div><b>Voz</b><small>Chamada, câmera e compartilhar tela</small></div></label>
+        <label><input type="radio" name="k" value="radio" ${kind==='radio'?'checked':''}><span class="ci">📻</span><div><b>Rádio</b><small>Canal de voz com música que todo mundo pede e ouve junto</small></div></label></div>
       <label class="field"><span>Nome do canal</span><div class="inpic"><span id="ccIc">${ic(kind==='voice'?'volume':'hash',18)}</span><input class="inp" id="ccN" maxlength="40" placeholder="novo-canal" required></div></label>
       <label class="field"><span>Categoria (opcional)</span><input class="inp" id="ccC" maxlength="40" list="ccCats" value="${esc(category||'')}" placeholder="Ex: Jogos"><datalist id="ccCats">${cats.map(c => `<option value="${esc(c)}">`).join('')}</datalist></label></div>
     <div class="mf"><button type="button" class="btn sec" data-close>Cancelar</button><button class="btn">Criar canal</button></div></form>`, m => {
-    m.querySelectorAll('input[name=k]').forEach(r => r.onchange = () => m.querySelector('#ccIc').innerHTML = ic(r.value === 'voice' ? 'volume' : 'hash', 18));
+    m.querySelectorAll('input[name=k]').forEach(r => r.onchange = () => m.querySelector('#ccIc').innerHTML = r.value === 'radio' ? '📻' : ic(r.value === 'voice' ? 'volume' : 'hash', 18));
     m.querySelector('#ccF').onsubmit = async e => {
       e.preventDefault();
-      const k = m.querySelector('input[name=k]:checked').value;
+      const k0 = m.querySelector('input[name=k]:checked').value, k = k0 === 'radio' ? 'voice' : k0;
       let name = m.querySelector('#ccN').value.trim();
       if(k === 'text') name = name.toLowerCase().replace(/\s+/g, '-');
       if(!name) return;
       const list = S.channels.get(s.id) || [];
       const position = list.reduce((a,c) => Math.max(a, c.position), 0) + 1;
-      const { data, error } = await App.sb.from('channels').insert({ server_id: s.id, name, kind: k, position, category: m.querySelector('#ccC').value.trim() || null }).select().single();
+      const { data, error } = await App.sb.from('channels').insert({ server_id: s.id, name, kind: k, position, category: m.querySelector('#ccC').value.trim() || null, ...(k0 === 'radio' ? { radio: true } : {}) }).select().single();
       if(error){ App.toast(error.message, true); return; }
       closeModal(); await loadChannels(s.id); go({ kind:'server', sid: s.id, cid: data.id });
     };

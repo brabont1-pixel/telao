@@ -9,7 +9,7 @@ const esc = s => String(s ?? '').replace(/[&<>"']/g, c => ({'&':'&amp;','<':'&lt
 const COLORS = ['#5865f2','#eb459e','#3ba55c','#faa61a','#ed4245','#f47b67','#1abc9c','#9b59b6','#e67e22','#607d8b'];
 const ls = { get(k,d){ try{ const v=localStorage.getItem(k); return v==null?d:JSON.parse(v); }catch(e){ return d; } }, set(k,v){ try{ localStorage.setItem(k, JSON.stringify(v)); }catch(e){} } };
 
-const APP_VERSION = '6.14';
+const APP_VERSION = '6.15';
 const S = {
   me: null, profiles: new Map(), servers: [], channels: new Map(), members: new Map(),
   friends: [], dms: [], dmActivity: ls.get('telao-dmact', {}), online: new Set(),
@@ -795,7 +795,7 @@ function statusMenu(e){
   items.push('-', { label: p.custom_status ? 'Editar status personalizado' : 'Definir status personalizado', icon: ic('smile',18), onClick: customStatusModal });
   items.push({ label: S.manualAct ? 'Mudar atividade' : 'Definir atividade', icon: ic('gamepad',18), onClick: () => App.activityModal() });
   if(p.custom_status) items.push({ label:'Limpar status personalizado', icon: ic('x',18), onClick: () => saveCustomStatus(null, null) });
-  items.push({ label:'Editar perfil', icon: ic('edit',18), onClick: () => openSettings('user','profile') }, { label:'Copiar usuário', icon: ic('copy',18), onClick: () => copy(p.username) });
+  items.push({ label:'Editar perfil', icon: ic('edit',18), onClick: () => openSettings('user','profile') }, ...(App.selfMenuExtra ? App.selfMenuExtra() : []), { label:'Copiar usuário', icon: ic('copy',18), onClick: () => copy(p.username) });
   menu(r.left + 8, r.top - 520, items, 'pp');
   $('#menu').style.top = Math.max(8, r.top - $('#menu').offsetHeight - 8) + 'px';
 }
@@ -1483,6 +1483,7 @@ function msgMenu(mid, x, y){
     { raw: `<div class="quickrx">${EMOJI.QUICK.map(e => `<button data-q="${e}">${e}</button>`).join('')}</div>`, mount: el => el.querySelectorAll('[data-q]').forEach(b => b.onclick = () => { closeMenu(); toggleReact(mid, b.dataset.q); }) },
     { label:'Adicionar reação', icon: ic('smilePlus',18), onClick: () => emojiPicker(x, y, em => toggleReact(mid, em)) },
     { label:'Responder', icon: ic('reply',18), onClick: () => startReply(mid) },
+    ...(App.msgMenuExtra ? App.msgMenuExtra(m) : []),
   ];
   if(mine) items.push({ label:'Editar mensagem', icon: ic('edit',18), onClick: () => { M.editing = mid; rerenderOne(mid); } });
   if(mod) items.push({ label: m.pinned ? 'Desafixar' : 'Fixar mensagem', icon: ic('pin',18), onClick: () => pinMsg(m) });
@@ -2350,7 +2351,8 @@ function userMenu(uid, x, y){
       if(error) App.toast(error.message, true); else App.toast(p.display_name + ' foi expulso.');
     }});
   }
-  if(uid === S.me.id) items.push({ label:'Editar perfil', icon: ic('edit',18), onClick: () => openSettings('user','profile') });
+  if(uid === S.me.id) items.push({ label:'Editar perfil', icon: ic('edit',18), onClick: () => openSettings('user','profile') }, ...(App.selfMenuExtra ? App.selfMenuExtra() : []));
+  if(App.userMenuExtra) items.push(...App.userMenuExtra(uid));
   items.push({ label:'Copiar usuário', icon: ic('copy',18), onClick: () => copy(p.username) });
   menu(x, y, items, 'pp');
 }
@@ -2561,6 +2563,7 @@ function serverMenu(s, e){
   const items = [{ label:'Impulsionar servidor', icon: BOOST_SVG(18), cls:'boostitem', onClick: () => boostServerModal(s) }, { label:'Convidar pessoas', icon: ic('userPlus',18), onClick: () => inviteModal(s) }, { label:'Estatísticas do servidor', icon: ic('poll',18), onClick: () => openSettings('server','stats', s) }];
   if(App.hasPerm(s.id, 2) || App.hasPerm(s.id, 16)) items.push({ label:'Configurações do servidor', icon: ic('gear',18), onClick: () => openSettings('server','overview', s) });
   if(App.hasPerm(s.id, 1)) items.push({ label:'Criar canal', icon: ic('plusCircle',18), onClick: () => createChannelModal(s, 'text') }, { label:'Criar categoria', icon: ic('folder',18), onClick: () => createCategoryModal(s) }, { label:'Ordenar canais e categorias', icon: ic('sliders',18), onClick: () => App.orderModal(s) });
+  if(App.srvMenuExtra) items.push(...App.srvMenuExtra(s));
   items.push('-');
   if(owner) items.push({ label:'Excluir servidor', danger:true, icon: ic('trash',18), onClick: () => deleteServer(s) });
   else items.push({ label:'Sair do servidor', danger:true, icon: ic('logout',18), onClick: () => leaveServer(s) });
@@ -2640,7 +2643,9 @@ function joinServerModal(prefill){
     m.querySelector('#jsBack').onclick = addServerModal;
     m.querySelector('#jsF').onsubmit = async e => {
       e.preventDefault();
-      const { data: sid, error } = await App.sb.rpc('join_server', { p_code: parseInvite(m.querySelector('#jsC').value) });
+      const r = await App.joinWithRules('join_server', { p_code: parseInvite(m.querySelector('#jsC').value) });
+      if(r.cancelled) return;
+      const { data: sid, error } = r;
       if(error){ App.toast(error.message.includes('Convite') ? 'Convite inválido ou expirado.' : error.message, true); return; }
       closeModal(); await loadServers(); go({ kind:'server', sid }); App.toast('Bem-vindo(a) ao servidor');
     };
@@ -2678,20 +2683,21 @@ function createChannelModal(s, kind, category){
   modal(`<form id="ccF"><div class="mh"><h2>Criar canal</h2></div>
     <div class="mc">
       <div class="ctype"><label><input type="radio" name="k" value="text" ${kind!=='voice'?'checked':''}><span class="ci">${ic('hash',22)}</span><div><b>Texto</b><small>Mensagens, imagens, GIFs, emojis e opiniões</small></div></label>
-        <label><input type="radio" name="k" value="voice" ${kind==='voice'?'checked':''}><span class="ci">${ic('volume',22)}</span><div><b>Voz</b><small>Chamada, câmera e compartilhar tela</small></div></label></div>
+        <label><input type="radio" name="k" value="voice" ${kind==='voice'?'checked':''}><span class="ci">${ic('volume',22)}</span><div><b>Voz</b><small>Chamada, câmera e compartilhar tela</small></div></label>
+        <label><input type="radio" name="k" value="radio" ${kind==='radio'?'checked':''}><span class="ci">📻</span><div><b>Rádio</b><small>Canal de voz com música que todo mundo pede e ouve junto</small></div></label></div>
       <label class="field"><span>Nome do canal</span><div class="inpic"><span id="ccIc">${ic(kind==='voice'?'volume':'hash',18)}</span><input class="inp" id="ccN" maxlength="40" placeholder="novo-canal" required></div></label>
       <label class="field"><span>Categoria (opcional)</span><input class="inp" id="ccC" maxlength="40" list="ccCats" value="${esc(category||'')}" placeholder="Ex: Jogos"><datalist id="ccCats">${cats.map(c => `<option value="${esc(c)}">`).join('')}</datalist></label></div>
     <div class="mf"><button type="button" class="btn sec" data-close>Cancelar</button><button class="btn">Criar canal</button></div></form>`, m => {
-    m.querySelectorAll('input[name=k]').forEach(r => r.onchange = () => m.querySelector('#ccIc').innerHTML = ic(r.value === 'voice' ? 'volume' : 'hash', 18));
+    m.querySelectorAll('input[name=k]').forEach(r => r.onchange = () => m.querySelector('#ccIc').innerHTML = r.value === 'radio' ? '📻' : ic(r.value === 'voice' ? 'volume' : 'hash', 18));
     m.querySelector('#ccF').onsubmit = async e => {
       e.preventDefault();
-      const k = m.querySelector('input[name=k]:checked').value;
+      const k0 = m.querySelector('input[name=k]:checked').value, k = k0 === 'radio' ? 'voice' : k0;
       let name = m.querySelector('#ccN').value.trim();
       if(k === 'text') name = name.toLowerCase().replace(/\s+/g, '-');
       if(!name) return;
       const list = S.channels.get(s.id) || [];
       const position = list.reduce((a,c) => Math.max(a, c.position), 0) + 1;
-      const { data, error } = await App.sb.from('channels').insert({ server_id: s.id, name, kind: k, position, category: m.querySelector('#ccC').value.trim() || null }).select().single();
+      const { data, error } = await App.sb.from('channels').insert({ server_id: s.id, name, kind: k, position, category: m.querySelector('#ccC').value.trim() || null, ...(k0 === 'radio' ? { radio: true } : {}) }).select().single();
       if(error){ App.toast(error.message, true); return; }
       closeModal(); await loadChannels(s.id); go({ kind:'server', sid: s.id, cid: data.id });
     };
@@ -2927,6 +2933,7 @@ window.addEventListener('keydown', e => {
     return;
   }
   if(e.key === 'Escape'){
+    if(!$('#menu').classList.contains('hidden')){ closeMenu(); return; }
     if(!$('#modal').classList.contains('hidden')) return;
     if(SET){ closeSettings(); return; }
   }
@@ -5367,6 +5374,7 @@ editChannelModal = function(c){
           ${row('Bloquear câmera', 'Ninguém liga a câmera neste canal (moderadores sim).', toggle('ecNoCam', c.no_camera))}
           ${row('Bloquear compartilhar tela', 'Ninguém compartilha a tela neste canal (moderadores sim).', toggle('ecNoScr', c.no_screen))}
           <hr class="sdiv">
+          ${row('📻 Rádio do servidor', 'Quem entra ouve a mesma música junto. Qualquer um pede músicas (até 3 na fila); a moderação pausa e pula, os outros votam para pular.', toggle('ecRadio', c.radio))}
           ${row('Modo palco', 'Para lives, aulas e anúncios: só quem está no palco fala. Quem entra fica na plateia ouvindo e pode levantar a mão. Moderadores chamam para o palco.', toggle('ecStage', c.stage))}
           <label class="field ${c.stage ? '' : 'hidden'}" id="ecStT"><span>Assunto do palco</span><input class="inp" id="ecStTopic" maxlength="120" value="${esc(c.stage_topic || '')}" placeholder="Ex.: Sexta do karaokê, aula de violão…"></label>`
         : `
@@ -5400,7 +5408,7 @@ editChannelModal = function(c){
       const roleIds = q('#ecPriv').checked ? [...m.querySelectorAll('#ecRoles input:checked')].map(x => x.value) : [];
       if(q('#ecPriv').checked && !roleIds.length){ App.toast('Escolha pelo menos um cargo para o canal privado.', true); return; }
       const up = { name, category: q('#ecC').value.trim() || null, nsfw: q('#ecNs').checked, allowed_roles: roleIds.length ? roleIds : null };
-      if(voice) Object.assign(up, { user_limit: +q('#ecLim').value, bitrate: +q('#ecBr').value, video_quality: q('#ecVq').value, ptt_only: q('#ecPtt').checked, no_camera: q('#ecNoCam').checked, no_screen: q('#ecNoScr').checked, stage: q('#ecStage').checked, stage_topic: q('#ecStTopic').value.trim() || null });
+      if(voice) Object.assign(up, { user_limit: +q('#ecLim').value, bitrate: +q('#ecBr').value, video_quality: q('#ecVq').value, ptt_only: q('#ecPtt').checked, no_camera: q('#ecNoCam').checked, no_screen: q('#ecNoScr').checked, radio: q('#ecRadio').checked, stage: q('#ecStage').checked, stage_topic: q('#ecStTopic').value.trim() || null });
       else Object.assign(up, { topic: q('#ecT').value.trim() || null, slowmode: +q('#ecSlow').value, readonly: q('#ecRo').checked, no_links: q('#ecNoL').checked, no_media: q('#ecNoM').checked });
       const { error } = await App.sb.from('channels').update(up).eq('id', c.id);
       if(error){ App.toast(error.message, true); return; }
@@ -5701,8 +5709,9 @@ async function openExplore(){
     g.querySelectorAll('[data-exjoin]').forEach(b => b.onclick = async () => {
       const sid = b.dataset.exjoin;
       if(b.dataset.mem !== '1'){
-        const { error } = await App.sb.rpc('join_public_server', { p_server: sid });
-        if(error){ App.toast(error.message, true); return; }
+        const r = await App.joinWithRules('join_public_server', { p_server: sid });
+        if(r.cancelled) return;
+        if(r.error){ App.toast(r.error.message, true); return; }
         await loadServers(); App.toast('Você entrou na comunidade.');
       }
       close(); go({ kind: 'server', sid });
@@ -8329,6 +8338,927 @@ function railOrderModal(){
   });
 }
 App.railOrderModal = railOrderModal;
+/* =====================================================================
+   v6.15: RÁDIO DO SERVIDOR (canal de voz marcado como rádio)
+   Quem está no canal ouve a mesma música, no mesmo ponto (relógio do servidor). Qualquer um pede música;
+   pausar e pular direto é da moderação; os outros votam para pular (metade de quem está ouvindo).
+   Base: o antigo Telão Bot de música (v6.6), agora só dentro dos canais de rádio.
+   ===================================================================== */
+S.music = new Map();   // channel_id -> estado (linha de voice_music)
+const MU = { cid: null, skew: 0, player: null, audio: null, key: null, kind: null, ready: false, timer: null, open: false, blocked: false };
+const muNow = () => Date.now() + MU.skew;
+const muPos = cur => Math.max(0, ((cur.paused_at || muNow()) - cur.started_at) / 1000);
+const fmtT = s => { s = Math.max(0, Math.floor(s || 0)); const h = Math.floor(s / 3600), m = Math.floor(s % 3600 / 60), x = String(s % 60).padStart(2, '0'); return h ? `${h}:${String(m).padStart(2, '0')}:${x}` : `${m}:${x}`; };
+const BOT_AV = `<span class="botav">📻</span>`;
+const isRadio = ch => !!(ch && ch.radio && ch.kind === 'voice' && ch.server_id);
+const radioMod = ch => { const s = ch && S.servers.find(x => x.id === ch.server_id); return !!s && (s.owner_id === S.me.id || App.hasPerm(s.id, 1) || App.hasPerm(s.id, 8)); };
+
+async function muCall(action, arg){
+  const cid = MU.cid; if(!cid){ App.toast('Entre num canal de rádio para pedir música.', true); return null; }
+  const { data, error } = await App.sb.rpc('music_control', { p_channel: cid, p_action: action, p_arg: arg || null });
+  if(error){ App.toast(error.message, true); return null; }
+  if(data && data.now) MU.skew = data.now - Date.now();
+  if(data && data.state){ S.music.set(cid, data.state); muApply(); renderSidebar(); }
+  return data;
+}
+
+/* ---------- entrar e sair da chamada ---------- */
+function muAttach(){
+  const ch = Voice.channel && (findChannel(Voice.channel.id) || Voice.channel), cid = isRadio(ch) ? ch.id : null;
+  if(cid === MU.cid) return;
+  muDetach();
+  if(!cid) return;
+  MU.cid = cid;
+  App.sb.from('voice_music').select('*').eq('channel_id', cid).maybeSingle().then(({ data }) => { if(data) S.music.set(cid, data); muCall('sync'); });
+}
+function muDetach(){
+  MU.cid = null; MU.key = null; MU.kind = null;
+  try{ MU.player && MU.player.destroy && MU.player.destroy(); }catch(e){}
+  MU.player = null;
+  if(MU.audio){ MU.audio.pause(); MU.audio.src = ''; MU.audio = null; }
+  const d = $('#musicDock'); if(d) d.remove();
+}
+const _joinVoiceRd = joinVoice;
+joinVoice = async function(){ const r = await _joinVoiceRd.apply(this, arguments); muAttach(); return r; };
+const _leaveVoiceRd = leaveVoice;
+leaveVoice = async function(){ muDetach(); return _leaveVoiceRd.apply(this, arguments); };
+
+/* ---------- tocar ---------- */
+function muVol(){ const P2 = App.prefs; const v = (P2.musicVol ?? 60) / 100; return Voice.ducking ? v * 0.4 : v; }
+async function muApply(){
+  const st = MU.cid && S.music.get(MU.cid), cur = st && st.current;
+  muDock();
+  if(!cur){
+    if(MU.key){ try{ MU.player && MU.player.stopVideo(); }catch(e){} if(MU.audio) MU.audio.pause(); MU.key = null; }
+    return;
+  }
+  const pos = muPos(cur), paused = !!cur.paused_at;
+  if(cur.key !== MU.key){
+    MU.key = cur.key; MU.kind = cur.src;
+    if(cur.src === 'yt'){
+      if(MU.audio){ MU.audio.pause(); }
+      await loadYTApi();
+      if(MU.key !== cur.key) return;
+      if(MU.player && MU.player.loadVideoById){ MU.player.loadVideoById({ videoId: cur.vid, startSeconds: pos }); if(paused) setTimeout(() => MU.player.pauseVideo(), 400); }
+      else {
+        const box = $('#muPlayer'); if(!box) return;
+        MU.player = new YT.Player('muPlayer', { videoId: cur.vid, width: '100%', height: '100%',
+          playerVars: { autoplay: 1, start: Math.floor(pos), controls: 0, disablekb: 1, modestbranding: 1, playsinline: 1, rel: 0, fs: 0, iv_load_policy: 3 },
+          events: {
+            onReady: e => { e.target.setVolume(muVol() * 100); e.target.seekTo(muPos(S.music.get(MU.cid).current || cur), true); if(paused) e.target.pauseVideo(); else e.target.playVideo(); MU.ready = true; muCheckBlocked(); },
+            onStateChange: e => { if(e.data === 0) muEnded(); if(e.data === 1){ MU.blocked = false; muDock(); } },
+            onError: () => { App.toast('Esse vídeo não pode tocar fora do YouTube. Pulando…', true); muEnded(); },
+          } });
+      }
+    } else {
+      try{ MU.player && MU.player.stopVideo && MU.player.stopVideo(); }catch(e){}
+      if(!MU.audio){ MU.audio = new Audio(); MU.audio.crossOrigin = 'anonymous'; MU.audio.onended = muEnded; MU.audio.onplaying = () => { MU.blocked = false; muDock(); }; }
+      MU.audio.src = cur.url; MU.audio.volume = muVol();
+      MU.audio.currentTime = pos;
+      if(!paused) MU.audio.play().catch(() => { MU.blocked = true; muDock(); });
+    }
+    return;
+  }
+  // mesma música: ajusta pausa e tempo
+  if(MU.kind === 'yt' && MU.player && MU.player.getPlayerState){
+    const s = MU.player.getPlayerState();
+    if(paused && s === 1) MU.player.pauseVideo();
+    if(!paused && s !== 1 && s !== 3) MU.player.playVideo();
+    if(Math.abs((MU.player.getCurrentTime() || 0) - pos) > 2.5) MU.player.seekTo(pos, true);
+  } else if(MU.audio){
+    if(paused && !MU.audio.paused) MU.audio.pause();
+    if(!paused && MU.audio.paused) MU.audio.play().catch(() => { MU.blocked = true; muDock(); });
+    if(Math.abs(MU.audio.currentTime - pos) > 2.5) MU.audio.currentTime = pos;
+  }
+}
+function muCheckBlocked(){ setTimeout(() => { const cur = MU.cid && (S.music.get(MU.cid) || {}).current; if(cur && !cur.paused_at && MU.player && MU.player.getPlayerState && MU.player.getPlayerState() !== 1){ MU.blocked = true; muDock(); } }, 2500); }
+function muEnded(){ const cur = MU.cid && (S.music.get(MU.cid) || {}).current; if(cur) muCall('next', { key: cur.key }); }
+setInterval(() => {
+  if(!MU.cid) return;
+  const v = muVol();
+  if(MU.player && MU.player.setVolume) try{ MU.player.setVolume(v * 100); }catch(e){}
+  if(MU.audio) MU.audio.volume = v;
+  muApply(); muTick();
+}, 4000);
+setInterval(muTick, 1000);
+function muTick(){
+  const cur = MU.cid && (S.music.get(MU.cid) || {}).current; if(!cur) return;
+  const dur = (MU.kind === 'yt' && MU.player && MU.player.getDuration ? MU.player.getDuration() : MU.audio ? MU.audio.duration : 0) || cur.dur || 0;
+  const pos = muPos(cur);
+  const t = $('#muTime'); if(t) t.textContent = `${fmtT(pos)}${dur ? ' / ' + fmtT(dur) : ''}`;
+  const b = $('#muBar'); if(b) b.style.width = dur ? Math.min(100, pos / dur * 100) + '%' : '0';
+}
+
+/* ---------- painel do bot (canto da tela) ---------- */
+function muDock(){
+  const st = MU.cid && S.music.get(MU.cid), cur = st && st.current, q = (st && st.queue) || [];
+  let d = $('#musicDock');
+  if(!MU.cid){ if(d) d.remove(); return; }
+  if(!d){
+    d = document.createElement('div'); d.id = 'musicDock'; d.className = 'mudock';
+    d.innerHTML = `<div class="muvid"><div id="muPlayer"></div><div class="mucover" id="muCover"></div><button class="mublock hidden" id="muUnblock">${ic('play', 22)} Toque para ouvir</button></div>
+      <div class="mubody"><div class="muhead">${BOT_AV}<div class="t"><b id="muName">Rádio</b><small id="muNow">Nada tocando</small></div>
+        <button class="ibtn sm" id="muMin" data-tip="Minimizar">${ic('chevronDown', 16)}</button></div>
+        <div class="muprog"><i id="muBar"></i></div><div class="mutime" id="muTime"></div>
+        <div class="muctl"><button class="ibtn sm" id="muLoop" data-tip="Repetir">${ic('refresh', 16)}</button><button class="ibtn sm" id="muPP" data-tip="Pausar">${ic('pause', 18)}</button><button class="ibtn sm" id="muSkip" data-tip="Pular">${ic('skip', 18)}</button><button class="ibtn sm" id="muShuf" data-tip="Embaralhar">${ic('shuffle', 16)}</button><button class="ibtn sm" id="muQ" data-tip="Fila">${ic('list', 16)}<span class="muqn" id="muQn"></span></button><button class="btn sec sm hidden" id="muVote">${ic('skip', 15)} <span>Votar para pular</span></button><button class="btn sm" id="muAdd">${ic('plus', 14)} Pedir</button></div>
+        <div class="muvol">${ic('volume', 15)}<input type="range" id="muVolR" min="0" max="100" value="${App.prefs.musicVol ?? 60}"></div>
+        <div class="muqueue hidden" id="muQueue"></div></div>`;
+    document.body.appendChild(d);
+    const $d = x => d.querySelector(x);
+    $d('#muPP').onclick = () => { const c = (S.music.get(MU.cid) || {}).current; if(!c) return muAddModal(); muCall(c.paused_at ? 'resume' : 'pause'); };
+    $d('#muSkip').onclick = () => muCall('skip');
+    $d('#muShuf').onclick = () => muCall('shuffle');
+    $d('#muLoop').onclick = () => { const m = (S.music.get(MU.cid) || {}).repeat_mode || 'off'; const nx = { off: 'all', all: 'one', one: 'off' }[m]; muCall('loop', { mode: nx }); App.toast({ off: 'Repetir desligado', all: 'Repetindo a fila', one: 'Repetindo esta música' }[nx]); };
+    $d('#muQ').onclick = () => { MU.open = !MU.open; muDock(); };
+    $d('#muAdd').onclick = muAddModal;
+    $d('#muVote').onclick = () => { const c = (S.music.get(MU.cid) || {}).current; if(c) muCall('vote', { key: c.key }); };
+    $d('#muMin').onclick = () => { d.classList.toggle('mini'); };
+    $d('#muVolR').oninput = e => { App.prefs.musicVol = +e.target.value; savePrefs(); const v = muVol(); if(MU.player && MU.player.setVolume) MU.player.setVolume(v * 100); if(MU.audio) MU.audio.volume = v; };
+    $d('#muUnblock').onclick = () => { MU.blocked = false; if(MU.player && MU.player.playVideo) MU.player.playVideo(); if(MU.audio) MU.audio.play().catch(() => {}); muDock(); };
+    $d('.muprog').onclick = e => { const c = (S.music.get(MU.cid) || {}).current; const dur = MU.player && MU.player.getDuration ? MU.player.getDuration() : MU.audio ? MU.audio.duration : 0; if(!c || !dur) return; const r = e.currentTarget.getBoundingClientRect(); muCall('seek', { sec: (e.clientX - r.left) / r.width * dur }); };
+  }
+  d.classList.toggle('idle', !cur);
+  const $d = x => d.querySelector(x);
+  const ch = findChannel(MU.cid), mod = radioMod(ch);
+  d.classList.toggle('nomod', !mod);
+  $d('#muName').textContent = 'Rádio · ' + (ch ? ch.name : '');
+  const votes = (cur && cur.votes) || [], voted = votes.includes(S.me.id), need = (cur && cur.need) || 0;
+  $d('#muVote').classList.toggle('hidden', mod || !cur);
+  $d('#muVote').classList.toggle('on', voted);
+  $d('#muVote').querySelector('span').textContent = voted ? `Você votou${need ? ` (${votes.length}/${need})` : ''}` : `Votar para pular${votes.length ? ` (${votes.length}${need ? '/' + need : ''})` : ''}`;
+  $d('#muNow').innerHTML = cur ? `<span title="${esc(cur.title || '')}">${esc(cur.title || 'Música')}</span>` : 'Nada tocando · peça uma música';
+  $d('#muCover').style.backgroundImage = cur && cur.src !== 'yt' ? '' : '';
+  $d('#muCover').classList.toggle('hidden', !!(cur && cur.src === 'yt'));
+  $d('#muCover').innerHTML = cur && cur.src !== 'yt' ? `${ic('music', 34)}<small>${esc(cur.title || '')}</small>` : (cur ? '' : `${ic('music', 34)}<small>Fila vazia</small>`);
+  $d('#muPP').innerHTML = ic(cur && !cur.paused_at ? 'pause' : 'play', 18);
+  $d('#muPP').dataset.tip = cur && !cur.paused_at ? 'Pausar' : 'Continuar';
+  $d('#muLoop').classList.toggle('on', !!(st && st.repeat_mode && st.repeat_mode !== 'off'));
+  $d('#muLoop').dataset.tip = { off: 'Repetir', all: 'Repetindo a fila', one: 'Repetindo esta música' }[(st && st.repeat_mode) || 'off'];
+  $d('#muQn').textContent = q.length ? q.length : '';
+  $d('#muUnblock').classList.toggle('hidden', !MU.blocked);
+  const qe = $d('#muQueue'); qe.classList.toggle('hidden', !MU.open);
+  if(MU.open) qe.innerHTML = `<div class="muqh">A seguir</div>${q.map((t, i) => `<div class="muqi"><span class="n">${i + 1}</span><div class="t"><b>${esc(t.title || 'Música')}</b><small>pedida por ${esc(prof(t.by).display_name)}</small></div>${mod || t.by === S.me.id ? `<button class="ibtn sm" data-murm="${esc(t.key)}" data-tip="Tirar da fila">${ic('x', 14)}</button>` : ''}</div>`).join('') || '<div class="mut small" style="padding:8px">A fila está vazia.</div>'}${(cur || q.length) && mod ? `<button class="btn sec sm" id="muStop" style="margin-top:6px">${ic('stop', 14)} Parar e limpar</button>` : ''}`;
+  qe.querySelectorAll('[data-murm]').forEach(b => b.onclick = () => muCall('remove', { key: b.dataset.murm }));
+  const sp = $d('#muStop'); if(sp) sp.onclick = () => muCall('stop');
+  muTick();
+}
+
+/* ---------- colocar música ---------- */
+const AUDIO_EXT = /\.(mp3|ogg|oga|wav|m4a|aac|flac|opus|webm)(\?|#|$)/i;
+function ytIdOf(u){
+  const m = String(u).match(/(?:youtube\.com\/(?:watch\?(?:.*&)?v=|shorts\/|embed\/|live\/)|youtu\.be\/|music\.youtube\.com\/watch\?(?:.*&)?v=)([\w-]{11})/i);
+  return m ? m[1] : null;
+}
+const ytKey = () => (S.cfg && S.cfg.youtube_api_key) || '';
+async function ytTitle(vid){
+  try{ const r = await fetch('https://noembed.com/embed?url=' + encodeURIComponent('https://www.youtube.com/watch?v=' + vid)); const j = await r.json(); if(j && j.title) return { title: j.title, thumb: j.thumbnail_url }; }catch(e){}
+  return { title: 'Vídeo do YouTube', thumb: `https://i.ytimg.com/vi/${vid}/mqdefault.jpg` };
+}
+async function ytSearch(q){
+  const k = ytKey(); if(!k) return null;
+  const u = new URL('https://www.googleapis.com/youtube/v3/search');
+  u.search = new URLSearchParams({ part: 'snippet', type: 'video', maxResults: '8', q, key: k, videoEmbeddable: 'true', safeSearch: 'moderate' });
+  const r = await fetch(u); const j = await r.json();
+  if(j.error) throw new Error(j.error.message);
+  const tmp = document.createElement('textarea');
+  return (j.items || []).map(it => { tmp.innerHTML = it.snippet.title; return { vid: it.id.videoId, title: tmp.value, ch: it.snippet.channelTitle, thumb: it.snippet.thumbnails && (it.snippet.thumbnails.medium || it.snippet.thumbnails.default).url }; });
+}
+async function ytPlaylist(list){
+  const k = ytKey(); if(!k) return null;
+  const u = new URL('https://www.googleapis.com/youtube/v3/playlistItems');
+  u.search = new URLSearchParams({ part: 'snippet', maxResults: '50', playlistId: list, key: k });
+  const j = await (await fetch(u)).json(); if(j.error) throw new Error(j.error.message);
+  return (j.items || []).filter(it => it.snippet.resourceId && it.snippet.resourceId.videoId).map(it => ({ vid: it.snippet.resourceId.videoId, title: it.snippet.title }));
+}
+async function spotifyTitle(url){
+  try{ const j = await (await fetch('https://open.spotify.com/oembed?url=' + encodeURIComponent(url))).json(); return j && j.title; }catch(e){ return null; }
+}
+/* recebe um link ou um nome e coloca na fila; devolve o título */
+async function muQueueFrom(text, announce){
+  text = (text || '').trim(); if(!text) return null;
+  if(!MU.cid){ App.toast('Entre num canal de rádio para pedir música.', true); return null; }
+  let tracks = [];
+  const list = (text.match(/[?&]list=([\w-]+)/) || [])[1];
+  const vid = ytIdOf(text);
+  if(list && !vid && ytKey()){
+    const items = await ytPlaylist(list).catch(e => { App.toast(e.message, true); return []; });
+    tracks = items.slice(0, 50).map(it => ({ src: 'yt', vid: it.vid, title: it.title }));
+  } else if(vid){
+    const t = await ytTitle(vid); tracks = [{ src: 'yt', vid, title: t.title, thumb: t.thumb }];
+  } else if(/^https?:\/\//.test(text) && AUDIO_EXT.test(text)){
+    tracks = [{ src: 'url', url: text, title: decodeURIComponent(text.split('/').pop().split('?')[0]).replace(AUDIO_EXT, '') }];
+  } else if(/open\.spotify\.com\/track/.test(text)){
+    const t = await spotifyTitle(text);
+    if(!t){ App.toast('Não consegui ler esse link do Spotify. Cole um link do YouTube ou o nome da música.', true); return null; }
+    if(!ytKey()){ App.toast(`Achei “${t}”, mas para buscar no YouTube o admin precisa ativar a busca (Conexões). Cole um link do YouTube.`, true); return null; }
+    const r = await ytSearch(t + ' audio'); if(!r || !r.length){ App.toast('Não achei essa música no YouTube.', true); return null; }
+    tracks = [{ src: 'yt', vid: r[0].vid, title: r[0].title, thumb: r[0].thumb }];
+  } else if(/^https?:\/\//.test(text)){
+    App.toast('Esse link não dá para tocar. Use YouTube, um link de .mp3 ou envie o arquivo.', true); return null;
+  } else {
+    if(!ytKey()){ App.toast('Para buscar pelo nome, o admin precisa ativar a busca do YouTube (Configurações → Conexões). Por enquanto, cole o link do YouTube.', true); return null; }
+    const r = await ytSearch(text).catch(e => { App.toast('Busca do YouTube: ' + e.message, true); return null; });
+    if(!r || !r.length){ App.toast('Não achei nada com esse nome.', true); return null; }
+    tracks = [{ src: 'yt', vid: r[0].vid, title: r[0].title, thumb: r[0].thumb }];
+  }
+  for(const t of tracks) await muCall('add', t);
+  const title = tracks.length > 1 ? `${tracks.length} músicas da playlist` : tracks[0] && tracks[0].title;
+  if(title) App.toast('Na fila: ' + title);
+  if(announce && title && M.cid){ App.sb.from('messages').insert({ channel_id: M.cid, author_id: S.me.id, content: `📻 Pedi na rádio: **${title}**` }).then(() => {}); }
+  return title;
+}
+function muAddModal(){
+  if(!MU.cid){ App.toast('Entre num canal de rádio para pedir música.', true); return; }
+  const hasKey = !!ytKey();
+  modal(`<form id="muF"><div class="mh"><h2>${BOT_AV} Pedir uma música</h2><p>Todo mundo no canal de rádio ouve junto, no mesmo ponto. Cada pessoa pode ter até 3 músicas na fila.</p></div>
+    <div class="mc"><div class="musearch">${ic(hasKey ? 'search' : 'link', 18)}<input id="muI" placeholder="${hasKey ? 'Nome da música ou link do YouTube' : 'Cole o link do YouTube ou de um .mp3'}" autocomplete="off"></div>
+      <div id="muRes" class="mures"></div>
+      <div class="muup"><button type="button" class="btn sec sm" id="muFileB">${ic('upload', 15)} Enviar arquivo de música</button><input type="file" id="muFile" accept="audio/*" multiple hidden><small class="mut">MP3, M4A, OGG, WAV… até 25 MB</small></div>
+      ${hasKey ? '' : '<p class="mut small" style="margin-top:10px">Busca pelo nome fica disponível quando o admin ativar a busca do YouTube em Configurações → Conexões.</p>'}</div>
+    <div class="mf"><button type="button" class="btn sec" data-close>Fechar</button><button class="btn">Tocar</button></div></form>`, m => {
+    const inp = m.querySelector('#muI'); inp.focus();
+    let tm;
+    if(hasKey) inp.oninput = () => {
+      clearTimeout(tm); const v = inp.value.trim();
+      if(!v || /^https?:/.test(v)){ m.querySelector('#muRes').innerHTML = ''; return; }
+      tm = setTimeout(async () => {
+        const r = await ytSearch(v).catch(() => null); const box = m.querySelector('#muRes'); if(!box) return;
+        box.innerHTML = (r || []).map(x => `<button type="button" class="mur" data-vid="${x.vid}" data-title="${esc(x.title)}"><img src="${esc(x.thumb || '')}" alt=""><div class="t"><b>${esc(x.title)}</b><small>${esc(x.ch || '')}</small></div>${ic('plus', 16)}</button>`).join('');
+        box.querySelectorAll('[data-vid]').forEach(b => b.onclick = async () => { b.disabled = true; await muCall('add', { src: 'yt', vid: b.dataset.vid, title: b.dataset.title }); App.toast('Na fila: ' + b.dataset.title); b.classList.add('added'); });
+      }, 350);
+    };
+    m.querySelector('#muF').onsubmit = async e => { e.preventDefault(); const v = inp.value; if(!v.trim()) return; const t = await muQueueFrom(v); if(t){ inp.value = ''; m.querySelector('#muRes').innerHTML = ''; } };
+    m.querySelector('#muFileB').onclick = () => m.querySelector('#muFile').click();
+    m.querySelector('#muFile').onchange = async e => {
+      for(const f of e.target.files){
+        if(f.size > 25 * 1048576){ App.toast(f.name + ': maior que 25 MB.', true); continue; }
+        App.toast('Enviando ' + f.name + '…');
+        const path = `${S.me.id}/musica-${Date.now().toString(36)}-${f.name.replace(/[^\w.-]+/g, '_').slice(-60)}`;
+        const { error } = await App.sb.storage.from('attachments').upload(path, f, { contentType: f.type || 'audio/mpeg' });
+        if(error){ App.toast(error.message, true); continue; }
+        const url = App.sb.storage.from('attachments').getPublicUrl(path).data.publicUrl;
+        await muCall('add', { src: 'url', url, title: f.name.replace(/\.[^.]+$/, '') });
+      }
+      App.toast('Música enviada para a fila.');
+    };
+  });
+}
+App.muAddModal = muAddModal;
+
+/* ---------- comandos no chat ---------- */
+['tocar', 'pular', 'pausar', 'continuar', 'parar', 'fila', 'repetir', 'embaralhar'].forEach((c, i) => CMDS.push([c, ['nome ou link', '', '', '', '', '', 'fila | música | desligar', ''][i],
+  ['Pede uma música na rádio', 'Pula a música', 'Pausa a música', 'Continua a música', 'Para e limpa a fila', 'Mostra a fila', 'Repete a fila ou a música', 'Embaralha a fila'][i], '🎵']));
+const _runCommandRd = runCommand;
+runCommand = function(text){
+  const m = String(text).match(/^\/(\w+)\s*([\s\S]*)$/);
+  const cmd = m && m[1].toLowerCase(), a = m ? m[2].trim() : '';
+  const map = { tocar: 1, play: 1, p: 1, pular: 1, skip: 1, pausar: 1, pause: 1, continuar: 1, resume: 1, parar: 1, stop: 1, fila: 1, queue: 1, repetir: 1, loop: 1, embaralhar: 1, shuffle: 1 };
+  if(!cmd || !map[cmd]) return _runCommandRd.apply(this, arguments);
+  const ta = $('#cmp'); if(ta){ ta.value = ''; ta.style.height = 'auto'; }
+  if(!MU.cid) return { error: 'Entre num canal de rádio para pedir música.' };
+  if(['tocar','play','p'].includes(cmd)){ if(a) muQueueFrom(a, true); else muAddModal(); }
+  else if(['pular','skip'].includes(cmd)) muCall('skip');
+  else if(['pausar','pause'].includes(cmd)) muCall('pause');
+  else if(['continuar','resume'].includes(cmd)) muCall('resume');
+  else if(['parar','stop'].includes(cmd)) muCall('stop');
+  else if(['fila','queue'].includes(cmd)){ MU.open = true; muDock(); }
+  else if(['repetir','loop'].includes(cmd)) muCall('loop', { mode: /música|musica|one|esta/.test(a) ? 'one' : /deslig|off|não|nao/.test(a) ? 'off' : 'all' });
+  else if(['embaralhar','shuffle'].includes(cmd)) muCall('shuffle');
+  return { error: '' };
+};
+
+/* ---------- o bot aparece na lista da chamada ---------- */
+const _renderSidebarRd = renderSidebar;
+renderSidebar = function(){
+  _renderSidebarRd.apply(this, arguments);
+  if(Voice.channel ? isRadio(findChannel(Voice.channel.id)) !== !!MU.cid : MU.cid) muAttach();
+  S.music.forEach((st, cid) => {
+    if(!st || !st.current) return;
+    const row = document.querySelector(`#sbBody .ch[data-cid="${cid}"]`); if(!row || document.querySelector(`.vu.bot[data-botch="${cid}"]`)) return;
+    let after = row; while(after.nextElementSibling && after.nextElementSibling.classList.contains('vu')) after = after.nextElementSibling;
+    after.insertAdjacentHTML('afterend', `<div class="vu bot" data-botch="${cid}">${BOT_AV}<span class="nm">Tocando</span><small class="bnow">${st.current.paused_at ? 'pausado' : esc(st.current.title || '')}</small></div>`);
+  });
+  // ícone de rádio nos canais de rádio
+  S.channels.forEach(list => list.forEach(c => { if(!isRadio(c)) return; const row = document.querySelector(`#sbBody .ch[data-cid="${c.id}"]`); if(row && !row.querySelector('.radioic')){ const svg = row.querySelector('svg'); if(svg) svg.outerHTML = '<span class="radioic" data-tip="Rádio do servidor">📻</span>'; } }));
+  document.querySelectorAll('.vu.bot').forEach(el => el.onclick = () => { if(MU.cid === el.dataset.botch){ const d = $('#musicDock'); if(d) d.classList.remove('mini'); } });
+};
+
+/* ---------- tempo real + chave da busca do YouTube (admin) ---------- */
+const _loadServersRd = loadServers;
+loadServers = async function(){
+  await _loadServersRd.apply(this, arguments);
+  if(!S._rdRt){ S._rdRt = true;
+    App.sb.channel('radio-rt').on('postgres_changes', { event: '*', schema: 'public', table: 'voice_music' }, p => {
+      const r = p.new && p.new.channel_id ? p.new : null; if(!r) return;
+      S.music.set(r.channel_id, r); if(r.channel_id === MU.cid) muApply(); renderSidebar();
+    }).subscribe();
+    const ids = S.servers.flatMap(s => (S.channels.get(s.id) || []).filter(c => c.kind === 'voice').map(c => c.id));
+    if(ids.length) App.sb.from('voice_music').select('*').in('channel_id', ids).then(({ data }) => { (data || []).forEach(r => S.music.set(r.channel_id, r)); renderSidebar(); });
+  }
+};
+const _secConnRd = secConnections;
+secConnections = function(box, back){
+  _secConnRd(box, back);
+  if(!S.me.is_admin) return;
+  box.insertAdjacentHTML('beforeend', `<hr class="sdiv"><h3>Busca do YouTube para a rádio (só o admin vê)</h3>
+    <ol class="steps"><li>No <a href="https://console.cloud.google.com/apis/library/youtube.googleapis.com" target="_blank" rel="noopener">Google Cloud</a> (o mesmo do login com Google), ative a <b>YouTube Data API v3</b>.</li>
+      <li>Em <b>Credenciais → Criar credenciais → Chave de API</b>. Em "Restrições de aplicativo" escolha <b>Sites</b> e coloque <code>${esc(location.origin)}/*</code>; em "Restrições de API" deixe só a YouTube Data API v3.</li>
+      <li>Cole a chave aqui:</li></ol>
+    <div style="display:flex;gap:8px"><input class="inp" id="ytKey" placeholder="Chave da API do YouTube" value="${esc(ytKey())}"><button class="btn" id="ytKeyOk">Salvar</button></div>
+    <p class="mut small" style="margin-top:6px">Sem a chave a rádio continua tocando links do YouTube, de .mp3 e arquivos enviados; só a busca pelo nome que não funciona.</p>`);
+  box.querySelector('#ytKeyOk').onclick = async () => {
+    const v = box.querySelector('#ytKey').value.trim();
+    const { error } = await App.sb.from('app_config').upsert({ key: 'youtube_api_key', value: v || null, updated_at: new Date().toISOString() });
+    if(error){ App.toast(error.message, true); return; }
+    S.cfg.youtube_api_key = v; App.toast('Busca do YouTube ativada para a rádio.');
+  };
+};
+// botão do bot nas atividades da chamada
+App.radioAdd = muAddModal;
+/* =====================================================================
+   v6.15: ASSISTIR JUNTOS, VERSÃO 2
+   - fila de vídeos (YouTube, links .mp4/.webm e clipes do Telão), passa sozinho para o próximo
+   - quem entra depois na chamada já cai no vídeo, no mesmo ponto (antes não chegava)
+   - correção automática de atraso a cada poucos segundos, velocidade sincronizada
+   - aviso de quem pausou/pulou, e vídeo que não pode tocar fora do YouTube é pulado
+   ===================================================================== */
+const VID_EXT = /\.(mp4|webm|mov|m4v|ogv)(\?|#|$)/i;
+WT.queue = []; WT.item = null; WT.rate = 1; WT.hb = null;
+const wtKey = () => Math.random().toString(36).slice(2, 10);
+// quem está há mais tempo… na verdade: a sessão de menor id entre quem está na chamada. Ela avança a fila e manda o "relógio".
+function wtLeader(){
+  if(!Voice.channel) return false;
+  const list = voiceUsers(Voice.channel).map(m => m.session).filter(Boolean).concat(Voice.SESSION).sort();
+  return list[0] === Voice.SESSION;
+}
+async function wtItemFrom(text){
+  text = String(text || '').trim(); if(!text) return null;
+  const id = ytId(text);
+  if(id){
+    let title = 'Vídeo do YouTube';
+    try{ const j = await (await fetch('https://noembed.com/embed?url=' + encodeURIComponent('https://www.youtube.com/watch?v=' + id))).json(); if(j && j.title) title = j.title; }catch(e){}
+    return { key: wtKey(), kind: 'yt', id, title, by: S.me.id };
+  }
+  if(/^https?:\/\//.test(text) && VID_EXT.test(text)) return { key: wtKey(), kind: 'file', url: text, title: decodeURIComponent(text.split('/').pop().split('?')[0]).slice(0, 80), by: S.me.id };
+  return null;
+}
+App.wtPlayList = (items, start) => {
+  if(!Voice.channel){ App.toast('Entre numa chamada para assistir junto.', true); return false; }
+  const list = items.map(x => ({ key: wtKey(), by: S.me.id, ...x }));
+  if(!list.length) return false;
+  Voice.sendFx({ t: 'wt-load', item: list[0], queue: list.slice(1), time: start || list[0].start || 0, playing: true, rate: 1 });
+  return true;
+};
+
+wtPrompt = function(){
+  const playing = WT.active && WT.channel === (Voice.channel && Voice.channel.id);
+  modal(`<form id="wtF"><div class="mh"><h2>${ic('tv',22)} Assistir juntos</h2><p>Cole um link do YouTube ou de um vídeo (.mp4, .webm). Toca sincronizado para todos na chamada: quando alguém pausa ou pula, pula para todo mundo.</p></div>
+    <div class="mc"><input class="inp" id="wtU" placeholder="https://www.youtube.com/watch?v=..." autocomplete="off">
+      ${playing ? `<p class="mut small" style="margin-top:8px">Já tem um vídeo passando. Escolha se ele entra agora ou depois.</p>` : ''}</div>
+    <div class="mf"><button type="button" class="btn sec" data-close>Cancelar</button>${playing ? `<button type="button" class="btn sec" id="wtQ">${ic('list',16)} Pôr na fila</button>` : ''}<button class="btn">${playing ? 'Tocar agora' : 'Começar'}</button></div></form>`, m => {
+    const get = async () => { const it = await wtItemFrom(m.querySelector('#wtU').value); if(!it) App.toast('Esse link não parece ser do YouTube nem de um vídeo.', true); return it; };
+    m.querySelector('#wtF').onsubmit = async e => {
+      e.preventDefault(); const it = await get(); if(!it) return;
+      closeModal(); Voice.sendFx({ t: 'wt-load', item: it, queue: WT.active ? WT.queue : [], time: 0, playing: true, rate: 1 });
+    };
+    const qb = m.querySelector('#wtQ'); if(qb) qb.onclick = async () => {
+      const it = await get(); if(!it) return;
+      closeModal(); Voice.sendFx({ t: 'wt-queue', queue: WT.queue.concat(it), note: `colocou “${it.title}” na fila` });
+    };
+    setTimeout(() => m.querySelector('#wtU').focus(), 50);
+  });
+};
+
+function wtSetItem(item, time, playing, rate){
+  try{ WT.player && WT.player.destroy && WT.player.destroy(); }catch(e){}
+  WT.player = null;
+  Object.assign(WT, { active: true, channel: Voice.channel.id, item, id: item.kind === 'yt' ? item.id : null, title: item.title || '', rate: rate || 1,
+    state: { time: time || 0, playing: playing !== false, at: Date.now() } });
+}
+function wtAdvance(fromKey){
+  if(!WT.item || WT.item.key !== fromKey) return;
+  if(WT.queue.length) Voice.sendFx({ t: 'wt-load', item: WT.queue[0], queue: WT.queue.slice(1), time: WT.queue[0].start || 0, playing: true, rate: WT.rate, auto: true });
+  else Voice.sendFx({ t: 'wt-stop', auto: true });
+}
+function wtNow(){ try{ return WT.player && WT.player.getCurrentTime ? WT.player.getCurrentTime() : 0; }catch(e){ return 0; } }
+function wtIsPlaying(){ try{ return WT.player && WT.player.getPlayerState ? WT.player.getPlayerState() === 1 : false; }catch(e){ return false; } }
+function wtApplyRemote(time, playing, rate){
+  if(!WT.player || !WT.player.seekTo) { WT.state = { time, playing, at: Date.now() }; return; }
+  WT.apply = true;
+  try{
+    if(rate && rate !== WT.rate){ WT.rate = rate; WT.player.setPlaybackRate && WT.player.setPlaybackRate(rate); }
+    if(Math.abs(wtNow() - time) > 1.5) WT.player.seekTo(time, true);
+    if(playing && !wtIsPlaying()) WT.player.playVideo(); else if(!playing && wtIsPlaying()) WT.player.pauseVideo();
+  }catch(e){}
+  setTimeout(() => WT.apply = false, 800);
+}
+
+onWT = function(pl, mine){
+  if(!Voice.channel) return;
+  const who = pl.uid && pl.uid !== S.me.id ? prof(pl.uid).display_name : null;
+  if(pl.t === 'wt-load' || (pl.t === 'wt-load-for' && pl.to === Voice.SESSION)){
+    if(pl.t === 'wt-load-for' && WT.active && WT.item) return;
+    const item = pl.item || (pl.id ? { key: pl.id, kind: 'yt', id: pl.id, title: '' } : null); if(!item) return;
+    wtSetItem(item, pl.time, pl.playing, pl.rate); WT.queue = Array.isArray(pl.queue) ? pl.queue.slice(0, 50) : [];
+    S.focus = 'wt'; renderStage();
+    if(who && pl.t === 'wt-load') App.toast(pl.auto ? `Próximo vídeo: ${item.title || 'vídeo'}` : `${who} colocou um vídeo para assistir juntos`);
+  }
+  else if(pl.t === 'wt-stop'){
+    WT.active = false; WT.item = null; WT.queue = [];
+    try{ WT.player && WT.player.destroy && WT.player.destroy(); }catch(e){}
+    WT.player = null; if(S.focus === 'wt') S.focus = null; renderStage();
+    if(who && !pl.auto) App.toast(`${who} encerrou o assistir juntos`);
+  }
+  else if(pl.t === 'wt-queue'){
+    WT.queue = Array.isArray(pl.queue) ? pl.queue.slice(0, 50) : [];
+    wtBar(); if(who && pl.note) App.toast(`${who} ${pl.note}`);
+  }
+  else if(pl.t === 'wt-sync' && !mine && WT.active){
+    const was = wtIsPlaying();
+    wtApplyRemote(pl.time, pl.playing, pl.rate);
+    if(who && !pl.hb){
+      if(was && !pl.playing) App.toast(`${who} pausou`);
+      else if(pl.rate && pl.rate !== 1 && pl.rateChanged) App.toast(`${who} mudou a velocidade para ${pl.rate}x`);
+    }
+  }
+  else if(pl.t === 'wt-hello' && !mine && WT.active && WT.item){
+    // quem já está assistindo responde (quem chega fica com a primeira resposta)
+    setTimeout(() => { if(WT.active && WT.item) Voice.sendFx({ t: 'wt-load-for', to: pl.from, item: WT.item, queue: WT.queue, time: wtNow() || (WT.state ? WT.state.time : 0), playing: WT.player ? wtIsPlaying() : WT.state.playing, rate: WT.rate }); }, Math.random() * 400);
+  }
+};
+
+/* quem entra na chamada pergunta se tem vídeo passando */
+const _joinVoiceWT = joinVoice;
+joinVoice = async function(){
+  const r = await _joinVoiceWT.apply(this, arguments);
+  WT.active = false; WT.item = null; WT.queue = [];
+  if(Voice.channel){ [1500, 4000].forEach(t => setTimeout(() => { if(Voice.channel && !WT.active) Voice.sendFx({ t: 'wt-hello' }); }, t)); }
+  return r;
+};
+/* "relógio" do líder: corrige quem atrasou */
+setInterval(() => {
+  if(!WT.active || !WT.player || !Voice.channel || WT.channel !== Voice.channel.id || !wtLeader()) return;
+  Voice.sendFx({ t: 'wt-sync', time: wtNow(), playing: wtIsPlaying(), rate: WT.rate, hb: true });
+}, 8000);
+
+/* player de arquivo com a mesma "cara" do player do YouTube */
+function fileWTPlayer(box, url, start, playing, rate, onState){
+  const v = document.createElement('video'); v.src = url; v.playsInline = true; v.controls = true; v.className = 'wtvideo'; v.crossOrigin = 'anonymous';
+  box.replaceWith(v); v.id = 'wtPlayer';
+  v.addEventListener('loadedmetadata', () => { try{ v.currentTime = start || 0; }catch(e){} v.playbackRate = rate || 1; if(playing) v.play().catch(() => App.toast('Toque no vídeo para começar.')); }, { once: true });
+  v.onplay = () => onState(1); v.onpause = () => { if(!v.ended) onState(2); }; v.onended = () => onState(0); v.onseeked = () => onState(v.paused ? 2 : 1);
+  v.onerror = () => onState(-2);
+  return { getCurrentTime: () => v.currentTime, seekTo: t => { v.currentTime = t; }, playVideo: () => v.play().catch(() => {}), pauseVideo: () => v.pause(),
+    getPlayerState: () => v.ended ? 0 : v.paused ? 2 : 1, setPlaybackRate: r => { v.playbackRate = r; }, destroy: () => { v.pause(); v.removeAttribute('src'); v.load(); }, getIframe: () => v, isFile: true };
+}
+
+function wtBar(){
+  const bar = document.querySelector('.wtbar'); if(!bar) return;
+  bar.innerHTML = `<span class="wtt">${ic('tv',16)} ${esc(WT.title || 'Assistindo juntos')}</span><span class="grow"></span>
+    <select id="wtRate" class="wtrate" data-tip="Velocidade">${[0.5, 0.75, 1, 1.25, 1.5, 2].map(r => `<option value="${r}" ${r === WT.rate ? 'selected' : ''}>${r}x</option>`).join('')}</select>
+    <button id="wtQueue">${ic('list',16)} Fila${WT.queue.length ? ` (${WT.queue.length})` : ''}</button>
+    ${WT.queue.length ? `<button id="wtNext">${ic('skip',16)} Próximo</button>` : ''}
+    <button id="wtChange">${ic('plus',16)} Adicionar</button><button id="wtStop">${ic('x',16)} Encerrar</button>`;
+  const $b = q => bar.querySelector(q);
+  $b('#wtStop').onclick = () => Voice.sendFx({ t: 'wt-stop' });
+  $b('#wtChange').onclick = wtPrompt;
+  const nx = $b('#wtNext'); if(nx) nx.onclick = () => WT.item && wtAdvance(WT.item.key);
+  $b('#wtRate').onchange = e => { const r = +e.target.value; WT.rate = r; try{ WT.player.setPlaybackRate(r); }catch(x){} Voice.sendFx({ t: 'wt-sync', time: wtNow(), playing: wtIsPlaying(), rate: r, rateChanged: true }); };
+  $b('#wtQueue').onclick = e => {
+    const r = e.currentTarget.getBoundingClientRect();
+    menu(r.left, r.bottom + 6, [{ html: `<b>A seguir</b>` }].concat(WT.queue.length ? WT.queue.map((it, i) => ({ raw: `<div class="wtqi"><span class="n">${i + 1}</span><div class="t"><b>${esc(it.title || 'vídeo')}</b><small>por ${esc(prof(it.by).display_name)}</small></div><button class="ibtn sm" data-wtplay="${i}" data-tip="Tocar agora">${ic('play',14)}</button><button class="ibtn sm" data-wtrm="${i}" data-tip="Tirar da fila">${ic('x',14)}</button></div>` })) : [{ html: '<span class="mut small">A fila está vazia. Use “Adicionar”.</span>' }]));
+    const mm = $('#menu');
+    mm.querySelectorAll('[data-wtrm]').forEach(b => b.onclick = () => { const q = WT.queue.slice(); const [it] = q.splice(+b.dataset.wtrm, 1); closeMenu(); Voice.sendFx({ t: 'wt-queue', queue: q, note: `tirou “${it.title}” da fila` }); });
+    mm.querySelectorAll('[data-wtplay]').forEach(b => b.onclick = () => { const q = WT.queue.slice(); const [it] = q.splice(+b.dataset.wtplay, 1); closeMenu(); Voice.sendFx({ t: 'wt-load', item: it, queue: q, time: it.start || 0, playing: true, rate: WT.rate }); });
+  };
+}
+
+mountWT = async function(){
+  const box = $('#wtPlayer'); if(!box || !WT.item) return;
+  wtBar();
+  if(WT.player && WT.player.getIframe && WT.player.getIframe()){ box.replaceWith(WT.player.getIframe()); return; }
+  const st = WT.state || { time: 0, playing: true, at: Date.now() };
+  const start = st.time + (st.playing ? (Date.now() - st.at) / 1000 * (WT.rate || 1) : 0);
+  const item = WT.item;
+  const onState = s => {
+    if(s === 0){ if(wtLeader()) wtAdvance(item.key); return; }
+    if(s === -2){ App.toast('Esse vídeo não abriu. Pulando…', true); if(wtLeader()) wtAdvance(item.key); return; }
+    if(WT.apply) return;
+    if(s === 1 || s === 2) Voice.sendFx({ t: 'wt-sync', time: wtNow(), playing: s === 1, rate: WT.rate });
+  };
+  if(item.kind === 'file'){ WT.player = fileWTPlayer(box, item.url, start, st.playing, WT.rate, onState); return; }
+  await loadYTApi();
+  if(!$('#wtPlayer') || WT.item !== item) return;
+  WT.player = new YT.Player('wtPlayer', { videoId: item.id, width: '100%', height: '100%',
+    playerVars: { autoplay: 1, start: Math.floor(start), rel: 0, modestbranding: 1, playsinline: 1 },
+    events: {
+      onReady: e => { try{ if(start) e.target.seekTo(start, true); if(WT.rate !== 1) e.target.setPlaybackRate(WT.rate); if(!st.playing) e.target.pauseVideo();
+        const t = e.target.getVideoData().title; if(t){ WT.title = t; const b = $('.wtbar .wtt'); if(b) b.innerHTML = `${ic('tv',16)} ${esc(t)}`; } }catch(_){} },
+      onStateChange: e => onState(e.data === 0 ? 0 : e.data),
+      onError: () => onState(-2),
+    } });
+};
+/* =====================================================================
+   v6.15: COMUNIDADE
+   - Regras para entrar (servidor da comunidade): quem é novo lê e aceita ou cancela
+   - Clipes da semana (votação com 🔥, ranking, assistir todos juntos na call)
+   - Mural do servidor (mensagens com ⭐)
+   - Conquistas no perfil
+   - Aniversários (selo 🎂 por 24 h, aviso no servidor e parabéns da conta oficial)
+   - Retrospectiva do ano
+   - Jogo aberto no PC vira "Jogando…" sozinho (app do Windows 1.1)
+   ===================================================================== */
+const sqlMiss = e => /could not find the function|PGRST202|does not exist|schema cache/i.test((e && (e.message || e.code)) || '');
+const needSql = 'Falta rodar o supabase.sql novo no Supabase para isso funcionar.';
+const mdLite = t => esc(t || '').replace(/\*\*(.+?)\*\*/g, '<b>$1</b>').replace(/\n/g, '<br>');
+function modalClosed(cb){
+  const obs = new MutationObserver(() => { if($('#modal').classList.contains('hidden')){ obs.disconnect(); cb(); } });
+  obs.observe($('#modal'), { attributes: true, attributeFilter: ['class'] });
+}
+
+/* ================= REGRAS PARA ENTRAR ================= */
+function rulesModal(pv){
+  return new Promise(res => {
+    let done = false; const fin = v => { if(done) return; done = true; res(v); };
+    const icon = pv.icon_url ? `<img src="${esc(pv.icon_url)}" alt="">` : `<span>${esc(serverInitials(pv.name || 'S'))}</span>`;
+    modal(`<div class="mh rulesh"><div class="rulesic" style="--sc:${esc(pv.icon_color || '#5865f2')}">${icon}</div><h2>Antes de entrar em ${esc(pv.name || 'servidor')}</h2>
+        <p>Leia as regras da comunidade. Para entrar, você precisa aceitar.</p></div>
+      <div class="mc"><div class="rulesbox">${mdLite(pv.rules_text || 'Respeite todo mundo.')}</div>
+        <label class="rulesok"><input type="checkbox" id="ruOk"> <span>Li e concordo com as regras de <b>${esc(pv.name || 'servidor')}</b></span></label></div>
+      <div class="mf"><button class="btn sec" id="ruNo">Cancelar</button><button class="btn" id="ruGo" disabled>Aceitar e entrar</button></div>`, m => {
+      const ok = m.querySelector('#ruOk'), go_ = m.querySelector('#ruGo');
+      ok.onchange = () => go_.disabled = !ok.checked;
+      m.querySelector('#ruNo').onclick = () => { fin(false); closeModal(); };
+      go_.onclick = () => { fin(true); closeModal(); };
+      modalClosed(() => { $('#modal').classList.remove('ontop'); fin(false); });
+    });
+    $('#modal').classList.add('ontop');   // fica por cima do Explorar
+  });
+}
+App.joinWithRules = async (fn, args) => {
+  let r = await App.sb.rpc(fn, args);
+  if(r.error && /RULES_REQUIRED/.test(r.error.message || '')){
+    const pv = await App.sb.rpc('server_rules_preview', fn === 'join_server' ? { p_code: args.p_code } : { p_server: args.p_server });
+    const ok = await rulesModal(pv.data || {});
+    if(!ok){ App.toast('Você não entrou no servidor.'); return { cancelled: true }; }
+    r = await App.sb.rpc(fn, { ...args, p_accept: true });
+  }
+  return r;
+};
+function rulesView(s){
+  modal(`<div class="mh"><h2>${ic('book', 20)} Regras de ${esc(s.name)}</h2></div><div class="mc"><div class="rulesbox">${mdLite(s.rules_text)}</div></div>
+    <div class="mf"><button class="btn" data-close>Fechar</button></div>`);
+}
+/* configurações: seção Comunidade ganha "Regras para entrar" */
+const _secSrvCommunityR = secSrvCommunity;
+secSrvCommunity = function(box, back){
+  _secSrvCommunityR.apply(this, arguments);
+  const s = SET.server, can = App.hasPerm(s.id, 2);
+  box.insertAdjacentHTML('beforeend', `<hr class="sdiv"><h3>${ic('book', 18)} Regras para entrar</h3>
+    <p class="mut small">Quem for entrar no servidor (pelo Explorar ou por convite) lê as regras e precisa aceitar. Se cancelar, não entra. Quem já é membro não precisa aceitar de novo.</p>
+    ${row('Pedir para aceitar as regras', '', toggle('ruOn', !!s.rules_on))}
+    <label class="field"><span>Regras</span><textarea class="inp" id="ruT" rows="7" maxlength="4000" placeholder="1. Respeite todo mundo&#10;2. Sem spam nem divulgação&#10;3. Conteúdo +18 só nos canais marcados&#10;4. Siga o que a moderação pedir">${esc(s.rules_text || '')}</textarea></label>
+    <div class="bkacts"><button class="btn" id="ruSave" ${can ? '' : 'disabled'}>Salvar regras</button><button class="btn sec" id="ruPrev">Ver como fica</button></div>`);
+  box.querySelector('#ruPrev').onclick = () => rulesModal({ name: s.name, icon_url: s.icon_url, icon_color: s.icon_color, rules_text: box.querySelector('#ruT').value.trim() });
+  box.querySelector('#ruSave').onclick = async () => {
+    const on = box.querySelector('#ruOn').checked, txt = box.querySelector('#ruT').value.trim();
+    if(on && !txt){ App.toast('Escreva as regras antes de ligar.', true); return; }
+    const { error } = await App.sb.from('servers').update({ rules_on: on, rules_text: txt || null }).eq('id', s.id);
+    if(error){ App.toast(/rules_/.test(error.message) ? needSql : error.message, true); return; }
+    await loadServers(); SET.server = S.servers.find(x => x.id === s.id) || s; App.toast(on ? 'Regras salvas. Quem entrar agora precisa aceitar.' : 'Regras salvas.');
+  };
+};
+
+/* ================= CLIPES DA SEMANA ================= */
+const isClipAtt = a => a && (a.clip || /^video\//.test(a.type || ''));
+async function topClips(s, week){
+  const { data, error } = await App.sb.rpc('server_top_clips', { p_server: s.id, p_week: week });
+  if(error) throw error;
+  await ensureProfiles((data || []).map(x => x.author_id));
+  return data || [];
+}
+function clipsModal(s){
+  let week = 0, list = [];
+  const draw = async m => {
+    const box = m.querySelector('#cwL'); box.innerHTML = '<div class="spin" style="margin:30px auto"></div>';
+    try{ list = await topClips(s, week); }catch(e){ box.innerHTML = `<p class="mut">${esc(sqlMiss(e) ? needSql : e.message)}</p>`; return; }
+    m.querySelectorAll('#cwTabs [data-w]').forEach(b => b.classList.toggle('on', +b.dataset.w === week));
+    m.querySelector('#cwAll').disabled = !list.length;
+    box.innerHTML = list.length ? list.map((c, i) => {
+      const a = (c.attachments || []).find(isClipAtt), p = prof(c.author_id), ch = findChannel(c.channel_id);
+      const crown = i === 0 && c.votes > 0 ? (week === 0 ? '<span class="cwbadge">👑 Liderando</span>' : '<span class="cwbadge win">🏆 Clipe da semana</span>') : '';
+      return `<div class="cwitem ${i === 0 && c.votes > 0 ? 'top' : ''}"><div class="cwrank">${i + 1}</div>
+        <div class="cwvid"><video src="${esc(a.url)}${a.start > 0 ? '#t=' + (+a.start).toFixed(1) : ''}" preload="metadata" controls playsinline></video></div>
+        <div class="cwinfo">${crown}<div class="cwwho">${avatar(p, 'sm')}<b>${esc(p.display_name)}</b></div>
+          ${c.content ? `<p>${esc(c.content.slice(0, 140))}</p>` : ''}<small class="mut">${ch ? '#' + esc(ch.name) + ' · ' : ''}${new Date(c.created_at).toLocaleDateString('pt-BR', { weekday: 'short', day: 'numeric', month: 'short' })}</small>
+          <div class="cwacts"><button class="btn sm ${c.mine ? '' : 'sec'}" data-cwv="${c.message_id}">🔥 ${c.votes}</button><button class="btn sec sm" data-cwgo="${c.message_id}">Ver no chat</button></div></div></div>`;
+    }).join('') : `<div class="empty">${week === 0 ? 'Nenhum clipe esta semana ainda. Na call, aperte <b>Alt+C</b> para clipar os últimos 30 segundos e mande aqui no servidor.' : 'Nenhum clipe nessa semana.'}</div>`;
+    box.querySelectorAll('[data-cwv]').forEach(b => b.onclick = async () => {
+      const c = list.find(x => x.message_id === b.dataset.cwv); if(!c) return;
+      b.disabled = true;
+      const { error } = c.mine ? await App.sb.from('message_reactions').delete().eq('message_id', c.message_id).eq('user_id', S.me.id).eq('emoji', '🔥')
+        : await App.sb.from('message_reactions').insert({ message_id: c.message_id, emoji: '🔥' });
+      if(error && !/duplicate/i.test(error.message)) App.toast(error.message, true);
+      draw(m);
+    });
+    box.querySelectorAll('[data-cwgo]').forEach(b => b.onclick = () => { const c = list.find(x => x.message_id === b.dataset.cwgo); closeModal(); go({ kind: 'server', sid: s.id, cid: c.channel_id }).then(() => setTimeout(() => jumpTo(c.message_id), 400)); });
+  };
+  modal(`<div class="mh"><h2>🎬 Clipes da semana</h2><p>Os clipes mais curtidos de ${esc(s.name)}. Vote com 🔥. O mais votado de cada semana vira o <b>Clipe da semana</b>.</p></div>
+    <div class="mc"><div class="tabs2" id="cwTabs"><button data-w="0" class="on">Esta semana</button><button data-w="1">Semana passada</button><button data-w="2">Há 2 semanas</button></div>
+      <div class="cwlist" id="cwL"></div></div>
+    <div class="mf"><button class="btn sec" data-close>Fechar</button><button class="btn" id="cwAll">${ic('tv', 16)} Assistir todos juntos na call</button></div>`, m => {
+    m.querySelector('.mbox').classList.add('wide');
+    m.querySelectorAll('#cwTabs [data-w]').forEach(b => b.onclick = () => { week = +b.dataset.w; draw(m); });
+    m.querySelector('#cwAll').onclick = () => {
+      if(!Voice.channel){ App.toast('Entre numa chamada para assistir com a galera.', true); return; }
+      const items = list.slice(0, 10).map((c, i) => { const a = (c.attachments || []).find(isClipAtt); return { kind: 'file', url: a.url, start: +a.start || 0, title: `#${i + 1} · clipe de ${prof(c.author_id).display_name} (🔥 ${c.votes})`, by: c.author_id }; });
+      if(App.wtPlayList(items)){ closeModal(); App.toast('Começou a sessão de clipes da semana.'); }
+    };
+    draw(m);
+  });
+}
+App.clipsModal = clipsModal;
+
+/* ================= MURAL ================= */
+async function wallOpen(s){
+  const el = document.createElement('div'); el.className = 'explore wall'; el.id = 'wallBox';
+  el.innerHTML = `<div class="exbox"><div class="exhead"><div><h1>⭐ Mural de ${esc(s.name)}</h1><p>Os melhores prints, memes, clipes e frases. Para colocar uma mensagem aqui, abra o menu dela e escolha <b>Pôr no mural</b>.</p></div><button class="ibtn" id="wlX" data-tip="Fechar">${ic('x', 20)}</button></div>
+    <div class="wallgrid" id="wlG"><div class="spin" style="margin:40px auto"></div></div><div style="text-align:center;padding:10px"><button class="btn sec hidden" id="wlMore">Ver mais</button></div></div>`;
+  document.body.appendChild(el);
+  const close = () => el.remove();
+  el.querySelector('#wlX').onclick = close; el.onclick = e => { if(e.target === el) close(); };
+  const kd = e => { if(e.key === 'Escape'){ close(); document.removeEventListener('keydown', kd); } }; document.addEventListener('keydown', kd);
+  let last = null; const g = el.querySelector('#wlG');
+  const load = async more => {
+    const { data, error } = await App.sb.rpc('server_wall', { p_server: s.id, p_before: more ? last : null });
+    if(error){ g.innerHTML = `<div class="empty">${esc(sqlMiss(error) ? needSql : error.message)}</div>`; return; }
+    const rows = data || []; await ensureProfiles(rows.map(r => r.author_id));
+    if(!more) g.innerHTML = '';
+    if(!rows.length && !more){ g.innerHTML = '<div class="empty">O mural ainda está vazio. Abra o menu de uma mensagem (clique com o botão direito ou segure no celular) e escolha <b>⭐ Pôr no mural</b>.</div>'; return; }
+    rows.forEach(r => {
+      const p = prof(r.author_id), ch = findChannel(r.channel_id), atts = Array.isArray(r.attachments) ? r.attachments : [];
+      const img = atts.find(a => /^image\//.test(a.type || '')), vid = atts.find(a => /^video\//.test(a.type || ''));
+      g.insertAdjacentHTML('beforeend', `<div class="wcardm ${img || vid ? 'media' : 'quote'}">
+        ${img ? `<img src="${esc(img.url)}" alt="" loading="lazy">` : vid ? `<video src="${esc(vid.url)}${vid.start > 0 ? '#t=' + (+vid.start).toFixed(1) : ''}" controls preload="metadata" playsinline></video>` : ''}
+        ${r.content ? `<div class="wtxt">${richText(r.content.slice(0, 600))}</div>` : ''}
+        <div class="wfoot">${avatar(p, 'sm')}<span><b>${esc(p.display_name)}</b><small>${ch ? '#' + esc(ch.name) + ' · ' : ''}${new Date(r.created_at).toLocaleDateString('pt-BR')}</small></span><span class="grow"></span><button class="wstar ${r.mine ? 'on' : ''}" data-wst="${r.message_id}">⭐ ${r.stars}</button><button class="ibtn sm" data-wgo="${r.message_id}" data-wch="${r.channel_id}" data-tip="Ver no chat">${ic('chevRight', 16)}</button></div></div>`);
+    });
+    last = rows.length ? rows[rows.length - 1].starred_at : last;
+    el.querySelector('#wlMore').classList.toggle('hidden', rows.length < 40);
+    g.querySelectorAll('[data-wgo]').forEach(b => b.onclick = () => { close(); go({ kind: 'server', sid: s.id, cid: b.dataset.wch }).then(() => setTimeout(() => jumpTo(b.dataset.wgo), 400)); });
+    g.querySelectorAll('[data-wst]').forEach(b => b.onclick = async () => {
+      const on = b.classList.contains('on'), mid = b.dataset.wst, n = parseInt(b.textContent.replace(/\D/g, '')) || 0;
+      const { error } = on ? await App.sb.from('message_reactions').delete().eq('message_id', mid).eq('user_id', S.me.id).eq('emoji', '⭐') : await App.sb.from('message_reactions').insert({ message_id: mid, emoji: '⭐' });
+      if(error && !/duplicate/i.test(error.message)){ App.toast(error.message, true); return; }
+      b.classList.toggle('on', !on); b.textContent = '⭐ ' + Math.max(0, n + (on ? -1 : 1));
+    });
+  };
+  el.querySelector('#wlMore').onclick = () => load(true);
+  load(false);
+}
+App.wallOpen = wallOpen;
+App.msgMenuExtra = m => {
+  const ch = findChannel(m.channel_id); if(!ch || !ch.server_id) return [];
+  const starred = M.reacts.get(m.id) && M.reacts.get(m.id).get('⭐') && M.reacts.get(m.id).get('⭐').has(S.me.id);
+  return [{ label: starred ? 'Tirar do mural' : 'Pôr no mural', icon: '<span style="font-size:16px;width:18px;text-align:center">⭐</span>', onClick: () => { toggleReact(m.id, '⭐'); if(!starred) App.toast('Foi para o mural do servidor ⭐'); } }];
+};
+App.srvMenuExtra = s => [
+  { label: 'Mural do servidor', icon: '<span style="font-size:16px;width:18px;text-align:center">⭐</span>', onClick: () => wallOpen(s) },
+  { label: 'Clipes da semana', icon: '<span style="font-size:16px;width:18px;text-align:center">🎬</span>', onClick: () => clipsModal(s) },
+  ...(s.rules_on && s.rules_text ? [{ label: 'Regras do servidor', icon: ic('book', 18), onClick: () => rulesView(s) }] : []),
+];
+
+/* ================= CONQUISTAS ================= */
+const ACH = [
+  ['voice', '🎙️', 'Voz da galera', 'horas em call', x => x.voice_min / 60, [1, 10, 50, 200, 500]],
+  ['msgs', '💬', 'Tagarela', 'mensagens', x => x.messages, [100, 1000, 5000, 20000, 50000]],
+  ['friends', '🤝', 'Enturmado', 'amigos', x => x.friends, [3, 10, 25, 50, 100]],
+  ['owner', '🏰', 'Fundador', 'servidor criado', x => x.servers_owned, [1]],
+  ['travel', '🌍', 'Viajante', 'servidores', x => x.servers, [3, 10, 25]],
+  ['wins', '🏆', 'Campeão', 'vitórias nos jogos', x => x.game_wins, [1, 10, 50, 200]],
+  ['clips', '🎬', 'Clipador', 'clipes', x => x.clips, [1, 10, 50, 200]],
+  ['loved', '❤️', 'Querido', 'reações recebidas', x => x.reacts_got, [25, 250, 1000, 5000]],
+  ['wall', '⭐', 'Lenda do mural', 'estrelas no mural', x => x.stars_got, [1, 10, 50, 200]],
+  ['streak', '🔥', 'Fiel', 'dias seguidos pegando fichas', x => x.streak, [7, 30, 100, 365]],
+  ['first', '🥇', 'Primeiro a chegar', 'servidor em que foi o 1º membro', x => x.first_in, [1, 5]],
+  ['boost', '🚀', 'Impulsionador', 'impulso dado', x => x.boosts, [1, 5]],
+  ['gamer', '🎮', 'Gamer', 'horas jogando (app do Windows)', x => x.game_min / 60, [5, 50, 200, 1000]],
+  ['vet', '🕰️', 'Veterano', 'dias no Telão', x => x.since ? (Date.now() - new Date(x.since)) / 864e5 : 0, [30, 180, 365, 730]],
+];
+const ACH_TIERS = [['Bronze', '#cd7f32'], ['Prata', '#c0c6d0'], ['Ouro', '#ffcc33'], ['Diamante', '#6fe3ff'], ['Lendário', '#ff4fa3']];
+const ACHC = new Map();
+async function achData(uid){
+  const c = ACHC.get(uid); if(c && Date.now() - c.at < 300000) return c.d;
+  const { data, error } = await App.sb.rpc('user_achievements', { p_user: uid });
+  if(error) throw error;
+  ACHC.set(uid, { at: Date.now(), d: data }); return data;
+}
+function achList(d){
+  return ACH.map(([id, e, name, unit, fn, steps]) => {
+    const v = Math.floor(fn(d) || 0), lv = steps.filter(s => v >= s).length, next = steps[lv];
+    return { id, e, name, unit, v, lv, next, max: steps.length, tier: lv ? ACH_TIERS[Math.min(lv - 1, ACH_TIERS.length - 1)] : null };
+  });
+}
+const achMedal = a => `<span class="achm" style="--tc:${a.tier[1]}" data-tip="${esc(a.name)} · ${a.tier[0]}" data-tipsub="${a.v.toLocaleString('pt-BR')} ${esc(a.unit)}">${a.e}</span>`;
+function achModal(uid){
+  const p = prof(uid);
+  modal(`<div class="mh"><h2>🏅 Conquistas de ${esc(p.display_name)}</h2><p>Cada conquista tem níveis: Bronze, Prata, Ouro, Diamante e Lendário.</p></div><div class="mc"><div class="achgrid" id="acG"><div class="spin" style="margin:30px auto"></div></div></div>
+    <div class="mf"><button class="btn" data-close>Fechar</button></div>`, async m => {
+    m.querySelector('.mbox').classList.add('wide');
+    try{
+      const l = achList(await achData(uid));
+      m.querySelector('#acG').innerHTML = l.sort((a, b) => b.lv - a.lv).map(a => `<div class="achc ${a.lv ? '' : 'off'}" style="--tc:${a.tier ? a.tier[1] : '#555'}">
+        <span class="ae">${a.e}</span><div class="at"><b>${esc(a.name)}</b><small>${a.tier ? a.tier[0] : 'Bloqueada'} · ${a.v.toLocaleString('pt-BR')} ${esc(a.unit)}</small>
+        ${a.next ? `<div class="abar"><i style="width:${Math.min(100, a.v / a.next * 100).toFixed(0)}%"></i></div><small class="mut">Próximo nível: ${a.next.toLocaleString('pt-BR')}</small>` : '<small class="mut">Nível máximo! 🎉</small>'}</div></div>`).join('');
+    }catch(e){ m.querySelector('#acG').innerHTML = `<p class="mut">${esc(sqlMiss(e) ? needSql : e.message)}</p>`; }
+  });
+}
+App.achModal = achModal;
+// cartão de perfil: espaço das conquistas (preenchido depois)
+const _profileCardA = profileCard;
+profileCard = function(p, extra){
+  const html = _profileCardA.apply(this, arguments);
+  if(!p || !p.id || p.id === TELAO_BOT_ID) return html;
+  const bday = S.bdays && S.bdays.has(p.id) ? `<div class="bdaytag">🎂 Aniversariante do dia</div>` : '';
+  return html.replace(/<\/div><\/div>$/, `${bday}<div class="achrow" data-achu="${p.id}"></div></div></div>`);
+};
+const TELAO_BOT_ID = '7e1a0000-0000-4000-a000-000000000001';
+new MutationObserver(() => {
+  document.querySelectorAll('.achrow[data-achu]:not([data-done])').forEach(async el => {
+    el.dataset.done = '1'; const uid = el.dataset.achu;
+    try{
+      const l = achList(await achData(uid)).filter(a => a.lv).sort((a, b) => b.lv - a.lv);
+      el.innerHTML = l.length ? `<h6>Conquistas</h6><div class="achms">${l.slice(0, 8).map(achMedal).join('')}${l.length > 8 ? `<span class="achmore">+${l.length - 8}</span>` : ''}<button class="achall" data-achall="${uid}">Ver todas</button></div>`
+        : `<h6>Conquistas</h6><div class="achms"><button class="achall" data-achall="${uid}">Ver conquistas</button></div>`;
+      el.querySelector('[data-achall]').onclick = e => { e.stopPropagation(); closeMenu(); achModal(uid); };
+    }catch(e){ el.remove(); }
+  });
+}).observe(document.body, { childList: true, subtree: true });
+
+/* ================= ANIVERSÁRIOS ================= */
+S.bdays = new Set();
+async function loadBdays(){
+  if(!S.me) return;
+  const ids = new Set();
+  const calls = S.servers.slice(0, 30).map(s => App.sb.rpc('server_birthdays', { p_server: s.id })).concat([App.sb.rpc('friends_birthdays')]);
+  const res = await Promise.all(calls);
+  res.forEach(r => (r.data || []).forEach(x => ids.add(typeof x === 'string' ? x : (x.server_birthdays || x.friends_birthdays || Object.values(x)[0]))));
+  if(S.me.bday_show && App.isBdayToday && App.isBdayToday(S.me.birthdate)) ids.add(S.me.id);
+  const changed = ids.size !== S.bdays.size || [...ids].some(x => !S.bdays.has(x));
+  S.bdays = ids;
+  if(changed){ await ensureProfiles([...ids]); renderSidebar(); renderMembers(); }
+}
+App.isBdayToday = d => { if(!d) return false; const t = new Date().toLocaleDateString('en-CA', { timeZone: 'America/Sao_Paulo' }).slice(5); return d.slice(5) === t; };
+const _nameHtmlBd = nameHtml;
+nameHtml = function(p){ return _nameHtmlBd.apply(this, arguments) + (p && S.bdays && S.bdays.has(p.id) ? '<span class="bdayc" data-tip="Aniversariante do dia">🎂</span>' : ''); };
+// aviso no topo do servidor
+const _renderSidebarBd = renderSidebar;
+renderSidebar = function(){
+  _renderSidebarBd.apply(this, arguments);
+  const s = S.route.kind === 'server' && curServer(); if(!s || !S.bdays.size) return;
+  const mem = new Set((S.members.get(s.id) || []).map(m => m.user_id));
+  const who = [...S.bdays].filter(id => mem.has(id) && id !== S.me.id);
+  const body = $('#sbBody'); if(!body || !who.length || body.querySelector('.bdaybar')) return;
+  const names = who.slice(0, 3).map(id => esc(prof(id).display_name)).join(', ') + (who.length > 3 ? ` e mais ${who.length - 3}` : '');
+  body.insertAdjacentHTML('afterbegin', `<div class="bdaybar"><span>🎉</span><div><b>Hoje é aniversário de ${names}!</b><button class="btn sm" id="bdGo">Dar parabéns</button></div></div>`);
+  $('#bdGo').onclick = async () => {
+    if(who.length === 1){ const d = await openDM(who[0]); setTimeout(() => { const ta = $('#cmp'); if(ta && !ta.value){ ta.value = 'Feliz aniversário! 🎂🎉'; ta.focus(); } }, 300); }
+    else menu(innerWidth / 2 - 120, 140, who.map(id => ({ label: prof(id).display_name, icon: '🎂', onClick: async () => { await openDM(id); setTimeout(() => { const ta = $('#cmp'); if(ta && !ta.value){ ta.value = 'Feliz aniversário! 🎂🎉'; ta.focus(); } }, 300); } })));
+  };
+};
+// perfil: mostrar meu aniversário
+const _secProfileB = secProfile;
+secProfile = function(box, back){
+  _secProfileB.apply(this, arguments);
+  const hasDate = !!S.me.birthdate;
+  box.insertAdjacentHTML('beforeend', `<hr class="sdiv"><h3>🎂 Aniversário</h3>
+    ${row('Mostrar meu aniversário', hasDate ? 'No dia, você ganha o selo 🎂 de aniversariante e a galera dos seus servidores e amigos fica sabendo. A idade e o ano nunca aparecem.' : 'Primeiro confirme sua data de nascimento em Privacidade (é a mesma da verificação de idade).', toggle('bdShow', !!S.me.bday_show))}`);
+  const t = box.querySelector('#bdShow'); if(!hasDate) t.disabled = true;
+  t.onchange = async () => {
+    const { data, error } = await App.sb.from('profiles').update({ bday_show: t.checked }).eq('id', S.me.id).select().single();
+    if(error){ App.toast(/bday_show/.test(error.message) ? needSql : error.message, true); t.checked = !t.checked; return; }
+    S.me = data; S.profiles.set(data.id, data); loadBdays(); App.toast(t.checked ? 'Seu aniversário vai aparecer no dia. 🎂' : 'Seu aniversário não aparece mais.');
+  };
+};
+function confettiBurst(){
+  const layer = document.createElement('div'); layer.className = 'confetti'; document.body.appendChild(layer);
+  const cols = ['#ff4fa3', '#b6ff2e', '#ffcc33', '#6fe3ff', '#a36bff', '#fff'];
+  for(let i = 0; i < 90; i++){ const c = document.createElement('i'); c.style.left = Math.random() * 100 + '%'; c.style.background = cols[i % cols.length]; c.style.animationDelay = Math.random() * .8 + 's'; c.style.setProperty('--dx', (Math.random() * 200 - 100) + 'px'); c.style.setProperty('--r', (Math.random() * 720) + 'deg'); layer.appendChild(c); }
+  setTimeout(() => layer.remove(), 4500);
+}
+App.confetti = confettiBurst;
+
+/* ================= RETROSPECTIVA ================= */
+const fmtH = min => { const h = Math.floor((min || 0) / 60), m = (min || 0) % 60; return h ? `${h.toLocaleString('pt-BR')} h${m ? ' ' + m + ' min' : ''}` : `${m} min`; };
+async function wrappedOpen(year){
+  year = year || new Date().getFullYear();
+  const { data: w, error } = await App.sb.rpc('my_wrapped', { p_year: year });
+  if(error){ App.toast(sqlMiss(error) ? needSql : error.message, true); return; }
+  if(w.top_friend) await ensureProfiles([w.top_friend.id]);
+  const me = S.me, fr = w.top_friend && prof(w.top_friend.id);
+  const hourTxt = w.hour == null ? null : w.hour < 5 ? 'de madrugada 🦉' : w.hour < 12 ? 'de manhã ☀️' : w.hour < 18 ? 'de tarde 🌤️' : 'de noite 🌙';
+  const slides = [
+    { bg: 'linear-gradient(160deg,#ff2e9a,#5b2bff)', html: `<small>Telão</small><h1>Sua retrospectiva ${year}</h1><p>Bora ver como foi o seu ano, ${esc(me.display_name)}?</p><div class="wbig">🎬</div>` },
+    { bg: 'linear-gradient(160deg,#00c6ff,#0072ff)', html: `<small>Em call</small><h1>${fmtH(w.voice_min)}</h1><p>foi o tempo que você passou em chamada com a galera.</p>${w.longest_call ? `<p class="wsub">A call mais longa durou <b>${fmtH(w.longest_call)}</b>.</p>` : ''}` },
+    { bg: 'linear-gradient(160deg,#b6ff2e,#0a8f3c)', html: `<small>Mensagens</small><h1>${(w.messages || 0).toLocaleString('pt-BR')}</h1><p>mensagens mandadas em <b>${w.days || 0}</b> dias diferentes.</p>${hourTxt ? `<p class="wsub">Você é da turma que fala mais <b>${hourTxt}</b> (por volta das ${w.hour}h).</p>` : ''}` },
+    w.top_server && { bg: 'linear-gradient(160deg,#a36bff,#2b1055)', html: `<small>Seu lugar favorito</small><div class="wsrv" style="--sc:${esc(w.top_server.icon_color || '#5865f2')}">${w.top_server.icon_url ? `<img src="${esc(w.top_server.icon_url)}" alt="">` : esc(serverInitials(w.top_server.name))}</div><h1 class="m">${esc(w.top_server.name)}</h1><p><b>${w.top_server.n.toLocaleString('pt-BR')}</b> mensagens suas foram lá.${w.top_channel ? ` O canal mais movimentado: <b>#${esc(w.top_channel.name)}</b>.` : ''}</p>` },
+    fr && { bg: 'linear-gradient(160deg,#ff9a3c,#ff2e63)', html: `<small>Sua dupla do ano</small><div class="wav">${avatar(fr, 'xl')}</div><h1 class="m">${esc(fr.display_name)}</h1><p>vocês trocaram <b>${w.top_friend.n.toLocaleString('pt-BR')}</b> mensagens no privado.</p>${w.new_friends ? `<p class="wsub">E você fez <b>${w.new_friends}</b> amizade${w.new_friends > 1 ? 's' : ''} nova${w.new_friends > 1 ? 's' : ''} no Telão.</p>` : ''}` },
+    (w.top_emoji || w.reacts_got) && { bg: 'linear-gradient(160deg,#ffcc33,#ff6b00)', html: `<small>Reações</small>${w.top_emoji ? `<div class="wbig">${esc(w.top_emoji.e)}</div><p>foi o emoji que você mais usou para reagir (<b>${w.top_emoji.n}</b> vezes).</p>` : ''}${w.reacts_got ? `<p class="wsub">E suas mensagens receberam <b>${w.reacts_got.toLocaleString('pt-BR')}</b> reações.</p>` : ''}` },
+    (w.top_game || w.game_wins || w.clips) && { bg: 'linear-gradient(160deg,#2ee6c5,#0b4f6c)', html: `<small>Jogos e clipes</small>${w.top_game ? `<h1 class="m">${esc(w.top_game.name)}</h1><p>foi o jogo que você mais jogou: <b>${fmtH(w.top_game.min)}</b>.</p>` : ''}${w.game_wins ? `<p class="wsub">🏆 <b>${w.game_wins}</b> vitórias nos jogos da call.</p>` : ''}${w.clips ? `<p class="wsub">🎬 <b>${w.clips}</b> clipe${w.clips > 1 ? 's' : ''} gravado${w.clips > 1 ? 's' : ''}.</p>` : ''}` },
+    { bg: 'linear-gradient(160deg,#ff2e9a,#ff7a00)', final: true, html: `<small>Resumo</small><h1 class="m">${esc(me.display_name)} em ${year}</h1>
+      <div class="wsum"><div><b>${fmtH(w.voice_min)}</b><span>em call</span></div><div><b>${(w.messages || 0).toLocaleString('pt-BR')}</b><span>mensagens</span></div>
+        <div><b>${w.days || 0}</b><span>dias ativo</span></div><div><b>${w.top_server ? esc(w.top_server.name) : '—'}</b><span>servidor favorito</span></div>
+        ${fr ? `<div><b>${esc(fr.display_name)}</b><span>dupla do ano</span></div>` : ''}${w.top_emoji ? `<div><b>${esc(w.top_emoji.e)}</b><span>emoji do ano</span></div>` : ''}</div>
+      <div class="wbtns"><button class="btn sec" id="wrAgain">${ic('refresh', 16)} Ver de novo</button><button class="btn" id="wrDl">${ic('download', 16)} Baixar imagem</button>${M.cid ? `<button class="btn sec" id="wrSend">${ic('send', 16)} Mandar no chat aberto</button>` : ''}</div>` },
+  ].filter(Boolean);
+  const el = document.createElement('div'); el.className = 'wrapped'; el.id = 'wrapped';
+  el.innerHTML = `<div class="wrbox"><div class="wrprog">${slides.map(() => '<i><b></b></i>').join('')}</div><button class="wrx" id="wrX">${ic('x', 22)}</button><div class="wrslide" id="wrS"></div>
+    <button class="wrnav l" id="wrL" aria-label="Voltar"></button><button class="wrnav r" id="wrR" aria-label="Próximo"></button></div>`;
+  document.body.appendChild(el);
+  let i = 0, timer = null;
+  const show = n => {
+    i = Math.max(0, Math.min(slides.length - 1, n));
+    const sl = slides[i], box = el.querySelector('#wrS');
+    el.querySelector('.wrbox').style.background = sl.bg; el.querySelector('.wrbox').classList.toggle('fin', !!sl.final);
+    box.innerHTML = sl.html; box.classList.remove('in'); void box.offsetWidth; box.classList.add('in');
+    el.querySelectorAll('.wrprog i').forEach((x, k) => { x.className = k < i ? 'done' : k === i ? 'cur' : ''; });
+    clearTimeout(timer); if(!sl.final) timer = setTimeout(() => show(i + 1), 6000);
+    if(sl.final){ confettiBurst(); el.querySelector('#wrAgain').onclick = () => show(0); el.querySelector('#wrDl').onclick = () => wrappedImage(w, fr).then(b => { const a = document.createElement('a'); a.href = URL.createObjectURL(b); a.download = `retrospectiva-telao-${year}.png`; a.click(); });
+      const sd = el.querySelector('#wrSend'); if(sd) sd.onclick = async () => { sd.disabled = true; try{ const b = await wrappedImage(w, fr); const meta = await uploadOne({ file: new File([b], `retrospectiva-${year}.png`, { type: 'image/png' }) }); const { error } = await App.sb.from('messages').insert({ channel_id: M.cid, content: `Minha retrospectiva ${year} no Telão 🎬`, attachments: [meta] }); if(error) throw error; App.toast('Enviado!'); }catch(e){ App.toast(e.message || String(e), true); sd.disabled = false; } };
+    }
+  };
+  const close = () => { clearTimeout(timer); el.remove(); document.removeEventListener('keydown', kd); };
+  const kd = e => { if(e.key === 'Escape') close(); else if(e.key === 'ArrowRight') show(i + 1); else if(e.key === 'ArrowLeft') show(i - 1); };
+  document.addEventListener('keydown', kd);
+  el.querySelector('#wrX').onclick = close;
+  el.querySelector('#wrL').onclick = () => show(i - 1); el.querySelector('#wrR').onclick = () => show(i + 1);
+  show(0);
+}
+App.wrappedOpen = wrappedOpen;
+async function wrappedImage(w, fr){
+  const W = 1080, H = 1350, c = document.createElement('canvas'); c.width = W; c.height = H; const g = c.getContext('2d');
+  const gr = g.createLinearGradient(0, 0, W, H); gr.addColorStop(0, '#ff2e9a'); gr.addColorStop(1, '#5b2bff'); g.fillStyle = gr; g.fillRect(0, 0, W, H);
+  g.fillStyle = 'rgba(255,255,255,.85)'; g.font = '600 40px system-ui, sans-serif'; g.fillText('TELÃO · RETROSPECTIVA ' + w.year, 80, 120);
+  g.fillStyle = '#fff'; g.font = '800 88px system-ui, sans-serif'; g.fillText(S.me.display_name.slice(0, 18), 80, 230);
+  const rows = [['em call', fmtH(w.voice_min)], ['mensagens', (w.messages || 0).toLocaleString('pt-BR')], ['dias ativo', String(w.days || 0)],
+    ['servidor favorito', w.top_server ? w.top_server.name : '—'], ['dupla do ano', fr ? fr.display_name : '—'], ['emoji do ano', w.top_emoji ? w.top_emoji.e : '—'], ['jogo do ano', w.top_game ? w.top_game.name : '—']];
+  rows.forEach(([k, v], n) => {
+    const y = 360 + n * 130;
+    g.fillStyle = 'rgba(255,255,255,.14)'; g.beginPath(); g.roundRect ? g.roundRect(70, y - 80, W - 140, 110, 24) : g.rect(70, y - 80, W - 140, 110); g.fill();
+    g.fillStyle = '#fff'; g.font = '800 54px system-ui, sans-serif'; g.fillText(String(v).slice(0, 22), 110, y);
+    g.fillStyle = 'rgba(255,255,255,.75)'; g.font = '500 32px system-ui, sans-serif'; g.textAlign = 'right'; g.fillText(k, W - 110, y - 8); g.textAlign = 'left';
+  });
+  g.fillStyle = 'rgba(255,255,255,.8)'; g.font = '500 30px system-ui, sans-serif'; g.fillText(location.host, 80, H - 70);
+  return new Promise(r => c.toBlob(r, 'image/png'));
+}
+App.selfMenuExtra = () => [{ label: `Retrospectiva ${new Date().getFullYear()}`, icon: '<span style="font-size:16px;width:18px;text-align:center">🎬</span>', onClick: () => wrappedOpen() },
+  { label: 'Minhas conquistas', icon: '<span style="font-size:16px;width:18px;text-align:center">🏅</span>', onClick: () => achModal(S.me.id) }];
+App.userMenuExtra = uid => uid === S.me.id || uid === TELAO_BOT_ID ? [] : [{ label: 'Conquistas', icon: '<span style="font-size:16px;width:18px;text-align:center">🏅</span>', onClick: () => achModal(uid) }];
+
+/* ================= JOGO ABERTO NO PC (app do Windows) ================= */
+const GM = { name: null, prev: undefined, sess: null, timer: null };
+async function onDesktopGame(name){
+  if(!S.me) return;
+  if(App.prefs.autoGame === false) name = null;
+  if(name === GM.name) return;
+  const cur = S.me.activity;
+  if(name){
+    if(GM.prev === undefined) GM.prev = S.manualAct || null;
+    GM.name = name; GM.sess = null;
+    if(!(cur && cur.type === 'spotify' && App.actOf(S.me))) await setActivity({ type: 'playing', name, since: Date.now(), auto: true }, true);
+    const ping = async () => { const { data } = await App.sb.rpc('game_ping', { p_session: GM.sess, p_game: GM.name }); if(data) GM.sess = data; };
+    ping(); clearInterval(GM.timer); GM.timer = setInterval(ping, 60000);
+  } else {
+    GM.name = null; clearInterval(GM.timer); GM.timer = null; GM.sess = null;
+    if(S.me.activity && S.me.activity.auto) await setActivity(GM.prev || null, true);
+    GM.prev = undefined;
+  }
+}
+if(window.telaoDesktop && window.telaoDesktop.onGame) window.telaoDesktop.onGame(g => onDesktopGame(g));
+const _secConnG = secConnections;
+secConnections = function(box, back){
+  _secConnG.apply(this, arguments);
+  const desk = !!(window.telaoDesktop && window.telaoDesktop.onGame);
+  box.insertAdjacentHTML('beforeend', `<hr class="sdiv"><h3>🎮 Jogo que estou jogando</h3>
+    ${row('Mostrar o jogo automaticamente', desk ? 'Quando você abre um jogo conhecido no PC, seu perfil mostra “Jogando …” e o tempo de jogo. Some quando você fecha o jogo.' : 'Funciona no app do Telão para Windows (versão 1.1 ou mais nova). No navegador, use “Atividade” acima para dizer o que está jogando.', toggle('agOn', App.prefs.autoGame !== false))}
+    ${desk && GM.name ? `<p class="mut small">Agora: jogando <b>${esc(GM.name)}</b>.</p>` : ''}`);
+  const t = box.querySelector('#agOn'); if(!desk) t.disabled = true;
+  t.onchange = () => { App.prefs.autoGame = t.checked; savePrefs(); if(window.telaoDesktop.getGame) window.telaoDesktop.getGame().then(g => { GM.name = undefined; onDesktopGame(t.checked ? g : null); }); };
+};
+
+/* ================= início: aniversários, parabéns e aviso da retrospectiva ================= */
+const _startC = start;
+start = async function(){
+  const r = await _startC.apply(this, arguments);
+  if(!S.me) return r;
+  loadBdays().catch(() => {});
+  setInterval(() => loadBdays().catch(() => {}), 30 * 60000);
+  App.sb.rpc('birthday_greet').then(({ data }) => { if(data){ confettiBurst(); App.toast('🎂 Feliz aniversário! Hoje você tem o selo de aniversariante.'); } }, () => {});
+  if(window.telaoDesktop && window.telaoDesktop.getGame) window.telaoDesktop.getGame().then(g => g && onDesktopGame(g)).catch(() => {});
+  const now = new Date(), key = 'telao-wr-' + now.getFullYear() + '-' + now.toLocaleDateString('en-CA');
+  if(now.getMonth() === 11 && !ls.get(key, false)){ ls.set(key, true); setTimeout(() => App.toast(`Sua retrospectiva ${now.getFullYear()} chegou 🎬`, false, { label: 'Ver agora', fn: () => wrappedOpen() }), 4000); }
+  return r;
+};
 /* ---------------- PWA ---------------- */
 window.addEventListener('beforeinstallprompt', e => {
   e.preventDefault(); if(window.telaoDesktop) return; S.installEvt = e;
