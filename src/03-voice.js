@@ -150,7 +150,7 @@ function renderStage(){
       <div class="sbg">
         <button class="cbtn ${Voice.camStream?'on':''}" id="sbCam" data-tip="${Voice.camStream?'Desligar câmera':'Ligar câmera'}">${ic(Voice.camStream?'video':'videoOff',22)}</button>
         ${Voice.camStream ? `<button class="cbtn" id="sbCamFx" data-tip="Efeitos da câmera">${ic('wand',22)}</button>` : ''}
-        <button class="cbtn ${Voice.screenStream?'on':''}" id="sbScr" data-tip="${Voice.screenStream?'Parar de transmitir':'Compartilhar tela'}">${ic('screenUp',22)}</button>
+        ${navigator.mediaDevices && navigator.mediaDevices.getDisplayMedia ? `<button class="cbtn ${Voice.screenStream?'on':''}" id="sbScr" data-tip="${Voice.screenStream?'Parar de transmitir':'Compartilhar tela'}">${ic('screenUp',22)}</button>` : ''}
         <button class="cbtn" id="sbAct" data-tip="Atividades">${ic('gamepad',22)}</button>
         <button class="cbtn" id="sbFx" data-tip="Reagir">${ic('smile',22)}</button>
         <button class="cbtn" id="sbQ" data-tip="Qualidade">${ic('sliders',22)}</button>
@@ -178,7 +178,7 @@ function renderStage(){
   $w('#sbDeaf').onclick = () => Voice.toggleDeafen();
   $w('#sbCam').onclick = () => Voice.camStream ? Voice.stopCamera() : cameraSetup();
   const fxb = $w('#sbCamFx'); if(fxb) fxb.onclick = e => camFxMenu(e.currentTarget);
-  $w('#sbScr').onclick = () => Voice.screenStream ? Voice.stopScreen() : Voice.startScreen();
+  if($w('#sbScr')) $w('#sbScr').onclick = () => Voice.screenStream ? Voice.stopScreen() : Voice.startScreen();
   $w('#sbAct').onclick = e => activitiesMenu(e.currentTarget);
   $w('#sbFx').onclick = e => { const r = e.currentTarget.getBoundingClientRect(); emojiPicker(r.left - 150, r.top, em => Voice.sendFx({ t:'react', e: em })); };
   $w('#sbQ').onclick = () => openSettings('user','voice');
@@ -186,7 +186,11 @@ function renderStage(){
   if($w('#sbClip')) $w('#sbClip').onclick = () => App.takeClip && App.takeClip();
   if(focused && focused.id !== 'wt'){
     const vid = () => $w('#focusBox video');
-    $w('#stFs').onclick = () => { const el = $w('#focusBox'); (el.requestFullscreen || el.webkitRequestFullscreen || (()=>{})).call(el); };
+    // tela cheia (no iPhone só o próprio vídeo entra em tela cheia)
+    $w('#stFs').onclick = () => { const el = $w('#focusBox'), v = vid();
+      if(el.requestFullscreen) el.requestFullscreen().catch(() => v && v.webkitEnterFullscreen && v.webkitEnterFullscreen());
+      else if(el.webkitRequestFullscreen) el.webkitRequestFullscreen();
+      else if(v && v.webkitEnterFullscreen) v.webkitEnterFullscreen(); };
     const pip = $w('#stPip'); if(pip) pip.onclick = () => { const v = vid(); if(!v) return; (document.pictureInPictureElement === v ? document.exitPictureInPicture() : v.requestPictureInPicture()).catch(e => App.toast('Não deu: ' + e.message, true)); };
     $w('#stShot').onclick = () => screenshot(vid(), focused.s);
     $w('#stDraw').onclick = () => { DRAW.on = !DRAW.on; renderStage(); if(DRAW.on) App.toast('Desenhe na tela: todo mundo assistindo vê. Clique de novo para parar.'); };

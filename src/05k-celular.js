@@ -16,14 +16,19 @@ function overlayOpen(){
   const md = $('#modal'); if(md && !md.classList.contains('hidden')) return () => closeModal();
   const mn = $('#menu'); if(mn && !mn.classList.contains('hidden')) return () => closeMenu();
   const ex = $('#explore'); if(ex) return () => ex.remove();
-  if(document.querySelector('.settings:not(.hidden)') || (typeof SET !== 'undefined' && SET)) return () => closeSettings();
+  if(typeof SET !== 'undefined' && SET) return () => settingsBack();
   if(document.body.classList.contains('mem-open') && isMobile()) return () => { S.memOverlay = false; renderMembers(); };
   return null;
 }
 window.addEventListener('popstate', () => {
   if(!isMobile()) return;
   const close = overlayOpen();
-  if(close){ close(); if(document.body.classList.contains('m-main')) history.pushState({ telaoMain: true }, ''); return; }
+  if(close){
+    close();
+    // ainda tem algo aberto (ex.: voltou da seção para a lista): guarda mais um "voltar"
+    if(overlayOpen() || document.body.classList.contains('m-main')) history.pushState({ telaoMain: true }, '');
+    mobileNav(); return;
+  }
   if(document.body.classList.contains('m-main')) document.body.classList.remove('m-main');
 });
 // abrir janela também conta como "tela" para o botão voltar fechar ela
@@ -33,7 +38,7 @@ modal = function(){
   if(isMobile()){
     if(!(history.state && history.state.telaoModal)) history.pushState({ telaoModal: true, telaoMain: document.body.classList.contains('m-main') }, '');
     // não abre o teclado sozinho em cima da janela
-    setTimeout(() => { const a = document.activeElement; if(a && a.closest && a.closest('#modal') && !a.matches('.code6')) a.blur(); }, 60);
+    setTimeout(() => { const a = document.activeElement; if(a && a.closest && a.closest('#modal') && !a.matches('.code6, #qsQ, #gName, #cgN, #rcN')) a.blur(); }, 60);
   }
   return r;
 };
@@ -75,20 +80,38 @@ document.addEventListener('touchend', e => { if(!lp) return; clearTimeout(lp.tim
 document.addEventListener('contextmenu', e => { if(touchDev && e.isTrusted && e.target.closest('.msg, .mem, .vu, .ch, .dmitem')) e.preventDefault(); }, true);
 
 /* barra de navegação embaixo (só no celular, na tela de listas) */
+/* fecha tudo que estiver por cima (configurações, janelas, menus, explorar, membros) */
+function closeOverlays(){
+  closeMenu();
+  const md = $('#modal'); if(md && !md.classList.contains('hidden')) closeModal();
+  const ex = $('#explore'); if(ex) ex.remove();
+  if(typeof SET !== 'undefined' && SET){ closeSettings(); if(SET) return false; }   // tem alteração não salva e a pessoa cancelou
+  if(S.memOverlay){ S.memOverlay = false; renderMembers(); }
+  return true;
+}
+App.closeOverlays = closeOverlays;
+const pushOverlay = () => { if(isMobile()) history.pushState({ telaoOverlay: true, telaoMain: document.body.classList.contains('m-main') }, ''); };
+App.onSettingsOpen = () => { pushOverlay(); mobileNav(); };
+App.onSettingsSec = () => pushOverlay();
+App.onSettingsClose = () => mobileNav();
 function mobileNav(){
   if(!isMobile() || !S.me){ const n = $('#mnav'); if(n) n.remove(); return; }
   let n = $('#mnav');
   if(!n){ n = document.createElement('nav'); n.id = 'mnav'; n.className = 'mnav'; document.body.appendChild(n); }
-  const home = S.route.kind === 'home';
+  const setU = typeof SET !== 'undefined' && SET && SET.kind === 'user';
+  const home = S.route.kind === 'home' && !setU && !$('#explore');
   const unreadN = (S.dmReq ? S.dmReq.length : 0) + S.dms.filter(d => S.unread.has(d.id)).length;
   n.innerHTML = `<button data-mn="home" class="${home ? 'on' : ''}">${ic('chat', 22)}<span>Início</span>${unreadN ? `<i class="mdot">${unreadN > 9 ? '9+' : unreadN}</i>` : ''}</button>
-    <button data-mn="explore">${ic('globe', 22)}<span>Explorar</span></button>
+    <button data-mn="explore" class="${$('#explore') ? 'on' : ''}">${ic('globe', 22)}<span>Explorar</span></button>
     <button data-mn="news">${ic('bell', 22)}<span>Novidades</span>${typeof unreadNotices === 'function' && unreadNotices() ? '<i class="mdot"></i>' : ''}</button>
-    <button data-mn="me">${avatar(S.me, 'xs', true)}<span>Você</span></button>`;
-  n.querySelector('[data-mn="home"]').onclick = () => { go({ kind: 'home', dm: null }); document.body.classList.remove('m-main'); };
-  n.querySelector('[data-mn="explore"]').onclick = () => App.openExplore();
-  n.querySelector('[data-mn="news"]').onclick = () => App.noticesPanel();
-  n.querySelector('[data-mn="me"]').onclick = () => openSettings('user', 'account');
+    <button data-mn="me" class="${setU ? 'on' : ''}">${avatar(S.me, 'xs', true)}<span>Você</span></button>`;
+  n.querySelector('[data-mn="home"]').onclick = () => { if(!closeOverlays()) return; go({ kind: 'home', dm: null }); document.body.classList.remove('m-main'); mobileNav(); };
+  n.querySelector('[data-mn="explore"]').onclick = () => { if(!closeOverlays()) return; App.openExplore(); pushOverlay(); mobileNav(); };
+  n.querySelector('[data-mn="news"]').onclick = () => { if(!closeOverlays()) return; App.noticesPanel(); mobileNav(); };
+  n.querySelector('[data-mn="me"]').onclick = () => {
+    if(setU){ if(SET.mobileOpen){ SET.mobileOpen = false; SET.direct = false; renderSettings(); } return; }
+    if(!closeOverlays()) return; openSettings('user');
+  };
 }
 const _renderRailK = renderRail;
 renderRail = function(){ _renderRailK.apply(this, arguments); mobileNav(); };

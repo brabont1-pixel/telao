@@ -849,7 +849,7 @@ function emojiPicker(x, y, onPick, keepOpen){
   const w = 352, h = 420;
   el.style.left = Math.max(8, Math.min(x, innerWidth - w - 8)) + 'px';
   el.style.top = Math.max(8, Math.min(y - h - 8, innerHeight - h - 8)) + 'px';
-  const q = el.querySelector('#epQ'); setTimeout(() => q.focus(), 20);
+  const q = el.querySelector('#epQ'); if(!document.documentElement.classList.contains('touch')) setTimeout(() => q.focus(), 20);
   q.oninput = () => draw(q.value.trim().toLowerCase().normalize('NFD').replace(/[̀-ͯ]/g, ''));
   el.querySelectorAll('[data-cat]').forEach(b => b.onclick = () => { q.value = ''; draw(''); const t = el.querySelector('#ep-' + CSS.escape(b.dataset.cat)); t && grid.scrollTo({ top: t.offsetTop - grid.offsetTop, behavior:'smooth' }); });
   grid.onmouseover = e => { const b = e.target.closest('[data-e]'); if(b) el.querySelector('#epFoot').innerHTML = `<span style="font-size:22px">${b.dataset.e}</span> :${b.dataset.n}:`; };

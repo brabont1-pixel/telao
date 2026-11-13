@@ -206,18 +206,30 @@ function openSettings(kind, sec, server){
   closeMenu(); closeModal();
   if(SET) closeSettings();
   const el = document.createElement('div'); el.className = 'settings'; document.body.appendChild(el);
-  SET = { kind, sec: sec || (kind === 'user' ? 'account' : 'overview'), server, el, cleanups: [], mobileOpen: !!sec };
+  SET = { kind, sec: sec || (kind === 'user' ? 'account' : 'overview'), server, el, cleanups: [], mobileOpen: !!sec, direct: !!sec };
   renderSettings();
+  App.onSettingsOpen && App.onSettingsOpen();
 }
 function closeSettings(){
   if(!SET) return;
   if(SET.dirty && !confirm('Você tem alterações não salvas. Sair mesmo assim?')) return;
   SET.cleanups.forEach(f => { try{ f(); }catch(e){} });
   SET.el.remove(); SET = null; recordingKey = null;
+  document.body.classList.remove('set-open', 'set-sec');
+  App.onSettingsClose && App.onSettingsClose();
 }
+/* "voltar" nas configurações (celular): se abriu direto numa seção, fecha; se veio da lista, volta para a lista */
+function settingsBack(){
+  if(!SET) return;
+  if(SET.mobileOpen && !SET.direct){ SET.mobileOpen = false; renderSettings(); }
+  else closeSettings();
+}
+App.settingsBack = settingsBack;
 function setSec(sec){
   if(SET.dirty && !confirm('Você tem alterações não salvas. Descartar?')) return;
+  const wasList = !SET.mobileOpen;
   SET.dirty = false; SET.sec = sec; SET.mobileOpen = true; renderSettings();
+  if(wasList) App.onSettingsSec && App.onSettingsSec();
 }
 function renderSettings(){
   if(!SET) return;
@@ -248,12 +260,14 @@ function renderSettings(){
     if(!nav.find(n => n[0] === SET.sec)) SET.sec = (nav[1] || [])[0] || 'members';
   }
   SET.el.className = 'settings' + (SET.mobileOpen ? ' sec-open' : '');
-  SET.el.innerHTML = `<nav class="snav"><div class="in">${nav.map(n =>
+  document.body.classList.add('set-open'); document.body.classList.toggle('set-sec', !!SET.mobileOpen);
+  SET.el.innerHTML = `<nav class="snav"><div class="smhead"><button class="ibtn" id="sMX" aria-label="Fechar">${ic('x', 20)}</button><b>${SET.kind === 'user' ? 'Configurações' : esc(SET.server.name)}</b></div><div class="in">${nav.map(n =>
       n[0] === 'h' ? `<h5>${n[1]}</h5>` : n[0] === 'hr' ? '<hr>' :
       `<button class="si ${SET.sec===n[0]?'on':''} ${n[2]||''}" data-sec="${n[0]}">${n[1]}</button>`).join('')}
       ${SET.kind==='user' ? '<hr><div class="ver">Telão · versão ' + APP_VERSION + '</div>' : ''}</div></nav>
     <div class="scontent"><div class="sclose"><button id="sClose" title="Fechar (Esc)">✕</button><span>ESC</span></div><div class="in" id="sIn"></div></div>`;
-  SET.el.querySelector('#sClose').onclick = () => { if(isMobile() && SET.mobileOpen){ SET.mobileOpen = false; renderSettings(); } else closeSettings(); };
+  SET.el.querySelector('#sClose').onclick = () => closeSettings();
+  SET.el.querySelector('#sMX').onclick = () => closeSettings();
   SET.el.querySelectorAll('[data-sec]').forEach(b => b.onclick = () => {
     const sec = b.dataset.sec;
     if(sec === 'logout') return doLogout();
@@ -266,7 +280,8 @@ function renderSettings(){
     ? { account: secAccount, profile: secProfile, plus: secPlus, shop: secShop, connections: secConnections, security: secSecurity, privacy: secPrivacy, boosts: secMyBoosts, appearance: secAppearance, perf: secPerf, a11y: secA11y, lang: secLang, voice: secVoice, notif: secNotif, keys: secKeys, app: secApp, admin: secAdmin }[SET.sec]
     : { overview: secSrvOverview, roles: secSrvRoles, channels: secSrvChannels, members: secSrvMembers, boost: secSrvBoost, bans: secSrvBans, safety: secSrvSafety, emojis: secSrvEmojis, tag: secSrvTag, community: secSrvCommunity, invites: secSrvInvites, stats: secSrvStats }[SET.sec];
   if(fn) fn(box, back);
-  const b = box.querySelector('#sBack'); if(b) b.onclick = () => { SET.mobileOpen = false; renderSettings(); };
+  // vale também para seções que se redesenham depois de carregar (Loja, Estatísticas…)
+  box.addEventListener('click', e => { if(e.target.closest('#sBack')){ e.preventDefault(); settingsBack(); } });
 }
 const toggle = (id, on) => `<label class="sw"><input type="checkbox" id="${id}" ${on?'checked':''}><span></span></label>`;
 const row = (title, desc, ctrl) => `<div class="srow"><div class="t"><b>${title}</b>${desc?`<small>${desc}</small>`:''}</div>${ctrl}</div>`;

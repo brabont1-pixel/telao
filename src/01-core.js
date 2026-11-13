@@ -9,7 +9,7 @@ const esc = s => String(s ?? '').replace(/[&<>"']/g, c => ({'&':'&amp;','<':'&lt
 const COLORS = ['#5865f2','#eb459e','#3ba55c','#faa61a','#ed4245','#f47b67','#1abc9c','#9b59b6','#e67e22','#607d8b'];
 const ls = { get(k,d){ try{ const v=localStorage.getItem(k); return v==null?d:JSON.parse(v); }catch(e){ return d; } }, set(k,v){ try{ localStorage.setItem(k, JSON.stringify(v)); }catch(e){} } };
 
-const APP_VERSION = '6.11';
+const APP_VERSION = '6.12';
 const S = {
   me: null, profiles: new Map(), servers: [], channels: new Map(), members: new Map(),
   friends: [], dms: [], dmActivity: ls.get('telao-dmact', {}), online: new Set(),
@@ -955,7 +955,7 @@ function renderFriends(head, body, back){
     <button class="tab ${tab==='online'?'on':''}" data-t="online">Online</button>
     <button class="tab ${tab==='all'?'on':''}" data-t="all">Todos</button>
     <button class="tab ${tab==='pending'?'on':''}" data-t="pending">Pendentes${inc?` <span class="pill">${inc}</span>`:''}</button>
-    <button class="tab addf ${tab==='add'?'on':''}" data-t="add">Adicionar amigo</button></span>`;
+    <button class="tab addf ${tab==='add'?'on':''}" data-t="add"><span class="lgl">Adicionar amigo</span><span class="sml">Adicionar</span></button></span>`;
   head.querySelectorAll('[data-t]').forEach(b => b.onclick = () => { S.friendTab = b.dataset.t; renderMain(); });
 
   if(tab === 'add'){

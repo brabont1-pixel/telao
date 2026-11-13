@@ -329,3 +329,17 @@ O "Spotify direto" (com Ouvir junto) continua opcional e só aparece se você co
 - **No celular:** segure o dedo uns instantes em cima do canal ou da categoria e arraste.
 - A ordem dos canais é salva mesmo se o `supabase.sql` novo ainda não tiver sido rodado.
 - Impulsos ilimitados, criar/renomear categorias e duplicar canal precisam do `supabase.sql` da 6.10. Sem ele, agora aparece um aviso claro dizendo isso, em vez de um erro técnico.
+
+# Versão 6.12: celular sem bugs de navegação
+
+- **"Você"** (barra de baixo) abre a lista de configurações, com um **X** no topo para fechar.
+- **Voltar** dentro de uma seção volta para a lista (ou fecha, se você abriu a seção direto de outro lugar). O **X** sempre fecha tudo e volta para onde você estava.
+- **Barra de baixo** (Início, Explorar, Novidades, Você) funciona de qualquer tela: fecha configurações, janelas e o Explorar antes de trocar. O Explorar não cobre mais a barra.
+- **Botão voltar do celular** (e deslizar da borda) segue a mesma lógica: seção → lista → fecha; também fecha Explorar, janelas, menus e a lista de membros.
+- A lista de configurações termina acima da barra de baixo (o "Painel do admin" e o "Sair" não ficam mais escondidos atrás dela). Janelas e menus escondem a barra de baixo para ela não cobrir os botões deles.
+- A Loja (e outras seções que carregam depois) tinha um "Voltar" que não funcionava: corrigido.
+- **Amigos:** as abas cabem na tela e o campo de adicionar amigo não sai mais para fora.
+- **Chamada:** os botões ficam centralizados; o de transmitir tela só aparece onde funciona (navegador de celular não transmite tela). Tela cheia do vídeo funciona no iPhone.
+- Busca (Ctrl+K) já abre com o teclado; o seletor de emojis não abre mais o teclado sozinho por cima dos emojis.
+- Avisos flutuantes não bloqueiam mais toques no que está atrás deles.
+- Testado tocando em todos os botões de todas as telas num celular de 390×800 e num de 360×640.

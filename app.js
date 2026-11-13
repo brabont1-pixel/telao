@@ -9,7 +9,7 @@ const esc = s => String(s ?? '').replace(/[&<>"']/g, c => ({'&':'&amp;','<':'&lt
 const COLORS = ['#5865f2','#eb459e','#3ba55c','#faa61a','#ed4245','#f47b67','#1abc9c','#9b59b6','#e67e22','#607d8b'];
 const ls = { get(k,d){ try{ const v=localStorage.getItem(k); return v==null?d:JSON.parse(v); }catch(e){ return d; } }, set(k,v){ try{ localStorage.setItem(k, JSON.stringify(v)); }catch(e){} } };
 
-const APP_VERSION = '6.11';
+const APP_VERSION = '6.12';
 const S = {
   me: null, profiles: new Map(), servers: [], channels: new Map(), members: new Map(),
   friends: [], dms: [], dmActivity: ls.get('telao-dmact', {}), online: new Set(),
@@ -955,7 +955,7 @@ function renderFriends(head, body, back){
     <button class="tab ${tab==='online'?'on':''}" data-t="online">Online</button>
     <button class="tab ${tab==='all'?'on':''}" data-t="all">Todos</button>
     <button class="tab ${tab==='pending'?'on':''}" data-t="pending">Pendentes${inc?` <span class="pill">${inc}</span>`:''}</button>
-    <button class="tab addf ${tab==='add'?'on':''}" data-t="add">Adicionar amigo</button></span>`;
+    <button class="tab addf ${tab==='add'?'on':''}" data-t="add"><span class="lgl">Adicionar amigo</span><span class="sml">Adicionar</span></button></span>`;
   head.querySelectorAll('[data-t]').forEach(b => b.onclick = () => { S.friendTab = b.dataset.t; renderMain(); });
 
   if(tab === 'add'){
@@ -1877,7 +1877,7 @@ function emojiPicker(x, y, onPick, keepOpen){
   const w = 352, h = 420;
   el.style.left = Math.max(8, Math.min(x, innerWidth - w - 8)) + 'px';
   el.style.top = Math.max(8, Math.min(y - h - 8, innerHeight - h - 8)) + 'px';
-  const q = el.querySelector('#epQ'); setTimeout(() => q.focus(), 20);
+  const q = el.querySelector('#epQ'); if(!document.documentElement.classList.contains('touch')) setTimeout(() => q.focus(), 20);
   q.oninput = () => draw(q.value.trim().toLowerCase().normalize('NFD').replace(/[̀-ͯ]/g, ''));
   el.querySelectorAll('[data-cat]').forEach(b => b.onclick = () => { q.value = ''; draw(''); const t = el.querySelector('#ep-' + CSS.escape(b.dataset.cat)); t && grid.scrollTo({ top: t.offsetTop - grid.offsetTop, behavior:'smooth' }); });
   grid.onmouseover = e => { const b = e.target.closest('[data-e]'); if(b) el.querySelector('#epFoot').innerHTML = `<span style="font-size:22px">${b.dataset.e}</span> :${b.dataset.n}:`; };
@@ -2082,7 +2082,7 @@ function renderStage(){
       <div class="sbg">
         <button class="cbtn ${Voice.camStream?'on':''}" id="sbCam" data-tip="${Voice.camStream?'Desligar câmera':'Ligar câmera'}">${ic(Voice.camStream?'video':'videoOff',22)}</button>
         ${Voice.camStream ? `<button class="cbtn" id="sbCamFx" data-tip="Efeitos da câmera">${ic('wand',22)}</button>` : ''}
-        <button class="cbtn ${Voice.screenStream?'on':''}" id="sbScr" data-tip="${Voice.screenStream?'Parar de transmitir':'Compartilhar tela'}">${ic('screenUp',22)}</button>
+        ${navigator.mediaDevices && navigator.mediaDevices.getDisplayMedia ? `<button class="cbtn ${Voice.screenStream?'on':''}" id="sbScr" data-tip="${Voice.screenStream?'Parar de transmitir':'Compartilhar tela'}">${ic('screenUp',22)}</button>` : ''}
         <button class="cbtn" id="sbAct" data-tip="Atividades">${ic('gamepad',22)}</button>
         <button class="cbtn" id="sbFx" data-tip="Reagir">${ic('smile',22)}</button>
         <button class="cbtn" id="sbQ" data-tip="Qualidade">${ic('sliders',22)}</button>
@@ -2110,7 +2110,7 @@ function renderStage(){
   $w('#sbDeaf').onclick = () => Voice.toggleDeafen();
   $w('#sbCam').onclick = () => Voice.camStream ? Voice.stopCamera() : cameraSetup();
   const fxb = $w('#sbCamFx'); if(fxb) fxb.onclick = e => camFxMenu(e.currentTarget);
-  $w('#sbScr').onclick = () => Voice.screenStream ? Voice.stopScreen() : Voice.startScreen();
+  if($w('#sbScr')) $w('#sbScr').onclick = () => Voice.screenStream ? Voice.stopScreen() : Voice.startScreen();
   $w('#sbAct').onclick = e => activitiesMenu(e.currentTarget);
   $w('#sbFx').onclick = e => { const r = e.currentTarget.getBoundingClientRect(); emojiPicker(r.left - 150, r.top, em => Voice.sendFx({ t:'react', e: em })); };
   $w('#sbQ').onclick = () => openSettings('user','voice');
@@ -2118,7 +2118,11 @@ function renderStage(){
   if($w('#sbClip')) $w('#sbClip').onclick = () => App.takeClip && App.takeClip();
   if(focused && focused.id !== 'wt'){
     const vid = () => $w('#focusBox video');
-    $w('#stFs').onclick = () => { const el = $w('#focusBox'); (el.requestFullscreen || el.webkitRequestFullscreen || (()=>{})).call(el); };
+    // tela cheia (no iPhone só o próprio vídeo entra em tela cheia)
+    $w('#stFs').onclick = () => { const el = $w('#focusBox'), v = vid();
+      if(el.requestFullscreen) el.requestFullscreen().catch(() => v && v.webkitEnterFullscreen && v.webkitEnterFullscreen());
+      else if(el.webkitRequestFullscreen) el.webkitRequestFullscreen();
+      else if(v && v.webkitEnterFullscreen) v.webkitEnterFullscreen(); };
     const pip = $w('#stPip'); if(pip) pip.onclick = () => { const v = vid(); if(!v) return; (document.pictureInPictureElement === v ? document.exitPictureInPicture() : v.requestPictureInPicture()).catch(e => App.toast('Não deu: ' + e.message, true)); };
     $w('#stShot').onclick = () => screenshot(vid(), focused.s);
     $w('#stDraw').onclick = () => { DRAW.on = !DRAW.on; renderStage(); if(DRAW.on) App.toast('Desenhe na tela: todo mundo assistindo vê. Clique de novo para parar.'); };
@@ -2937,18 +2941,30 @@ function openSettings(kind, sec, server){
   closeMenu(); closeModal();
   if(SET) closeSettings();
   const el = document.createElement('div'); el.className = 'settings'; document.body.appendChild(el);
-  SET = { kind, sec: sec || (kind === 'user' ? 'account' : 'overview'), server, el, cleanups: [], mobileOpen: !!sec };
+  SET = { kind, sec: sec || (kind === 'user' ? 'account' : 'overview'), server, el, cleanups: [], mobileOpen: !!sec, direct: !!sec };
   renderSettings();
+  App.onSettingsOpen && App.onSettingsOpen();
 }
 function closeSettings(){
   if(!SET) return;
   if(SET.dirty && !confirm('Você tem alterações não salvas. Sair mesmo assim?')) return;
   SET.cleanups.forEach(f => { try{ f(); }catch(e){} });
   SET.el.remove(); SET = null; recordingKey = null;
+  document.body.classList.remove('set-open', 'set-sec');
+  App.onSettingsClose && App.onSettingsClose();
 }
+/* "voltar" nas configurações (celular): se abriu direto numa seção, fecha; se veio da lista, volta para a lista */
+function settingsBack(){
+  if(!SET) return;
+  if(SET.mobileOpen && !SET.direct){ SET.mobileOpen = false; renderSettings(); }
+  else closeSettings();
+}
+App.settingsBack = settingsBack;
 function setSec(sec){
   if(SET.dirty && !confirm('Você tem alterações não salvas. Descartar?')) return;
+  const wasList = !SET.mobileOpen;
   SET.dirty = false; SET.sec = sec; SET.mobileOpen = true; renderSettings();
+  if(wasList) App.onSettingsSec && App.onSettingsSec();
 }
 function renderSettings(){
   if(!SET) return;
@@ -2979,12 +2995,14 @@ function renderSettings(){
     if(!nav.find(n => n[0] === SET.sec)) SET.sec = (nav[1] || [])[0] || 'members';
   }
   SET.el.className = 'settings' + (SET.mobileOpen ? ' sec-open' : '');
-  SET.el.innerHTML = `<nav class="snav"><div class="in">${nav.map(n =>
+  document.body.classList.add('set-open'); document.body.classList.toggle('set-sec', !!SET.mobileOpen);
+  SET.el.innerHTML = `<nav class="snav"><div class="smhead"><button class="ibtn" id="sMX" aria-label="Fechar">${ic('x', 20)}</button><b>${SET.kind === 'user' ? 'Configurações' : esc(SET.server.name)}</b></div><div class="in">${nav.map(n =>
       n[0] === 'h' ? `<h5>${n[1]}</h5>` : n[0] === 'hr' ? '<hr>' :
       `<button class="si ${SET.sec===n[0]?'on':''} ${n[2]||''}" data-sec="${n[0]}">${n[1]}</button>`).join('')}
       ${SET.kind==='user' ? '<hr><div class="ver">Telão · versão ' + APP_VERSION + '</div>' : ''}</div></nav>
     <div class="scontent"><div class="sclose"><button id="sClose" title="Fechar (Esc)">✕</button><span>ESC</span></div><div class="in" id="sIn"></div></div>`;
-  SET.el.querySelector('#sClose').onclick = () => { if(isMobile() && SET.mobileOpen){ SET.mobileOpen = false; renderSettings(); } else closeSettings(); };
+  SET.el.querySelector('#sClose').onclick = () => closeSettings();
+  SET.el.querySelector('#sMX').onclick = () => closeSettings();
   SET.el.querySelectorAll('[data-sec]').forEach(b => b.onclick = () => {
     const sec = b.dataset.sec;
     if(sec === 'logout') return doLogout();
@@ -2997,7 +3015,8 @@ function renderSettings(){
     ? { account: secAccount, profile: secProfile, plus: secPlus, shop: secShop, connections: secConnections, security: secSecurity, privacy: secPrivacy, boosts: secMyBoosts, appearance: secAppearance, perf: secPerf, a11y: secA11y, lang: secLang, voice: secVoice, notif: secNotif, keys: secKeys, app: secApp, admin: secAdmin }[SET.sec]
     : { overview: secSrvOverview, roles: secSrvRoles, channels: secSrvChannels, members: secSrvMembers, boost: secSrvBoost, bans: secSrvBans, safety: secSrvSafety, emojis: secSrvEmojis, tag: secSrvTag, community: secSrvCommunity, invites: secSrvInvites, stats: secSrvStats }[SET.sec];
   if(fn) fn(box, back);
-  const b = box.querySelector('#sBack'); if(b) b.onclick = () => { SET.mobileOpen = false; renderSettings(); };
+  // vale também para seções que se redesenham depois de carregar (Loja, Estatísticas…)
+  box.addEventListener('click', e => { if(e.target.closest('#sBack')){ e.preventDefault(); settingsBack(); } });
 }
 const toggle = (id, on) => `<label class="sw"><input type="checkbox" id="${id}" ${on?'checked':''}><span></span></label>`;
 const row = (title, desc, ctrl) => `<div class="srow"><div class="t"><b>${title}</b>${desc?`<small>${desc}</small>`:''}</div>${ctrl}</div>`;
@@ -5949,14 +5968,19 @@ function overlayOpen(){
   const md = $('#modal'); if(md && !md.classList.contains('hidden')) return () => closeModal();
   const mn = $('#menu'); if(mn && !mn.classList.contains('hidden')) return () => closeMenu();
   const ex = $('#explore'); if(ex) return () => ex.remove();
-  if(document.querySelector('.settings:not(.hidden)') || (typeof SET !== 'undefined' && SET)) return () => closeSettings();
+  if(typeof SET !== 'undefined' && SET) return () => settingsBack();
   if(document.body.classList.contains('mem-open') && isMobile()) return () => { S.memOverlay = false; renderMembers(); };
   return null;
 }
 window.addEventListener('popstate', () => {
   if(!isMobile()) return;
   const close = overlayOpen();
-  if(close){ close(); if(document.body.classList.contains('m-main')) history.pushState({ telaoMain: true }, ''); return; }
+  if(close){
+    close();
+    // ainda tem algo aberto (ex.: voltou da seção para a lista): guarda mais um "voltar"
+    if(overlayOpen() || document.body.classList.contains('m-main')) history.pushState({ telaoMain: true }, '');
+    mobileNav(); return;
+  }
   if(document.body.classList.contains('m-main')) document.body.classList.remove('m-main');
 });
 // abrir janela também conta como "tela" para o botão voltar fechar ela
@@ -5966,7 +5990,7 @@ modal = function(){
   if(isMobile()){
     if(!(history.state && history.state.telaoModal)) history.pushState({ telaoModal: true, telaoMain: document.body.classList.contains('m-main') }, '');
     // não abre o teclado sozinho em cima da janela
-    setTimeout(() => { const a = document.activeElement; if(a && a.closest && a.closest('#modal') && !a.matches('.code6')) a.blur(); }, 60);
+    setTimeout(() => { const a = document.activeElement; if(a && a.closest && a.closest('#modal') && !a.matches('.code6, #qsQ, #gName, #cgN, #rcN')) a.blur(); }, 60);
   }
   return r;
 };
@@ -6008,20 +6032,38 @@ document.addEventListener('touchend', e => { if(!lp) return; clearTimeout(lp.tim
 document.addEventListener('contextmenu', e => { if(touchDev && e.isTrusted && e.target.closest('.msg, .mem, .vu, .ch, .dmitem')) e.preventDefault(); }, true);
 
 /* barra de navegação embaixo (só no celular, na tela de listas) */
+/* fecha tudo que estiver por cima (configurações, janelas, menus, explorar, membros) */
+function closeOverlays(){
+  closeMenu();
+  const md = $('#modal'); if(md && !md.classList.contains('hidden')) closeModal();
+  const ex = $('#explore'); if(ex) ex.remove();
+  if(typeof SET !== 'undefined' && SET){ closeSettings(); if(SET) return false; }   // tem alteração não salva e a pessoa cancelou
+  if(S.memOverlay){ S.memOverlay = false; renderMembers(); }
+  return true;
+}
+App.closeOverlays = closeOverlays;
+const pushOverlay = () => { if(isMobile()) history.pushState({ telaoOverlay: true, telaoMain: document.body.classList.contains('m-main') }, ''); };
+App.onSettingsOpen = () => { pushOverlay(); mobileNav(); };
+App.onSettingsSec = () => pushOverlay();
+App.onSettingsClose = () => mobileNav();
 function mobileNav(){
   if(!isMobile() || !S.me){ const n = $('#mnav'); if(n) n.remove(); return; }
   let n = $('#mnav');
   if(!n){ n = document.createElement('nav'); n.id = 'mnav'; n.className = 'mnav'; document.body.appendChild(n); }
-  const home = S.route.kind === 'home';
+  const setU = typeof SET !== 'undefined' && SET && SET.kind === 'user';
+  const home = S.route.kind === 'home' && !setU && !$('#explore');
   const unreadN = (S.dmReq ? S.dmReq.length : 0) + S.dms.filter(d => S.unread.has(d.id)).length;
   n.innerHTML = `<button data-mn="home" class="${home ? 'on' : ''}">${ic('chat', 22)}<span>Início</span>${unreadN ? `<i class="mdot">${unreadN > 9 ? '9+' : unreadN}</i>` : ''}</button>
-    <button data-mn="explore">${ic('globe', 22)}<span>Explorar</span></button>
+    <button data-mn="explore" class="${$('#explore') ? 'on' : ''}">${ic('globe', 22)}<span>Explorar</span></button>
     <button data-mn="news">${ic('bell', 22)}<span>Novidades</span>${typeof unreadNotices === 'function' && unreadNotices() ? '<i class="mdot"></i>' : ''}</button>
-    <button data-mn="me">${avatar(S.me, 'xs', true)}<span>Você</span></button>`;
-  n.querySelector('[data-mn="home"]').onclick = () => { go({ kind: 'home', dm: null }); document.body.classList.remove('m-main'); };
-  n.querySelector('[data-mn="explore"]').onclick = () => App.openExplore();
-  n.querySelector('[data-mn="news"]').onclick = () => App.noticesPanel();
-  n.querySelector('[data-mn="me"]').onclick = () => openSettings('user', 'account');
+    <button data-mn="me" class="${setU ? 'on' : ''}">${avatar(S.me, 'xs', true)}<span>Você</span></button>`;
+  n.querySelector('[data-mn="home"]').onclick = () => { if(!closeOverlays()) return; go({ kind: 'home', dm: null }); document.body.classList.remove('m-main'); mobileNav(); };
+  n.querySelector('[data-mn="explore"]').onclick = () => { if(!closeOverlays()) return; App.openExplore(); pushOverlay(); mobileNav(); };
+  n.querySelector('[data-mn="news"]').onclick = () => { if(!closeOverlays()) return; App.noticesPanel(); mobileNav(); };
+  n.querySelector('[data-mn="me"]').onclick = () => {
+    if(setU){ if(SET.mobileOpen){ SET.mobileOpen = false; SET.direct = false; renderSettings(); } return; }
+    if(!closeOverlays()) return; openSettings('user');
+  };
 }
 const _renderRailK = renderRail;
 renderRail = function(){ _renderRailK.apply(this, arguments); mobileNav(); };
