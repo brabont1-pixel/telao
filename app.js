@@ -9,7 +9,7 @@ const esc = s => String(s ?? '').replace(/[&<>"']/g, c => ({'&':'&amp;','<':'&lt
 const COLORS = ['#5865f2','#eb459e','#3ba55c','#faa61a','#ed4245','#f47b67','#1abc9c','#9b59b6','#e67e22','#607d8b'];
 const ls = { get(k,d){ try{ const v=localStorage.getItem(k); return v==null?d:JSON.parse(v); }catch(e){ return d; } }, set(k,v){ try{ localStorage.setItem(k, JSON.stringify(v)); }catch(e){} } };
 
-const APP_VERSION = '6.13';
+const APP_VERSION = '6.14';
 const S = {
   me: null, profiles: new Map(), servers: [], channels: new Map(), members: new Map(),
   friends: [], dms: [], dmActivity: ls.get('telao-dmact', {}), online: new Set(),
@@ -2560,7 +2560,7 @@ function serverMenu(s, e){
   const r = $('#sbHead').getBoundingClientRect();
   const items = [{ label:'Impulsionar servidor', icon: BOOST_SVG(18), cls:'boostitem', onClick: () => boostServerModal(s) }, { label:'Convidar pessoas', icon: ic('userPlus',18), onClick: () => inviteModal(s) }, { label:'Estatísticas do servidor', icon: ic('poll',18), onClick: () => openSettings('server','stats', s) }];
   if(App.hasPerm(s.id, 2) || App.hasPerm(s.id, 16)) items.push({ label:'Configurações do servidor', icon: ic('gear',18), onClick: () => openSettings('server','overview', s) });
-  if(App.hasPerm(s.id, 1)) items.push({ label:'Criar canal', icon: ic('plusCircle',18), onClick: () => createChannelModal(s, 'text') }, { label:'Criar categoria', icon: ic('folder',18), onClick: () => createCategoryModal(s) });
+  if(App.hasPerm(s.id, 1)) items.push({ label:'Criar canal', icon: ic('plusCircle',18), onClick: () => createChannelModal(s, 'text') }, { label:'Criar categoria', icon: ic('folder',18), onClick: () => createCategoryModal(s) }, { label:'Ordenar canais e categorias', icon: ic('sliders',18), onClick: () => App.orderModal(s) });
   items.push('-');
   if(owner) items.push({ label:'Excluir servidor', danger:true, icon: ic('trash',18), onClick: () => deleteServer(s) });
   else items.push({ label:'Sair do servidor', danger:true, icon: ic('logout',18), onClick: () => leaveServer(s) });
@@ -2571,11 +2571,15 @@ function addServerModal(){
     <div class="mc">
       <button class="choice" id="chCreate"><span class="e">${ic('plus',26)}</span><div><b>Criar o meu</b><small>Do zero, do seu jeito</small></div>${ic('chevRight',20)}</button>
       <div class="tpls">${[['🎮','Jogos'],['👥','Amigos'],['📚','Estudos'],['🎬','Filmes']].map(([e,n]) => `<button class="tpl" data-tpl="${n}"><span>${e}</span>${n}</button>`).join('')}</div>
+      <button class="choice" id="chBackup"><span class="e">${ic('download',26)}</span><div><b>Criar a partir de um backup</b><small>Use um arquivo .json de backup do Telão</small></div>${ic('chevRight',20)}</button>
+      <button class="choice" id="chTplD"><span class="e">${ic('folder',26)}</span><div><b>Usar um template do Discord ou Xenon</b><small>Cole o link (discord.new ou xenon.bot/templates)</small></div>${ic('chevRight',20)}</button>
       <button class="choice" id="chJoin"><span class="e">${ic('link',26)}</span><div><b>Entrar com um convite</b><small>Tem um link ou código? Cole aqui</small></div>${ic('chevRight',20)}</button>
     </div>`, m => {
     m.querySelector('#chCreate').onclick = () => createServerModal();
     m.querySelectorAll('[data-tpl]').forEach(b => b.onclick = () => createServerModal(b.dataset.tpl));
     m.querySelector('#chJoin').onclick = () => joinServerModal();
+    m.querySelector('#chBackup').onclick = () => App.backupPick(bk => App.backupNewServer(bk));
+    m.querySelector('#chTplD').onclick = () => App.templateModal(null);
   });
 }
 const TEMPLATES = {
@@ -2994,6 +2998,7 @@ function renderSettings(){
     if(App.hasPerm(s.id, 128) || App.hasPerm(s.id, 4)) nav.push(['bans','Banimentos']);
     if(App.hasPerm(s.id, 2) || App.hasPerm(s.id, 64)) nav.push(['safety','Segurança']);
     if(App.hasPerm(s.id, 2)) nav.push(['community','Comunidade']);
+    if(s.owner_id === S.me.id || App.hasPerm(s.id, 32)) nav.push(['backup','Backup']);
     if(s.owner_id === S.me.id) nav.push(['hr'], ['delete','Excluir servidor','danger']);
     if(!nav.find(n => n[0] === SET.sec)) SET.sec = (nav[1] || [])[0] || 'members';
   }
@@ -3016,7 +3021,7 @@ function renderSettings(){
   const back = isMobile() ? `<button class="btn sec sm mobileback" id="sBack">← Voltar</button>` : '';
   const fn = SET.kind === 'user'
     ? { account: secAccount, profile: secProfile, plus: secPlus, shop: secShop, connections: secConnections, security: secSecurity, privacy: secPrivacy, boosts: secMyBoosts, appearance: secAppearance, perf: secPerf, a11y: secA11y, lang: secLang, voice: secVoice, notif: secNotif, keys: secKeys, app: secApp, admin: secAdmin }[SET.sec]
-    : { overview: secSrvOverview, roles: secSrvRoles, channels: secSrvChannels, members: secSrvMembers, boost: secSrvBoost, bans: secSrvBans, safety: secSrvSafety, emojis: secSrvEmojis, tag: secSrvTag, community: secSrvCommunity, invites: secSrvInvites, stats: secSrvStats }[SET.sec];
+    : { overview: secSrvOverview, roles: secSrvRoles, channels: secSrvChannels, members: secSrvMembers, boost: secSrvBoost, bans: secSrvBans, safety: secSrvSafety, emojis: secSrvEmojis, tag: secSrvTag, community: secSrvCommunity, invites: secSrvInvites, stats: secSrvStats, backup: secSrvBackup }[SET.sec];
   if(fn) fn(box, back);
   // vale também para seções que se redesenham depois de carregar (Loja, Estatísticas…)
   box.addEventListener('click', e => { if(e.target.closest('#sBack')){ e.preventDefault(); settingsBack(); } });
@@ -5835,7 +5840,11 @@ richText = function(t){
   return h.replace(/\u0002(\d+)\u0002/g, (m, i) => ceImg(toks[+i][1], toks[+i][0], only));
 };
 const _reactsHtml = reactsHtml;
-reactsHtml = function(mid){ return App.ceHtml(_reactsHtml(mid)); };
+// só o emoji visível vira imagem; dentro dos atributos (data-rx, dica) o código fica como texto, senão o botão quebra
+reactsHtml = function(mid){
+  return _reactsHtml(mid).replace(/(<span>)([^<]*)(<\/span>)|data-tipsub="([^"]*)"/g, (m, a, t, b, sub) =>
+    a ? a + t.replace(CE_RE, (x, an, n, id) => ceImg(id, n)) + b : `data-tipsub="${sub.replace(CE_RE, (x, an, n) => ':' + n + ':')}"`);
+};
 // emoji de servidor que ainda não está no cache (ex.: Telão+ usando de outro servidor)
 const ceWait = new Set();
 new MutationObserver(() => {
@@ -6022,7 +6031,7 @@ document.addEventListener('touchend', e => {
 let lp = null;
 document.addEventListener('touchstart', e => {
   if(!touchDev || e.touches.length !== 1) return;
-  const el = e.target.closest('.msg, .mem, .vu, .ch[data-cid], .dmitem, .ricon[data-sid], .fr, [data-uprof]'); if(!el) return;
+  const el = e.target.closest('.msg, .mem, .vu, .ch[data-cid], .dmitem, .ricon[data-sid], .rfh, .fr, [data-uprof]'); if(!el) return;
   const t = e.touches[0];
   lp = { el, x: t.clientX, y: t.clientY, timer: setTimeout(() => {
     lp.fired = true;
@@ -7465,6 +7474,7 @@ function categoryMenu(s, el, x, y){
   const items = [
     { label: 'Criar canal de texto', icon: ic('hash', 18), onClick: () => createChannelModal(s, 'text', cat || '') },
     { label: 'Criar canal de voz', icon: ic('volume', 18), onClick: () => createChannelModal(s, 'voice', cat || '') },
+    { label: 'Ordenar canais e categorias', icon: ic('sliders', 18), onClick: () => orderModal(s) },
     '-',
     { label: cat ? 'Renomear categoria' : 'Dar nome (virar categoria)', icon: ic('edit', 18), onClick: () => renameCategoryModal(s, cat, kind, title) },
   ];
@@ -7724,6 +7734,601 @@ boostServerModal = async function(s){
     draw(m);
   });
 };
+
+/* ---------- tela "Ordenar canais e categorias" (setas, funciona no celular sem arrastar) ---------- */
+function orderModal(s){
+  let groups = currentGroups(s);
+  const real = () => groups.filter(g => g.cat);
+  const draw = m => {
+    const cats = real().map(g => g.cat);
+    const chRow = (c, g, i) => `<div class="ordrow ch2"><span class="ordic">${ic(c.kind === 'voice' ? 'volume' : 'hash', 15)}</span><span class="ordnm">${esc(c.name)}</span>
+      <select class="inp ordsel" data-mvch="${c.id}" aria-label="Categoria de ${esc(c.name)}"><option value="">Nenhuma</option>${cats.map(n => `<option value="${esc(n)}" ${g.cat === n ? 'selected' : ''}>${esc(n)}</option>`).join('')}</select>
+      <button class="ibtn sm" data-chup="${c.id}" ${i === 0 ? 'disabled' : ''} aria-label="Subir">${ic('chevDown', 15).replace('<svg', '<svg style="transform:rotate(180deg)"')}</button>
+      <button class="ibtn sm" data-chdn="${c.id}" ${i === g.chs.length - 1 ? 'disabled' : ''} aria-label="Descer">${ic('chevDown', 15)}</button></div>`;
+    const ri = g => real().indexOf(g);
+    m.querySelector('#ordList').innerHTML = groups.filter(g => g.cat || g.chs.length).map(g => `
+      <div class="ordgrp ${g.cat ? '' : 'auto'}">
+        <div class="ordrow cat2"><span class="ordnm"><b>${esc(g.title)}</b>${g.cat ? '' : '<small>sem categoria · fica sempre no topo</small>'}</span>
+          ${g.cat ? `<button class="ibtn sm" data-catup="${esc(g.cat)}" ${ri(g) === 0 ? 'disabled' : ''} aria-label="Subir categoria">${ic('chevDown', 16).replace('<svg', '<svg style="transform:rotate(180deg)"')}</button>
+          <button class="ibtn sm" data-catdn="${esc(g.cat)}" ${ri(g) === real().length - 1 ? 'disabled' : ''} aria-label="Descer categoria">${ic('chevDown', 16)}</button>` : ''}</div>
+        ${g.chs.length ? g.chs.map((c, i) => chRow(c, g, i)).join('') : '<div class="ordempty">Nenhum canal</div>'}
+      </div>`).join('');
+    const findG = id => groups.find(g => g.chs.some(c => c.id === id));
+    m.querySelectorAll('[data-catup],[data-catdn]').forEach(b => b.onclick = () => {
+      const name = b.dataset.catup || b.dataset.catdn, dir = b.dataset.catup ? -1 : 1;
+      const rs = real(), i = rs.findIndex(g => g.cat === name), j = i + dir; if(j < 0 || j >= rs.length) return;
+      const gi = groups.indexOf(rs[i]), gj = groups.indexOf(rs[j]); [groups[gi], groups[gj]] = [groups[gj], groups[gi]]; draw(m);
+    });
+    m.querySelectorAll('[data-chup],[data-chdn]').forEach(b => b.onclick = () => {
+      const id = b.dataset.chup || b.dataset.chdn, dir = b.dataset.chup ? -1 : 1, g = findG(id);
+      const i = g.chs.findIndex(c => c.id === id), j = i + dir; if(j < 0 || j >= g.chs.length) return;
+      [g.chs[i], g.chs[j]] = [g.chs[j], g.chs[i]]; draw(m);
+    });
+    m.querySelectorAll('[data-mvch]').forEach(sel => sel.onchange = () => {
+      const id = sel.dataset.mvch, from = findG(id), c = from.chs.find(x => x.id === id);
+      from.chs = from.chs.filter(x => x.id !== id);
+      let to = sel.value ? groups.find(g => g.cat === sel.value) : groups.find(g => !g.cat && g.kind === c.kind);
+      if(!to){ to = { title: c.kind === 'voice' ? 'Canais de voz' : 'Canais de texto', cat: null, kind: c.kind, chs: [] }; groups.splice(c.kind === 'voice' ? (groups[0] && !groups[0].cat ? 1 : 0) : 0, 0, to); }
+      to.chs.push(c); draw(m);
+    });
+  };
+  modal(`<div class="mh"><h2>Ordenar canais e categorias</h2><p>Use as setas para mudar a ordem e o seletor para trocar o canal de categoria. No computador também dá para arrastar direto na lista de canais.</p></div>
+    <div class="mc"><div id="ordList" class="ordlist"></div><div class="err" id="ordE"></div></div>
+    <div class="mf"><button class="btn sec" data-close>Cancelar</button><button class="btn" id="ordGo">Salvar ordem</button></div>`, m => {
+    draw(m);
+    m.querySelector('#ordGo').onclick = async () => {
+      const btn = m.querySelector('#ordGo'); btn.disabled = true; btn.textContent = 'Salvando…';
+      const ids = [], cats = [];
+      groups.forEach(g => g.chs.forEach(c => { ids.push(c.id); cats.push(g.cat || ''); }));
+      const names = real().map(g => g.cat);
+      let error = null;
+      if(names.length){ const r = await App.sb.rpc('layout_save', { p_server: s.id, p_cats: names, p_channels: null, p_channel_cats: null }); error = r.error; }
+      if(!error) error = await persistLayout(s.id, ids, cats);
+      if(error){ m.querySelector('#ordE').textContent = errMsg(error); btn.disabled = false; btn.textContent = 'Salvar ordem'; return; }
+      closeModal(); await loadChannels(s.id); renderSidebar(); App.toast('Ordem salva');
+    };
+  });
+}
+App.orderModal = orderModal;
+/* =====================================================================
+   v6.14: BACKUP DE SERVIDOR — baixar, copiar para outro servidor, restaurar ou criar a partir de um arquivo.
+   Só administradores do servidor (dono ou cargo com Administrador).
+   ===================================================================== */
+const isSrvAdmin = s => !!s && (s.owner_id === S.me.id || App.hasPerm(s.id, 32));
+const bkName = s => `telao-backup-${(s.name || 'servidor').toLowerCase().normalize('NFD').replace(/[̀-ͯ]/g, '').replace(/[^a-z0-9]+/g, '-').replace(/^-|-$/g, '')}-${new Date().toLocaleDateString('en-CA')}.json`;
+function bkSummary(bk){
+  const n = k => Array.isArray(bk[k]) ? bk[k].length : 0;
+  const msgs = bk.messages ? Object.values(bk.messages).reduce((a, l) => a + (Array.isArray(l) ? l.length : 0), 0) : 0;
+  return { name: (bk.server && bk.server.name) || 'Servidor', channels: n('channels'), text: (bk.channels || []).filter(c => c.kind === 'text').length, voice: (bk.channels || []).filter(c => c.kind === 'voice').length,
+    roles: n('roles'), cats: n('categories'), emojis: n('emojis'), msgs, at: bk.exported_at };
+}
+const bkLine = sm => `${sm.text} canais de texto, ${sm.voice} de voz, ${sm.cats} categoria${sm.cats === 1 ? '' : 's'}, ${sm.roles} cargo${sm.roles === 1 ? '' : 's'}, ${sm.emojis} emoji${sm.emojis === 1 ? '' : 's'}${sm.msgs ? `, ${sm.msgs.toLocaleString('pt-BR')} mensagens` : ''}`;
+const bkErr = e => /could not find the function|PGRST202/i.test((e && (e.message || e.code)) || '') ? 'Falta rodar o supabase.sql novo no Supabase para o backup funcionar.' : (e && e.message) || String(e);
+
+async function bkMake(s, withMsgs){
+  const { data, error } = await App.sb.rpc('server_backup', { p_server: s.id, p_messages: !!withMsgs });
+  if(error) throw error;
+  return data;
+}
+function bkDownload(s, bk){
+  const blob = new Blob([JSON.stringify(bk, null, 2)], { type: 'application/json' });
+  const a = document.createElement('a'); a.href = URL.createObjectURL(blob); a.download = bkName(s);
+  document.body.appendChild(a); a.click(); a.remove(); setTimeout(() => URL.revokeObjectURL(a.href), 3000);
+}
+function backupPick(cb){
+  const inp = document.createElement('input'); inp.type = 'file'; inp.accept = '.json,application/json';
+  inp.onchange = async () => {
+    const f = inp.files[0]; if(!f) return;
+    if(f.size > 40 * 1048576){ App.toast('Arquivo grande demais (máximo 40 MB).', true); return; }
+    try{
+      const bk = JSON.parse(await f.text());
+      if(!bk || bk.telao_backup !== 1) throw new Error('Esse arquivo não é um backup do Telão.');
+      cb(bk);
+    }catch(e){ App.toast(e.message && e.message.startsWith('Esse') ? e.message : 'Não deu para ler esse arquivo. Ele precisa ser um backup .json do Telão.', true); }
+  };
+  inp.click();
+}
+App.backupPick = backupPick;
+
+async function bkRestore(sid, bk, withMsgs, withSettings){
+  const { data, error } = await App.sb.rpc('server_restore', { p_server: sid, p_backup: bk, p_messages: !!withMsgs, p_settings: withSettings !== false });
+  if(error) throw error;
+  await loadServers(); await loadChannels(sid);
+  return data || {};
+}
+const restoredMsg = r => `Pronto: ${r.channels || 0} canais, ${r.roles || 0} cargos, ${r.emojis || 0} emojis${r.messages ? `, ${r.messages} mensagens` : ''}.`;
+
+/* criar servidor novo a partir de um arquivo */
+function backupNewServer(bk){
+  const sm = bkSummary(bk);
+  modal(`<div class="mh"><h2>Criar servidor do backup</h2><p>${esc(sm.name)}${sm.at ? ` · backup de ${new Date(sm.at).toLocaleDateString('pt-BR')}` : ''}</p></div>
+    <div class="mc"><div class="bkbox">${ic('download', 18)}<span>${bkLine(sm)}</span></div>
+      <label class="field"><span>Nome do servidor novo</span><input class="inp" id="bnN" maxlength="40" value="${esc(sm.name)}"></label>
+      ${sm.msgs ? row('Trazer as mensagens', 'Elas entram pela conta oficial do Telão, com o nome de quem escreveu e a data.', toggle('bnM', true)) : ''}
+      <div class="err" id="bnE"></div></div>
+    <div class="mf"><button class="btn sec" data-close>Cancelar</button><button class="btn" id="bnGo">Criar servidor</button></div>`, m => {
+    m.querySelector('#bnGo').onclick = async () => {
+      const b = m.querySelector('#bnGo'); b.disabled = true; b.textContent = 'Criando…';
+      try{
+        const name = m.querySelector('#bnN').value.trim() || sm.name;
+        const { data: sid, error } = await App.sb.rpc('create_server', { p_name: name.slice(0, 40) });
+        if(error) throw error;
+        const bk2 = { ...bk, server: { ...(bk.server || {}), name } };
+        const r = await bkRestore(sid, bk2, m.querySelector('#bnM') ? m.querySelector('#bnM').checked : false, true);
+        closeModal(); go({ kind: 'server', sid }); App.toast(restoredMsg(r));
+      }catch(e){ m.querySelector('#bnE').textContent = bkErr(e); b.disabled = false; b.textContent = 'Criar servidor'; }
+    };
+  });
+}
+App.backupNewServer = backupNewServer;
+
+/* confirmação para substituir um servidor */
+function bkConfirmReplace(target, sm, onGo){
+  modal(`<div class="mh"><h2>Substituir “${esc(target.name)}”?</h2><p>Todos os canais, categorias, cargos e emojis de <b>${esc(target.name)}</b> serão apagados e trocados pelos do backup. As mensagens que estão lá hoje são perdidas. Os membros continuam no servidor (mas perdem os cargos).</p></div>
+    <div class="mc"><div class="bkbox">${ic('download', 18)}<span>Do backup: ${bkLine(sm)}</span></div>
+      ${sm.msgs ? row('Trazer as mensagens do backup', 'Entram pela conta oficial do Telão, com o nome de quem escreveu e a data.', toggle('bcM', true)) : ''}
+      ${row('Trazer nome, ícone, banner e descrição', '', toggle('bcS', true))}
+      <label class="field"><span>Para confirmar, digite o nome do servidor: <b>${esc(target.name)}</b></span><input class="inp" id="bcN" autocomplete="off"></label><div class="err" id="bcE"></div></div>
+    <div class="mf"><button class="btn sec" data-close>Cancelar</button><button class="btn red" id="bcGo" disabled>Substituir tudo</button></div>`, m => {
+    const inp = m.querySelector('#bcN'), go_ = m.querySelector('#bcGo');
+    inp.oninput = () => go_.disabled = inp.value.trim().toLowerCase() !== target.name.trim().toLowerCase();
+    go_.onclick = async () => {
+      go_.disabled = true; go_.textContent = 'Restaurando…';
+      try{ await onGo(m.querySelector('#bcM') ? m.querySelector('#bcM').checked : false, m.querySelector('#bcS').checked); }
+      catch(e){ m.querySelector('#bcE').textContent = bkErr(e); go_.disabled = false; go_.textContent = 'Substituir tudo'; }
+    };
+  });
+}
+
+/* seção "Backup" nas configurações do servidor */
+async function secSrvBackup(box, back){
+  const s = SET.server;
+  if(!isSrvAdmin(s)){ box.innerHTML = `${back}<h2>Backup</h2><p class="mut">Só administradores do servidor podem fazer e restaurar backup.</p>`; return; }
+  const others = S.servers.filter(x => x.id !== s.id && isSrvAdmin(x));
+  box.innerHTML = `${back}<h2>Backup do servidor</h2><p class="mut">Guarde uma cópia de tudo do servidor (canais, categorias, configurações dos canais, cargos e permissões, emojis e, se quiser, as mensagens) e use em outro servidor quando quiser.</p>
+    <div class="bkcard"><h3>${ic('download', 18)} Baixar backup</h3><p class="mut small">Um arquivo .json que fica no seu computador ou celular.</p>
+      ${row('Incluir as mensagens', 'As últimas 500 de cada canal de texto. O arquivo fica maior.', toggle('bkM', false))}
+      <button class="btn" id="bkDl">${ic('download', 16)} Baixar backup</button></div>
+    <div class="bkcard"><h3>${ic('copy', 18)} Copiar para outro servidor</h3><p class="mut small">Coloca tudo deste servidor em outro servidor seu (ele é substituído).</p>
+      ${others.length ? `<label class="field"><span>Servidor de destino</span><select class="inp" id="bkTo">${others.map(x => `<option value="${x.id}">${esc(x.name)}</option>`).join('')}</select></label>
+      ${row('Levar as mensagens', 'Últimas 500 de cada canal, pela conta oficial do Telão.', toggle('bkTM', false))}
+      <button class="btn sec" id="bkCopy">${ic('copy', 16)} Copiar para o servidor escolhido</button>` : '<p class="mut small">Você não é administrador de nenhum outro servidor. Crie um servidor novo e volte aqui, ou baixe o backup.</p>'}</div>
+    <div class="bkcard"><h3>${ic('upload', 18)} Restaurar de um arquivo</h3><p class="mut small">Use um backup baixado (seu ou de alguém que te mandou).</p>
+      <div class="bkacts"><button class="btn sec" id="bkUpR">Substituir este servidor</button><button class="btn sec" id="bkUpN">Criar um servidor novo com ele</button></div></div>
+    <div class="err" id="bkE"></div>`;
+  const err = t => box.querySelector('#bkE').textContent = t || '';
+  box.querySelector('#bkDl').onclick = async e => {
+    const b = e.currentTarget; b.disabled = true; b.textContent = 'Preparando…'; err();
+    try{ const bk = await bkMake(s, box.querySelector('#bkM').checked); bkDownload(s, bk); App.toast('Backup baixado: ' + bkLine(bkSummary(bk))); }
+    catch(x){ err(bkErr(x)); }
+    b.disabled = false; b.innerHTML = `${ic('download', 16)} Baixar backup`;
+  };
+  const cp = box.querySelector('#bkCopy'); if(cp) cp.onclick = async () => {
+    err();
+    const target = S.servers.find(x => x.id === box.querySelector('#bkTo').value); if(!target) return;
+    let bk; try{ bk = await bkMake(s, box.querySelector('#bkTM').checked); }catch(x){ err(bkErr(x)); return; }
+    bkConfirmReplace(target, bkSummary(bk), async (msgs, sett) => {
+      const r = await bkRestore(target.id, bk, msgs, sett);
+      closeModal(); App.toast(`Copiado para ${target.name}. ` + restoredMsg(r));
+    });
+  };
+  box.querySelector('#bkUpR').onclick = () => backupPick(bk => bkConfirmReplace(s, bkSummary(bk), async (msgs, sett) => {
+    const r = await bkRestore(s.id, bk, msgs, sett);
+    closeModal(); closeSettings(); go({ kind: 'server', sid: s.id }); App.toast('Backup restaurado. ' + restoredMsg(r));
+  }));
+  box.querySelector('#bkUpN').onclick = () => backupPick(bk => backupNewServer(bk));
+}
+/* =====================================================================
+   v6.14: TEMPLATES DO DISCORD E DO XENON — cola o link (discord.new/…, discord.com/template/… ou
+   xenon.bot/templates/…) e o Telão monta canais, categorias e cargos iguais. Usa o mesmo caminho do backup.
+   ===================================================================== */
+const TPL_RE = /(?:discord\.new|discord(?:app)?\.com\/template|xenon\.bot\/(?:[a-z]{2}(?:-[a-z]{2})?\/)?templates?)\/([A-Za-z0-9-]{2,40})/i;
+function tplCode(txt){
+  const t = String(txt || '').trim();
+  const m = t.match(TPL_RE); if(m) return m[1];
+  return /^[A-Za-z0-9]{6,40}$/.test(t) ? t : null;
+}
+// permissões do Discord → bits do Telão
+const DPERM = [[8n, 32], [16n, 1], [32n, 2], [2n, 4], [4n, 128], [8192n, 8], [268435456n, 16], [1n << 40n, 64], [1n << 33n, 256], [1n << 30n, 512]];
+const dBig = v => { try{ return BigInt(String(v == null ? 0 : v)); }catch(e){ return 0n; } };
+function dPerms(v){ const p = dBig(v); return DPERM.reduce((a, [d, t]) => (p & d) ? a | t : a, 0); }
+const dColor = n => { n = Number(n) || 0; return n ? '#' + n.toString(16).padStart(6, '0') : '#99aab5'; };
+const VIEW = 1024n, SEND = 2048n;
+
+/* converte o template do Discord no formato de backup do Telão */
+function tplToBackup(t){
+  const g = (t && t.serialized_source_guild) || {};
+  const roles = (Array.isArray(g.roles) ? g.roles : []).map((r, i) => ({ ...r, _i: i }));
+  const everyone = roles.find(r => String(r.id) === '0' || r.name === '@everyone');
+  const realRoles = roles.filter(r => r !== everyone && !r.managed).slice(0, 150);
+  const adminIds = realRoles.filter(r => dBig(r.permissions) & 8n).map(r => String(r.id));
+  const chs = Array.isArray(g.channels) ? g.channels : [];
+  // categorias (nomes repetidos ganham um número, porque no Telão o nome é a chave)
+  const catName = new Map(), used = new Set();
+  chs.filter(c => c.type === 4).sort((a, b) => (a.position || 0) - (b.position || 0)).forEach(c => {
+    let n = String(c.name || 'categoria').slice(0, 36).trim() || 'categoria', k = n, i = 2;
+    while(used.has(k.toLowerCase())) k = `${n} ${i++}`;
+    used.add(k.toLowerCase()); catName.set(String(c.id), k);
+  });
+  const catPos = new Map([...catName.keys()].map((id, i) => [id, i + 1]));
+  const kindOf = c => [0, 5, 15, 16].includes(c.type) ? 'text' : [2, 13].includes(c.type) ? 'voice' : null;
+  const list = chs.filter(c => kindOf(c)).slice(0, 300).sort((a, b) => {
+    const pa = a.parent_id != null ? (catPos.get(String(a.parent_id)) || 0) : 0, pb = b.parent_id != null ? (catPos.get(String(b.parent_id)) || 0) : 0;
+    if(pa !== pb) return pa - pb;
+    const ka = kindOf(a) === 'voice' ? 1 : 0, kb = kindOf(b) === 'voice' ? 1 : 0;
+    return ka - kb || (a.position || 0) - (b.position || 0) || Number(a.id) - Number(b.id);
+  });
+  const channels = list.map((c, i) => {
+    const kind = kindOf(c), ow = Array.isArray(c.permission_overwrites) ? c.permission_overwrites : [];
+    const ev = ow.find(o => everyone && String(o.id) === String(everyone.id));
+    const hidden = ev && (dBig(ev.deny) & VIEW);
+    let allowed = null;
+    if(hidden){
+      allowed = [...new Set(ow.filter(o => o !== ev && (dBig(o.allow) & VIEW) && realRoles.some(r => String(r.id) === String(o.id))).map(o => String(o.id)).concat(adminIds))];
+      if(!allowed.length) allowed = null;
+    }
+    const out = { id: String(c.id), kind, name: String(c.name || 'canal').slice(0, 40), position: i,
+      category: c.parent_id != null ? catName.get(String(c.parent_id)) || null : null,
+      topic: c.topic ? String(c.topic).slice(0, 300) : null, nsfw: !!c.nsfw,
+      slowmode: Math.min(21600, Math.max(0, Number(c.rate_limit_per_user) || 0)),
+      readonly: kind === 'text' && !!(ev && (dBig(ev.deny) & SEND)), allowed_roles: allowed };
+    if(kind === 'voice'){
+      out.user_limit = Math.min(99, Math.max(0, Number(c.user_limit) || 0));
+      out.bitrate = Math.min(510, Math.max(32, Math.round((Number(c.bitrate) || 64000) / 1000)));
+      if(c.type === 13) out.stage = true;
+    }
+    return out;
+  });
+  return {
+    telao_backup: 1, source: 'discord-template', template_code: t.code || null, exported_at: t.updated_at || new Date().toISOString(),
+    server: { name: String(t.name || g.name || 'Servidor').slice(0, 40), ...(g.description || t.description ? { description: String(g.description || t.description).slice(0, 200) } : {}),
+      verify_level: Math.min(3, Math.max(0, Number(g.verification_level) || 0)) },
+    roles: realRoles.map(r => ({ id: String(r.id), name: String(r.name || 'cargo').slice(0, 32), color: dColor(r.color), position: r._i, perms: dPerms(r.permissions), hoist: !!r.hoist })),
+    categories: [...catName.values()].map((name, i) => ({ name, position: i + 1 })),
+    channels, emojis: [], messages: null
+  };
+}
+
+async function tplFetch(code){
+  let r;
+  try{ r = await fetch('/api/template?code=' + encodeURIComponent(code), { cache: 'no-store' }); }catch(e){ r = null; }
+  if(r && (r.headers.get('content-type') || '').includes('json')){
+    const j = await r.json().catch(() => ({}));
+    if(!r.ok) throw new Error(j.error || 'Não deu para buscar o template.');
+    return j;
+  }
+  // sem a função do servidor (ex.: rodando local): tenta direto no Discord
+  const d = await fetch('https://discord.com/api/v10/guilds/templates/' + encodeURIComponent(code)).catch(() => null);
+  if(!d) throw new Error('Não deu para falar com o Discord agora. Tente de novo daqui a pouco.');
+  if(d.status === 404) throw new Error('Esse template não existe ou foi apagado.');
+  if(!d.ok) throw new Error('O Discord não respondeu (' + d.status + ').');
+  return d.json();
+}
+
+/* tela: colar o link, ver o que vem e usar */
+function templateModal(target){
+  const canReplace = target && isSrvAdmin(target);
+  modal(`<div class="mh"><h2>Usar um template</h2><p>Templates do Discord e da galeria do Xenon. Cole o link do template.</p></div>
+    <div class="mc"><label class="field"><span>Link ou código do template</span><div class="tpin"><input class="inp" id="tpL" placeholder="https://discord.new/… ou https://xenon.bot/templates/…" autocomplete="off"><button class="btn" id="tpGo">Buscar</button></div></label>
+      <p class="mut small">Não tem um? <a href="https://xenon.bot/templates" target="_blank" rel="noopener">Abra a galeria do Xenon</a>, escolha um e copie o link da página (ou o link discord.new).</p>
+      <div class="err" id="tpE"></div><div id="tpP"></div></div>
+    <div class="mf" id="tpF"><button class="btn sec" data-close>Cancelar</button></div>`, m => {
+    const inp = m.querySelector('#tpL'), err = t => m.querySelector('#tpE').textContent = t || '';
+    const search = async () => {
+      err(); const code = tplCode(inp.value);
+      if(!code){ err('Esse link não parece de um template. Ele deve ser como discord.new/CODIGO ou xenon.bot/templates/CODIGO.'); return; }
+      const b = m.querySelector('#tpGo'); b.disabled = true; b.textContent = 'Buscando…';
+      try{
+        const t = await tplFetch(code), bk = tplToBackup(t), sm = bkSummary(bk);
+        if(!bk.channels.length && !bk.roles.length) throw new Error('Esse template está vazio.');
+        const groups = new Map([[null, []]]); bk.categories.forEach(c => groups.set(c.name, []));
+        bk.channels.forEach(c => (groups.get(c.category) || groups.get(null)).push(c));
+        m.querySelector('#tpP').innerHTML = `<div class="tpprev"><div class="tphead"><b>${esc(bk.server.name)}</b>${t.usage_count ? `<small>usado ${Number(t.usage_count).toLocaleString('pt-BR')} vezes</small>` : ''}${t.description ? `<p>${esc(String(t.description).slice(0, 200))}</p>` : ''}</div>
+          <div class="bkbox">${ic('download', 18)}<span>${bkLine(sm)}</span></div>
+          <div class="tplist">${[...groups].filter(([, l]) => l.length).map(([cat, l]) => `${cat ? `<div class="tpcat">${esc(cat)}</div>` : ''}${l.map(c => `<div class="tpch">${ic(c.kind === 'voice' ? 'volume' : 'hash', 14)}${esc(c.name)}${c.allowed_roles ? ic('lock', 12) : ''}</div>`).join('')}`).join('')}</div>
+          ${bk.roles.length ? `<div class="rpills tproles">${bk.roles.slice().reverse().slice(0, 30).map(r => `<span class="rpill sm"><i style="background:${esc(r.color)}"></i>${esc(r.name)}</span>`).join('')}</div>` : ''}
+          <p class="mut small">Vêm canais, categorias, cargos e quem pode ver cada canal. Bots e mensagens não vêm (o Discord não coloca isso nos templates).</p></div>`;
+        m.querySelector('#tpF').innerHTML = `<button class="btn sec" data-close>Cancelar</button>${canReplace ? `<button class="btn sec" id="tpR">Usar neste servidor</button>` : ''}<button class="btn" id="tpN">Criar servidor novo</button>`;
+        m.querySelector('#tpF [data-close]').onclick = closeModal;
+        m.querySelector('#tpN').onclick = () => backupNewServer(bk);
+        const rb = m.querySelector('#tpR');
+        if(rb) rb.onclick = () => bkConfirmReplace(target, sm, async (msgs, sett) => {
+          const r = await bkRestore(target.id, bk, false, sett);
+          closeModal(); closeSettings(); go({ kind: 'server', sid: target.id }); App.toast('Template aplicado. ' + restoredMsg(r));
+        });
+      }catch(e){ err(e.message + (/não existe/.test(e.message) ? ' Os templates antigos do Xenon que só têm nome (tipo “starter”) só funcionam dentro dele.' : '')); m.querySelector('#tpP').innerHTML = ''; }
+      b.disabled = false; b.textContent = 'Buscar';
+    };
+    m.querySelector('#tpGo').onclick = search;
+    inp.onkeydown = e => { if(e.key === 'Enter'){ e.preventDefault(); search(); } };
+    setTimeout(() => inp.focus(), 50);
+  });
+}
+App.templateModal = templateModal;
+App.tplToBackup = tplToBackup;
+
+/* entrada na seção Backup */
+const _secSrvBackupT = secSrvBackup;
+secSrvBackup = async function(box, back){
+  await _secSrvBackupT.apply(this, arguments);
+  const s = SET.server; if(!isSrvAdmin(s) || !box.querySelector('#bkE')) return;
+  box.querySelector('#bkE').insertAdjacentHTML('beforebegin', `<div class="bkcard"><h3>${ic('folder', 18)} Usar um template do Discord ou do Xenon</h3><p class="mut small">Cole o link de um template e monte os canais, categorias e cargos dele aqui ou num servidor novo.</p>
+    <button class="btn sec" id="bkTpl">${ic('link', 16)} Colar link do template</button></div>`);
+  box.querySelector('#bkTpl').onclick = () => templateModal(s);
+};
+/* =====================================================================
+   v6.14: ORDEM E PASTAS DOS SERVIDORES NA BARRA (só os servidores; o resto da barra não mexe).
+   Arrastar no computador (solte em cima de outro servidor para criar uma pasta), segurar no celular
+   para abrir o menu, ou usar "Organizar servidores". Fica salvo na conta (tabela user_prefs).
+   ===================================================================== */
+const RL = { items: null, loaded: false, saving: null };
+const FOLD_COLORS = ['#5865f2', '#ff4fa3', '#b6ff2e', '#ffbe3b', '#3ba7ff', '#a36bff', '#ff6b4a', '#2ee6c5'];
+const rlKey = () => 'telaoRail:' + (S.me && S.me.id);
+const newFid = () => 'f' + Math.random().toString(36).slice(2, 9);
+
+function rlRaw(){
+  if(RL.items) return RL.items;
+  try{ RL.items = JSON.parse(localStorage.getItem(rlKey()) || '[]'); }catch(e){ RL.items = []; }
+  if(!Array.isArray(RL.items)) RL.items = [];
+  return RL.items;
+}
+/* deixa a lista certinha: cada servidor uma vez, novos no fim, pastas vazias somem */
+function railItems(){
+  const have = new Set(S.servers.map(s => s.id)), seen = new Set(), out = [];
+  rlRaw().forEach(it => {
+    if(typeof it === 'string'){ if(have.has(it) && !seen.has(it)){ seen.add(it); out.push(it); } return; }
+    if(!it || typeof it !== 'object' || !Array.isArray(it.sids)) return;
+    const sids = it.sids.filter(x => have.has(x) && !seen.has(x)); sids.forEach(x => seen.add(x));
+    if(sids.length) out.push({ id: it.id || newFid(), name: String(it.name || '').slice(0, 32), color: /^#[0-9a-f]{6}$/i.test(it.color || '') ? it.color : FOLD_COLORS[0], open: !!it.open, sids });
+  });
+  S.servers.forEach(s => { if(!seen.has(s.id)) out.push(s.id); });
+  return out;
+}
+async function loadRail(){
+  if(!S.me) return;
+  RL.loaded = true;
+  const { data, error } = await App.sb.from('user_prefs').select('rail').eq('user_id', S.me.id).maybeSingle();
+  if(!error && data && Array.isArray(data.rail)){
+    RL.items = data.rail; try{ localStorage.setItem(rlKey(), JSON.stringify(data.rail)); }catch(e){}
+    renderRail();
+  }
+}
+function saveRail(items){
+  RL.items = items;
+  try{ localStorage.setItem(rlKey(), JSON.stringify(items)); }catch(e){}
+  renderRail();
+  clearTimeout(RL.saving);
+  RL.saving = setTimeout(async () => {
+    const { error } = await App.sb.from('user_prefs').upsert({ user_id: S.me.id, rail: items, updated_at: new Date().toISOString() });
+    if(error && !/user_prefs|does not exist|PGRST20|schema cache/i.test(error.message || '')) App.toast('Não deu para salvar a ordem: ' + error.message, true);
+  }, 400);
+}
+const rlClone = items => items.map(it => typeof it === 'string' ? it : { ...it, sids: it.sids.slice() });
+const foldOf = (items, sid) => items.find(it => typeof it !== 'string' && it.sids.includes(sid));
+function takeOut(items, sid){
+  const i = items.indexOf(sid); if(i >= 0){ items.splice(i, 1); return; }
+  const f = foldOf(items, sid); if(f){ f.sids.splice(f.sids.indexOf(sid), 1); if(!f.sids.length) items.splice(items.indexOf(f), 1); }
+}
+const topIndexOf = (items, sid) => { const i = items.indexOf(sid); if(i >= 0) return i; const f = foldOf(items, sid); return f ? items.indexOf(f) : -1; };
+const srvName = sid => (S.servers.find(s => s.id === sid) || {}).name || 'Servidor';
+const foldTitle = f => f.name || f.sids.slice(0, 3).map(srvName).join(', ') + (f.sids.length > 3 ? '…' : '');
+
+/* ---------- desenho ---------- */
+const _renderRailP = renderRail;
+renderRail = function(){
+  _renderRailP.apply(this, arguments);
+  const rail = $('#rail'), add = $('#rAdd'); if(!rail || !add || !S.me) return;
+  if(!RL.loaded) loadRail();
+  const btns = new Map([...rail.querySelectorAll('.ricon.srv[data-sid]')].map(b => [b.dataset.sid, b]));
+  const frag = document.createDocumentFragment();
+  const cur = S.route.kind === 'server' ? S.route.sid : null;
+  railItems().forEach(it => {
+    if(typeof it === 'string'){ const b = btns.get(it); if(b) frag.appendChild(b); return; }
+    const wrap = document.createElement('div');
+    const unread = it.sids.some(sid => btns.get(sid) && btns.get(sid).classList.contains('unread'));
+    const has = it.sids.includes(cur);
+    wrap.className = 'rfold' + (it.open ? ' open' : ''); wrap.dataset.fid = it.id; wrap.style.setProperty('--fc', it.color);
+    const minis = it.sids.slice(0, 4).map(sid => { const s = S.servers.find(x => x.id === sid); return s ? `<span class="rmini" style="--sc:${esc(s.icon_color)}">${serverIcon(s)}</span>` : ''; }).join('');
+    wrap.innerHTML = `<button class="ricon rfh ${!it.open && has ? 'on' : ''} ${!it.open && unread ? 'unread' : ''}" data-fid="${it.id}" data-tip="${esc(foldTitle(it))}" data-tipsub="${it.sids.length} servidor${it.sids.length === 1 ? '' : 'es'}" data-tipside="r">${it.open ? ic('folder', 22) : `<span class="rminis n${Math.min(4, it.sids.length)}">${minis}</span>`}</button>`;
+    it.sids.forEach(sid => { const b = btns.get(sid); if(!b) return; if(it.open) wrap.appendChild(b); else b.remove(); });
+    frag.appendChild(wrap);
+  });
+  rail.insertBefore(frag, add);
+  rail.querySelectorAll('.rfh').forEach(b => b.onclick = () => {
+    const items = rlClone(railItems()), f = items.find(x => typeof x !== 'string' && x.id === b.dataset.fid);
+    if(f){ f.open = !f.open; saveRail(items); }
+  });
+  rail.querySelectorAll('.ricon.srv[data-sid], .rfh').forEach(el => {
+    el.oncontextmenu = e => { e.preventDefault(); if(RD.on) return; el.dataset.fid ? folderMenu(el.dataset.fid, e.clientX, e.clientY) : railSrvMenu(el.dataset.sid, e.clientX, e.clientY); };
+    bindRailDrag(el);
+  });
+};
+
+/* ---------- arrastar (mouse) ---------- */
+const RD = { on: false };
+function rdClean(){
+  document.getElementById('railGhost')?.remove(); document.getElementById('railLine')?.remove();
+  document.querySelectorAll('.rdrop,.rdragging').forEach(x => x.classList.remove('rdrop', 'rdragging'));
+  RD.on = false; RD.target = null;
+}
+function bindRailDrag(el){
+  el.addEventListener('pointerdown', e => {
+    if(e.button !== 0 || e.pointerType !== 'mouse') return;
+    const sx = e.clientX, sy = e.clientY; let started = false;
+    const mv = ev => {
+      if(!started){ if(Math.hypot(ev.clientX - sx, ev.clientY - sy) < 6) return; started = true; rdStart(el, ev); }
+      ev.preventDefault(); rdMove(ev.clientX, ev.clientY);
+    };
+    const up = () => {
+      window.removeEventListener('pointermove', mv); window.removeEventListener('pointerup', up);
+      if(started){
+        rdDrop();
+        const stop = ev => { ev.stopPropagation(); ev.preventDefault(); };
+        el.addEventListener('click', stop, { capture: true, once: true }); setTimeout(() => el.removeEventListener('click', stop, { capture: true }), 50);
+      }
+    };
+    window.addEventListener('pointermove', mv, { passive: false }); window.addEventListener('pointerup', up);
+  });
+}
+function rdStart(el, ev){
+  RD.on = true; RD.sid = el.dataset.sid || null; RD.fid = el.dataset.fid || null; RD.target = null;
+  el.classList.add('rdragging');
+  const g = el.cloneNode(true); g.id = 'railGhost'; g.classList.remove('on', 'rdragging'); document.body.appendChild(g);
+  const l = document.createElement('div'); l.id = 'railLine'; document.body.appendChild(l);
+  document.querySelectorAll('.tip, #tip').forEach(t => t.classList && t.classList.add('hidden'));
+}
+function rdMove(x, y){
+  const g = document.getElementById('railGhost'); if(g){ g.style.left = (x - 25) + 'px'; g.style.top = (y - 25) + 'px'; }
+  const rail = $('#rail'), line = document.getElementById('railLine'); line.style.display = 'none';
+  document.querySelectorAll('.rdrop').forEach(z => z.classList.remove('rdrop'));
+  const rr = rail.getBoundingClientRect();
+  if(y < rr.top + 24) rail.scrollTop -= 8; else if(y > rr.bottom - 24) rail.scrollTop += 8;
+  if(x > rr.right + 40){ RD.target = null; return; }
+  const cand = [...rail.querySelectorAll('.ricon.srv[data-sid], .rfh')].filter(b => b.dataset.sid !== RD.sid && b.dataset.fid !== RD.fid && !(RD.fid && b.closest(`.rfold[data-fid="${RD.fid}"]`)));
+  if(!cand.length){ RD.target = null; return; }
+  // o ícone mais perto na vertical
+  let best = null, bd = 1e9;
+  cand.forEach(b => { const r = b.getBoundingClientRect(), d = Math.abs(y - (r.top + r.height / 2)); if(d < bd){ bd = d; best = b; } });
+  const r = best.getBoundingClientRect(), rel = (y - r.top) / r.height;
+  const canJoin = !RD.fid && rel > 0.28 && rel < 0.72;
+  if(canJoin){ best.classList.add('rdrop'); RD.target = { join: best.dataset.sid || null, fold: best.dataset.fid || null }; return; }
+  const after = rel >= 0.5;
+  line.style.display = 'block'; line.style.left = (rr.left + 8) + 'px'; line.style.width = (rr.width - 16) + 'px';
+  line.style.top = ((after ? r.bottom + 4 : r.top - 6)) + 'px';
+  RD.target = { ref: best.dataset.sid || null, refFold: best.dataset.fid || null, after };
+}
+function rdDrop(){
+  const { sid, fid, target } = RD; rdClean();
+  if(!target) return;
+  const items = rlClone(railItems());
+  if(fid){
+    // mover uma pasta inteira (fica sempre no nível de cima)
+    const f = items.find(x => typeof x !== 'string' && x.id === fid); if(!f) return;
+    items.splice(items.indexOf(f), 1);
+    let i = target.refFold ? items.findIndex(x => typeof x !== 'string' && x.id === target.refFold) : topIndexOf(items, target.ref);
+    if(i < 0) i = items.length; else if(target.after) i++;
+    items.splice(i, 0, f); saveRail(items); return;
+  }
+  if(target.join || target.fold){
+    takeOut(items, sid);
+    if(target.fold){ const f = items.find(x => typeof x !== 'string' && x.id === target.fold); if(f){ f.sids.push(sid); saveRail(items); } return; }
+    const f = foldOf(items, target.join);
+    if(f){ f.sids.splice(f.sids.indexOf(target.join) + 1, 0, sid); }
+    else{ const i = items.indexOf(target.join); if(i < 0) return; items.splice(i, 1, { id: newFid(), name: '', color: FOLD_COLORS[items.filter(x => typeof x !== 'string').length % FOLD_COLORS.length], open: true, sids: [target.join, sid] }); }
+    saveRail(items); return;
+  }
+  takeOut(items, sid);
+  if(target.refFold){
+    let i = items.findIndex(x => typeof x !== 'string' && x.id === target.refFold); if(i < 0) i = items.length; else if(target.after && !items[i].open) i++;
+    if(target.after && items[i] && typeof items[i] !== 'string' && items[i].id === target.refFold){ items[i].sids.unshift(sid); }   // pasta aberta: entra no começo dela
+    else items.splice(i, 0, sid);
+  }else{
+    const f = foldOf(items, target.ref);
+    if(f){ f.sids.splice(f.sids.indexOf(target.ref) + (target.after ? 1 : 0), 0, sid); }
+    else{ let i = items.indexOf(target.ref); if(i < 0) i = items.length; else if(target.after) i++; items.splice(i, 0, sid); }
+  }
+  saveRail(items);
+}
+document.addEventListener('keydown', e => { if(e.key === 'Escape' && RD.on) rdClean(); });
+
+/* ---------- menus ---------- */
+function moveTop(sid, dir){
+  const items = rlClone(railItems()), f = foldOf(items, sid);
+  const list = f ? f.sids : items, i = list.indexOf(sid), j = i + dir;
+  if(j < 0 || j >= list.length) return;
+  [list[i], list[j]] = [list[j], list[i]]; saveRail(items);
+}
+function railSrvMenu(sid, x, y){
+  const s = S.servers.find(z => z.id === sid); if(!s) return;
+  const items = railItems(), f = foldOf(items, sid), folders = items.filter(z => typeof z !== 'string' && z !== f);
+  const up = ic('chevDown', 18).replace('<svg', '<svg style="transform:rotate(180deg)"');
+  const list = [
+    { label: 'Mover para cima', icon: up, onClick: () => moveTop(sid, -1) },
+    { label: 'Mover para baixo', icon: ic('chevDown', 18), onClick: () => moveTop(sid, 1) },
+    '-',
+    { label: 'Criar pasta com este servidor', icon: ic('folder', 18), onClick: () => {
+      const it = rlClone(railItems()), at = topIndexOf(it, sid); takeOut(it, sid);
+      const nf = { id: newFid(), name: '', color: FOLD_COLORS[it.filter(z => typeof z !== 'string').length % FOLD_COLORS.length], open: true, sids: [sid] };
+      it.splice(Math.min(Math.max(at, 0), it.length), 0, nf); saveRail(it); folderEdit(nf.id);
+    } },
+    ...folders.slice(0, 8).map(fo => ({ label: 'Pôr na pasta “' + foldTitle(fo).slice(0, 24) + '”', icon: ic('folder', 18), onClick: () => {
+      const it = rlClone(railItems()); takeOut(it, sid); const t = it.find(z => typeof z !== 'string' && z.id === fo.id); if(t){ t.sids.push(sid); saveRail(it); }
+    } })),
+  ];
+  if(f) list.push({ label: 'Tirar da pasta', icon: ic('logout', 18), onClick: () => {
+    const it = rlClone(railItems()), t = it.find(z => typeof z !== 'string' && z.id === f.id), at = it.indexOf(t);
+    takeOut(it, sid); it.splice(it.indexOf(t) >= 0 ? it.indexOf(t) + 1 : at, 0, sid); saveRail(it);
+  } });
+  list.push('-', { label: 'Organizar servidores', icon: ic('sliders', 18), onClick: railOrderModal });
+  menu(x, y, list);
+}
+function folderMenu(fid, x, y){
+  const up = ic('chevDown', 18).replace('<svg', '<svg style="transform:rotate(180deg)"');
+  const mv = dir => { const it = rlClone(railItems()), i = it.findIndex(z => typeof z !== 'string' && z.id === fid), j = i + dir; if(i < 0 || j < 0 || j >= it.length) return; [it[i], it[j]] = [it[j], it[i]]; saveRail(it); };
+  menu(x, y, [
+    { label: 'Nome e cor da pasta', icon: ic('edit', 18), onClick: () => folderEdit(fid) },
+    { label: 'Mover para cima', icon: up, onClick: () => mv(-1) },
+    { label: 'Mover para baixo', icon: ic('chevDown', 18), onClick: () => mv(1) },
+    { label: 'Organizar servidores', icon: ic('sliders', 18), onClick: railOrderModal },
+    '-',
+    { label: 'Desfazer pasta', icon: ic('trash', 18), danger: true, onClick: () => {
+      const it = rlClone(railItems()), i = it.findIndex(z => typeof z !== 'string' && z.id === fid); if(i < 0) return;
+      it.splice(i, 1, ...it[i].sids); saveRail(it); App.toast('Pasta desfeita. Os servidores continuam na barra.');
+    } },
+  ]);
+}
+function folderEdit(fid){
+  const f = railItems().find(z => typeof z !== 'string' && z.id === fid); if(!f) return;
+  let color = f.color;
+  modal(`<div class="mh"><h2>Pasta de servidores</h2><p>${f.sids.map(srvName).map(esc).join(', ')}</p></div>
+    <div class="mc"><label class="field"><span>Nome da pasta</span><input class="inp" id="pfN" maxlength="32" value="${esc(f.name)}" placeholder="${esc(foldTitle({ ...f, name: '' }))}"></label>
+      <div class="field"><span>Cor</span><div class="pfcolors">${FOLD_COLORS.map(c => `<button class="pfc ${c === color ? 'on' : ''}" data-c="${c}" style="background:${c}" aria-label="Cor ${c}"></button>`).join('')}</div></div></div>
+    <div class="mf"><button class="btn sec" data-close>Cancelar</button><button class="btn" id="pfGo">Salvar</button></div>`, m => {
+    m.querySelectorAll('.pfc').forEach(b => b.onclick = () => { color = b.dataset.c; m.querySelectorAll('.pfc').forEach(z => z.classList.toggle('on', z === b)); });
+    const save = () => { const it = rlClone(railItems()), t = it.find(z => typeof z !== 'string' && z.id === fid); if(t){ t.name = m.querySelector('#pfN').value.trim().slice(0, 32); t.color = color; saveRail(it); } closeModal(); };
+    m.querySelector('#pfGo').onclick = save;
+    m.querySelector('#pfN').onkeydown = e => { if(e.key === 'Enter'){ e.preventDefault(); save(); } };
+  });
+}
+
+/* ---------- tela "Organizar servidores" (funciona no celular também) ---------- */
+function railOrderModal(){
+  let items = rlClone(railItems());
+  const draw = m => {
+    const up = ic('chevDown', 16).replace('<svg', '<svg style="transform:rotate(180deg)"'), dn = ic('chevDown', 16);
+    const folders = items.filter(z => typeof z !== 'string');
+    const sel = (sid, cur) => `<select class="inp ordsel" data-mv="${sid}"><option value="">Sem pasta</option>${folders.map(f => `<option value="${f.id}" ${cur === f.id ? 'selected' : ''}>${esc(foldTitle(f).slice(0, 22))}</option>`).join('')}</select>`;
+    const srow = (sid, inF) => { const s = S.servers.find(z => z.id === sid); return `<div class="ordrow ${inF ? 'in' : ''}"><span class="rmini big" style="--sc:${esc(s ? s.icon_color : '#555')}">${s ? serverIcon(s) : ''}</span><b>${esc(srvName(sid))}</b>${sel(sid, inF)}<button class="ibtn" data-up="${sid}" aria-label="Subir">${up}</button><button class="ibtn" data-dn="${sid}" aria-label="Descer">${dn}</button></div>`; };
+    m.querySelector('#roL').innerHTML = items.map(it => typeof it === 'string' ? srow(it, null)
+      : `<div class="ordgrp" style="--fc:${it.color}"><div class="ordrow fold"><span class="pfdot"></span>${ic('folder', 16)}<input class="inp ordfn" data-fn="${it.id}" maxlength="32" value="${esc(it.name)}" placeholder="${esc(foldTitle({ ...it, name: '' }).slice(0, 30))}" aria-label="Nome da pasta"><button class="ibtn" data-up="${it.id}" aria-label="Subir">${up}</button><button class="ibtn" data-dn="${it.id}" aria-label="Descer">${dn}</button></div>${it.sids.map(sid => srow(sid, it.id)).join('')}</div>`).join('') || '<p class="mut">Você ainda não está em nenhum servidor.</p>';
+    m.querySelectorAll('[data-up],[data-dn]').forEach(b => b.onclick = () => {
+      const id = b.dataset.up || b.dataset.dn, dir = b.dataset.up ? -1 : 1;
+      const f = items.find(z => typeof z !== 'string' && z.id === id);
+      const list = f ? items : (foldOf(items, id) || {}).sids || items, ref = f || id, i = list.indexOf(ref), j = i + dir;
+      if(i >= 0 && j >= 0 && j < list.length){ [list[i], list[j]] = [list[j], list[i]]; draw(m); }
+    });
+    m.querySelectorAll('[data-mv]').forEach(sl => sl.onchange = () => {
+      const sid = sl.dataset.mv, at = topIndexOf(items, sid); takeOut(items, sid);
+      const t = items.find(z => typeof z !== 'string' && z.id === sl.value);
+      if(t) t.sids.push(sid); else items.splice(Math.min(at + 1, items.length), 0, sid);
+      draw(m);
+    });
+    m.querySelectorAll('[data-fn]').forEach(inp => inp.oninput = () => { const f = items.find(z => typeof z !== 'string' && z.id === inp.dataset.fn); if(f) f.name = inp.value.trim().slice(0, 32); });
+  };
+  modal(`<div class="mh"><h2>Organizar servidores</h2><p>Mude a ordem e junte servidores em pastas. Só você vê assim.</p></div>
+    <div class="mc"><div class="ordlist" id="roL"></div><button class="btn sec sm" id="roNew">${ic('folder', 16)} Nova pasta</button></div>
+    <div class="mf"><button class="btn sec" data-close>Cancelar</button><button class="btn" id="roGo">Salvar</button></div>`, m => {
+    draw(m);
+    m.querySelector('#roNew').onclick = () => {
+      const first = items.find(z => typeof z === 'string');
+      if(!first){ App.toast('Todos os servidores já estão em pastas.'); return; }
+      items.splice(items.indexOf(first), 1, { id: newFid(), name: 'Nova pasta', color: FOLD_COLORS[items.filter(z => typeof z !== 'string').length % FOLD_COLORS.length], open: true, sids: [first] });
+      draw(m);
+    };
+    m.querySelector('#roGo').onclick = () => { saveRail(items.filter(z => typeof z === 'string' || z.sids.length)); closeModal(); App.toast('Ordem dos servidores salva.'); };
+  });
+}
+App.railOrderModal = railOrderModal;
 /* ---------------- PWA ---------------- */
 window.addEventListener('beforeinstallprompt', e => {
   e.preventDefault(); if(window.telaoDesktop) return; S.installEvt = e;

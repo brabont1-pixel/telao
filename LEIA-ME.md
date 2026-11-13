@@ -350,3 +350,13 @@ O "Spotify direto" (com Ouvir junto) continua opcional e só aparece se você co
 - **Membros do servidor:** o painel ganhou um cabeçalho com **X** para fechar (no iPhone não existe botão voltar do aparelho).
 - **Menus no celular** (menu do servidor, do canal, da mensagem…) agora têm um fundo escuro atrás; tocar nele fecha o menu.
 - Testado no "modo iPhone": todas as telas, janelas e menus fecham só pelo que aparece na tela, sem usar o voltar do aparelho.
+
+# Versão 6.14: backup, templates do Discord/Xenon e pastas de servidores
+
+**Precisa rodar o `supabase.sql` novo no Supabase** (funções de backup e a tabela `user_prefs`).
+
+- **Ordenar canais e categorias:** nova tela no menu do servidor (e no menu da categoria) com setas para subir/descer e escolher a categoria de cada canal.
+- **Backup do servidor** (Configurações do servidor → Backup, só dono e quem tem Administrador): baixar um arquivo .json com canais, categorias, cargos, permissões, emojis e, se quiser, as últimas 500 mensagens de cada canal; copiar tudo para outro servidor seu; restaurar de um arquivo; ou criar um servidor novo com ele (também em **Adicionar servidor → Criar a partir de um backup**). As mensagens antigas entram pela conta oficial com o nome de quem escreveu.
+- **Templates do Discord e do Xenon:** cole um link `discord.new/…`, `discord.com/template/…` ou `xenon.bot/templates/…` e o Telão mostra a prévia e monta canais, categorias, cargos (com as permissões) e canais privados. Dá para criar um servidor novo ou aplicar no servidor atual. Fica em **Adicionar servidor** e em **Backup**. Os templates antigos do Xenon que só têm nome (tipo "starter") só funcionam dentro do Xenon.
+- **Pastas e ordem dos servidores na barra:** arraste um servidor (no computador) para mudar a ordem, ou solte em cima de outro para criar uma pasta. Clique na pasta para abrir/fechar. Clique com o botão direito (ou segure no celular) num servidor ou pasta para mover, pôr/tirar da pasta, renomear, mudar a cor ou desfazer. **Organizar servidores** abre uma tela com tudo. Fica salvo na sua conta, em todos os aparelhos.
+- **Correção:** reagir com emoji do servidor quebrava o botão da reação (aparecia código na tela e dava erro "row-level security").

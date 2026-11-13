@@ -265,7 +265,11 @@ richText = function(t){
   return h.replace(/\u0002(\d+)\u0002/g, (m, i) => ceImg(toks[+i][1], toks[+i][0], only));
 };
 const _reactsHtml = reactsHtml;
-reactsHtml = function(mid){ return App.ceHtml(_reactsHtml(mid)); };
+// só o emoji visível vira imagem; dentro dos atributos (data-rx, dica) o código fica como texto, senão o botão quebra
+reactsHtml = function(mid){
+  return _reactsHtml(mid).replace(/(<span>)([^<]*)(<\/span>)|data-tipsub="([^"]*)"/g, (m, a, t, b, sub) =>
+    a ? a + t.replace(CE_RE, (x, an, n, id) => ceImg(id, n)) + b : `data-tipsub="${sub.replace(CE_RE, (x, an, n) => ':' + n + ':')}"`);
+};
 // emoji de servidor que ainda não está no cache (ex.: Telão+ usando de outro servidor)
 const ceWait = new Set();
 new MutationObserver(() => {

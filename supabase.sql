@@ -1829,6 +1829,137 @@ begin
   return nid;
 end $$;
 
+
+-- =====================================================================
+-- v6.14: BACKUP DE SERVIDOR (baixar, copiar para outro, criar a partir de um arquivo)
+-- só o dono do servidor ou quem tem Administrador (32)
+-- =====================================================================
+create or replace function public.server_admin(p_server uuid) returns boolean
+language sql stable security definer set search_path = public as $$
+  select public.is_server_owner(p_server) or public.has_perm(p_server, 32);
+$$;
+
+create or replace function public.server_backup(p_server uuid, p_messages boolean default false) returns jsonb
+language plpgsql stable security definer set search_path = public as $$
+declare srv jsonb; r jsonb;
+begin
+  if not public.server_admin(p_server) then raise exception 'Só administradores do servidor podem fazer backup'; end if;
+  select to_jsonb(s) - 'id' - 'owner_id' - 'invite_code' - 'created_at' - 'public_since' - 'vanity' into srv from servers s where id = p_server;
+  select jsonb_build_object(
+    'telao_backup', 1,
+    'exported_at', now(),
+    'server', srv,
+    'roles', coalesce((select jsonb_agg((to_jsonb(x) - 'server_id' - 'created_at') order by x.position) from server_roles x where x.server_id = p_server), '[]'),
+    'categories', coalesce((select jsonb_agg(jsonb_build_object('name', c.name, 'position', c.position) order by c.position) from server_categories c where c.server_id = p_server), '[]'),
+    'channels', coalesce((select jsonb_agg((to_jsonb(c) - 'server_id' - 'created_at' - 'dm_a' - 'dm_b' - 'dm_status' - 'dm_requester' - 'owner_id' - 'icon_url') order by c.position) from channels c where c.server_id = p_server), '[]'),
+    'emojis', coalesce((select jsonb_agg(jsonb_build_object('name', e.name, 'url', e.url, 'animated', e.animated)) from server_emojis e where e.server_id = p_server), '[]'),
+    'messages', case when p_messages then coalesce((
+      select jsonb_object_agg(cid, msgs) from (
+        select c.id::text cid, (select jsonb_agg(jsonb_build_object('author', coalesce(p.display_name, 'alguém'), 'content', m.content, 'attachments', m.attachments, 'at', m.created_at) order by m.created_at)
+          from (select * from messages mm where mm.channel_id = c.id order by mm.created_at desc limit 500) m left join profiles p on p.id = m.author_id) msgs
+        from channels c where c.server_id = p_server and c.kind = 'text') t where msgs is not null), '{}') else null end
+  ) into r;
+  return r;
+end $$;
+
+-- p_mode 'replace': apaga canais, categorias, cargos e emojis do servidor e coloca os do backup
+create or replace function public.server_restore(p_server uuid, p_backup jsonb, p_messages boolean default false, p_settings boolean default true) returns jsonb
+language plpgsql security definer set search_path = public as $$
+declare owner_ boolean := public.is_server_owner(p_server); rmap jsonb := '{}'; cmap jsonb := '{}'; x jsonb; nid uuid; base jsonb; ch channels;
+  n_ch int := 0; n_role int := 0; n_emo int := 0; n_msg int := 0; ar uuid[]; bot uuid := public.telao_bot(); m jsonb; srvkeep jsonb;
+begin
+  if not public.server_admin(p_server) then raise exception 'Só administradores do servidor podem restaurar backup'; end if;
+  if coalesce((p_backup->>'telao_backup')::int, 0) <> 1 then raise exception 'Esse arquivo não é um backup do Telão'; end if;
+  if jsonb_typeof(p_backup->'channels') = 'array' and jsonb_array_length(p_backup->'channels') > 300 or jsonb_typeof(p_backup->'roles') = 'array' and jsonb_array_length(p_backup->'roles') > 150 then raise exception 'Backup grande demais'; end if;
+
+  -- limpa o que existe hoje
+  delete from channels where server_id = p_server;
+  delete from server_categories where server_id = p_server;
+  delete from server_roles where server_id = p_server;
+  delete from server_emojis where server_id = p_server;
+
+  -- configurações do servidor (sem dono, convite, endereço, tag e vitrine da comunidade)
+  if p_settings and p_backup ? 'server' then
+    select to_jsonb(s) into srvkeep from servers s where id = p_server;
+    update servers set
+      name = left(coalesce(nullif(p_backup->'server'->>'name', ''), name), 40),
+      description = case when p_backup->'server' ? 'description' then left(p_backup->'server'->>'description', 200) else description end,
+      icon_url = case when p_backup->'server' ? 'icon_url' then p_backup->'server'->>'icon_url' else icon_url end,
+      banner_url = case when p_backup->'server' ? 'banner_url' then p_backup->'server'->>'banner_url' else banner_url end,
+      icon_color = coalesce(nullif(p_backup->'server'->>'icon_color', ''), icon_color),
+      accent = case when (p_backup->'server'->>'accent') ~ '^#[0-9a-fA-F]{6}$' then p_backup->'server'->>'accent' else accent end,
+      nsfw = coalesce((p_backup->'server'->>'nsfw')::boolean, nsfw),
+      verify_level = least(greatest(coalesce((p_backup->'server'->>'verify_level')::int, verify_level), 0), 3)
+    where id = p_server;
+  end if;
+
+  -- cargos (quem não é o dono não cria cargo com Administrador/Gerenciar cargos)
+  for x in select * from jsonb_array_elements(case when jsonb_typeof(p_backup->'roles') = 'array' then p_backup->'roles' else '[]'::jsonb end) loop
+    insert into server_roles (server_id, name, color, position, perms, hoist)
+    values (p_server, left(coalesce(x->>'name', 'cargo'), 32), coalesce(x->>'color', '#99aab5'), coalesce((x->>'position')::int, 0),
+            case when owner_ then coalesce((x->>'perms')::int, 0) else coalesce((x->>'perms')::int, 0) & ~48 end, coalesce((x->>'hoist')::boolean, true))
+    returning id into nid;
+    rmap := rmap || jsonb_build_object(x->>'id', nid); n_role := n_role + 1;
+  end loop;
+
+  -- categorias
+  insert into server_categories (server_id, name, position)
+  select p_server, left(e->>'name', 40), coalesce((e->>'position')::int, 0) from jsonb_array_elements(case when jsonb_typeof(p_backup->'categories') = 'array' then p_backup->'categories' else '[]'::jsonb end) e
+  where coalesce(e->>'name', '') <> '' on conflict (server_id, name) do nothing;
+
+  -- canais: primeiro sem as regras (para as mensagens antigas entrarem), depois com tudo
+  for x in select * from jsonb_array_elements(case when jsonb_typeof(p_backup->'channels') = 'array' then p_backup->'channels' else '[]'::jsonb end) loop
+    if coalesce(x->>'kind', '') not in ('text', 'voice') then continue; end if;
+    select array_agg((rmap->>r)::uuid) into ar from jsonb_array_elements_text(case when jsonb_typeof(x->'allowed_roles') = 'array' then x->'allowed_roles' else '[]'::jsonb end) r where rmap ? r;
+    -- campos que faltarem (ex.: templates do Discord) ficam com o padrão
+    base := '{"position":0,"nsfw":false,"slowmode":0,"readonly":false,"user_limit":0,"bitrate":96,"video_quality":"auto","no_links":false,"no_media":false,"ptt_only":false,"no_camera":false,"no_screen":false,"stage":false}'::jsonb
+      || jsonb_strip_nulls(x - 'id' - 'allowed_roles') || jsonb_build_object('id', gen_random_uuid(), 'server_id', p_server, 'created_at', now(),
+      'slowmode', 0, 'readonly', false, 'no_links', false, 'no_media', false, 'allowed_roles', null, 'dm_a', null, 'dm_b', null, 'owner_id', null, 'dm_status', 'ok', 'dm_requester', null);
+    ch := jsonb_populate_record(null::channels, base);
+    ch.name := left(coalesce(ch.name, 'canal'), 40);
+    insert into channels select ch.*;
+    cmap := cmap || jsonb_build_object(x->>'id', ch.id); n_ch := n_ch + 1;
+    -- mensagens antigas: entram pela conta oficial, com o nome de quem escreveu (ninguém é imitado)
+    if p_messages and p_backup->'messages' ? (x->>'id') and exists (select 1 from profiles where id = bot) then
+      for m in select * from jsonb_array_elements(case when jsonb_typeof(p_backup->'messages'->(x->>'id')) = 'array' then p_backup->'messages'->(x->>'id') else '[]'::jsonb end) loop
+        insert into messages (channel_id, author_id, content, attachments, created_at)
+        values (ch.id, bot, left('**' || coalesce(m->>'author', 'alguém') || '** · ' || to_char(coalesce((m->>'at')::timestamptz, now()) at time zone 'America/Sao_Paulo', 'DD/MM/YYYY HH24:MI') || E'\n' || coalesce(m->>'content', ''), 4000),
+                coalesce(m->'attachments', '[]'), coalesce((m->>'at')::timestamptz, now()));
+        n_msg := n_msg + 1;
+      end loop;
+    end if;
+    update channels set slowmode = least(greatest(coalesce((x->>'slowmode')::int, 0), 0), 21600), readonly = coalesce((x->>'readonly')::boolean, false),
+      no_links = coalesce((x->>'no_links')::boolean, false), no_media = coalesce((x->>'no_media')::boolean, false),
+      allowed_roles = case when cardinality(ar) > 0 then ar else null end
+    where id = ch.id;
+  end loop;
+
+  -- emojis
+  for x in select * from jsonb_array_elements(case when jsonb_typeof(p_backup->'emojis') = 'array' then p_backup->'emojis' else '[]'::jsonb end) loop
+    begin
+      insert into server_emojis (server_id, name, url, animated) values (p_server, x->>'name', x->>'url', coalesce((x->>'animated')::boolean, false));
+      n_emo := n_emo + 1;
+    exception when others then null;   -- passou do limite do nível ou nome repetido
+    end;
+  end loop;
+  return jsonb_build_object('channels', n_ch, 'roles', n_role, 'emojis', n_emo, 'messages', n_msg);
+end $$;
+
+-- v6.14: preferências pessoais que viajam entre aparelhos (ordem e pastas dos servidores na barra)
+create table if not exists public.user_prefs (
+  user_id uuid primary key references public.profiles(id) on delete cascade,
+  rail jsonb not null default '[]' check (jsonb_typeof(rail) = 'array' and pg_column_size(rail) < 60000),
+  updated_at timestamptz not null default now()
+);
+alter table public.user_prefs enable row level security;
+drop policy if exists "prefs own read" on public.user_prefs;
+create policy "prefs own read" on public.user_prefs for select using (user_id = auth.uid());
+drop policy if exists "prefs own insert" on public.user_prefs;
+create policy "prefs own insert" on public.user_prefs for insert with check (user_id = auth.uid());
+drop policy if exists "prefs own update" on public.user_prefs;
+create policy "prefs own update" on public.user_prefs for update using (user_id = auth.uid()) with check (user_id = auth.uid());
+grant select, insert, update on public.user_prefs to authenticated;
+
 -- impede trocar campos sensíveis via update
 create or replace function public.guard_updates() returns trigger
 language plpgsql as $$

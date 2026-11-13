@@ -1,5 +1,5 @@
 // Telão — service worker (deixa o app instalável e abrindo rápido)
-const CACHE = 'telao-v613';
+const CACHE = 'telao-v614';
 const SHELL = ['/', '/index.html', '/style.css', '/app.js', '/rtc.js', '/icons.js', '/camfx.js', '/emoji.js', '/config.js', '/manifest.webmanifest',
                '/icons/icon-192.png', '/icons/icon-512.png', '/icons/icon.svg', '/icons/favicon.svg'];
 
@@ -12,7 +12,7 @@ self.addEventListener('activate', e => {
 // Rede primeiro (sempre a versão mais nova); cache só se estiver offline
 self.addEventListener('fetch', e => {
   const url = new URL(e.request.url);
-  if(e.request.method !== 'GET' || url.origin !== location.origin || url.pathname === '/version.json') return;
+  if(e.request.method !== 'GET' || url.origin !== location.origin || url.pathname === '/version.json' || url.pathname.startsWith('/api/')) return;
   e.respondWith(
     fetch(e.request).then(res => {
       if(res.ok){ const copy = res.clone(); caches.open(CACHE).then(c => c.put(e.request, copy)); }

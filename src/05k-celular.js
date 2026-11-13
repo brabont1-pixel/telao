@@ -67,7 +67,7 @@ document.addEventListener('touchend', e => {
 let lp = null;
 document.addEventListener('touchstart', e => {
   if(!touchDev || e.touches.length !== 1) return;
-  const el = e.target.closest('.msg, .mem, .vu, .ch[data-cid], .dmitem, .ricon[data-sid], .fr, [data-uprof]'); if(!el) return;
+  const el = e.target.closest('.msg, .mem, .vu, .ch[data-cid], .dmitem, .ricon[data-sid], .rfh, .fr, [data-uprof]'); if(!el) return;
   const t = e.touches[0];
   lp = { el, x: t.clientX, y: t.clientY, timer: setTimeout(() => {
     lp.fired = true;

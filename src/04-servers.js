@@ -106,7 +106,7 @@ function serverMenu(s, e){
   const r = $('#sbHead').getBoundingClientRect();
   const items = [{ label:'Impulsionar servidor', icon: BOOST_SVG(18), cls:'boostitem', onClick: () => boostServerModal(s) }, { label:'Convidar pessoas', icon: ic('userPlus',18), onClick: () => inviteModal(s) }, { label:'Estatísticas do servidor', icon: ic('poll',18), onClick: () => openSettings('server','stats', s) }];
   if(App.hasPerm(s.id, 2) || App.hasPerm(s.id, 16)) items.push({ label:'Configurações do servidor', icon: ic('gear',18), onClick: () => openSettings('server','overview', s) });
-  if(App.hasPerm(s.id, 1)) items.push({ label:'Criar canal', icon: ic('plusCircle',18), onClick: () => createChannelModal(s, 'text') }, { label:'Criar categoria', icon: ic('folder',18), onClick: () => createCategoryModal(s) });
+  if(App.hasPerm(s.id, 1)) items.push({ label:'Criar canal', icon: ic('plusCircle',18), onClick: () => createChannelModal(s, 'text') }, { label:'Criar categoria', icon: ic('folder',18), onClick: () => createCategoryModal(s) }, { label:'Ordenar canais e categorias', icon: ic('sliders',18), onClick: () => App.orderModal(s) });
   items.push('-');
   if(owner) items.push({ label:'Excluir servidor', danger:true, icon: ic('trash',18), onClick: () => deleteServer(s) });
   else items.push({ label:'Sair do servidor', danger:true, icon: ic('logout',18), onClick: () => leaveServer(s) });
@@ -117,11 +117,15 @@ function addServerModal(){
     <div class="mc">
       <button class="choice" id="chCreate"><span class="e">${ic('plus',26)}</span><div><b>Criar o meu</b><small>Do zero, do seu jeito</small></div>${ic('chevRight',20)}</button>
       <div class="tpls">${[['🎮','Jogos'],['👥','Amigos'],['📚','Estudos'],['🎬','Filmes']].map(([e,n]) => `<button class="tpl" data-tpl="${n}"><span>${e}</span>${n}</button>`).join('')}</div>
+      <button class="choice" id="chBackup"><span class="e">${ic('download',26)}</span><div><b>Criar a partir de um backup</b><small>Use um arquivo .json de backup do Telão</small></div>${ic('chevRight',20)}</button>
+      <button class="choice" id="chTplD"><span class="e">${ic('folder',26)}</span><div><b>Usar um template do Discord ou Xenon</b><small>Cole o link (discord.new ou xenon.bot/templates)</small></div>${ic('chevRight',20)}</button>
       <button class="choice" id="chJoin"><span class="e">${ic('link',26)}</span><div><b>Entrar com um convite</b><small>Tem um link ou código? Cole aqui</small></div>${ic('chevRight',20)}</button>
     </div>`, m => {
     m.querySelector('#chCreate').onclick = () => createServerModal();
     m.querySelectorAll('[data-tpl]').forEach(b => b.onclick = () => createServerModal(b.dataset.tpl));
     m.querySelector('#chJoin').onclick = () => joinServerModal();
+    m.querySelector('#chBackup').onclick = () => App.backupPick(bk => App.backupNewServer(bk));
+    m.querySelector('#chTplD').onclick = () => App.templateModal(null);
   });
 }
 const TEMPLATES = {

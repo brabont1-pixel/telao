@@ -81,6 +81,7 @@ function categoryMenu(s, el, x, y){
   const items = [
     { label: 'Criar canal de texto', icon: ic('hash', 18), onClick: () => createChannelModal(s, 'text', cat || '') },
     { label: 'Criar canal de voz', icon: ic('volume', 18), onClick: () => createChannelModal(s, 'voice', cat || '') },
+    { label: 'Ordenar canais e categorias', icon: ic('sliders', 18), onClick: () => orderModal(s) },
     '-',
     { label: cat ? 'Renomear categoria' : 'Dar nome (virar categoria)', icon: ic('edit', 18), onClick: () => renameCategoryModal(s, cat, kind, title) },
   ];
@@ -340,3 +341,59 @@ boostServerModal = async function(s){
     draw(m);
   });
 };
+
+/* ---------- tela "Ordenar canais e categorias" (setas, funciona no celular sem arrastar) ---------- */
+function orderModal(s){
+  let groups = currentGroups(s);
+  const real = () => groups.filter(g => g.cat);
+  const draw = m => {
+    const cats = real().map(g => g.cat);
+    const chRow = (c, g, i) => `<div class="ordrow ch2"><span class="ordic">${ic(c.kind === 'voice' ? 'volume' : 'hash', 15)}</span><span class="ordnm">${esc(c.name)}</span>
+      <select class="inp ordsel" data-mvch="${c.id}" aria-label="Categoria de ${esc(c.name)}"><option value="">Nenhuma</option>${cats.map(n => `<option value="${esc(n)}" ${g.cat === n ? 'selected' : ''}>${esc(n)}</option>`).join('')}</select>
+      <button class="ibtn sm" data-chup="${c.id}" ${i === 0 ? 'disabled' : ''} aria-label="Subir">${ic('chevDown', 15).replace('<svg', '<svg style="transform:rotate(180deg)"')}</button>
+      <button class="ibtn sm" data-chdn="${c.id}" ${i === g.chs.length - 1 ? 'disabled' : ''} aria-label="Descer">${ic('chevDown', 15)}</button></div>`;
+    const ri = g => real().indexOf(g);
+    m.querySelector('#ordList').innerHTML = groups.filter(g => g.cat || g.chs.length).map(g => `
+      <div class="ordgrp ${g.cat ? '' : 'auto'}">
+        <div class="ordrow cat2"><span class="ordnm"><b>${esc(g.title)}</b>${g.cat ? '' : '<small>sem categoria · fica sempre no topo</small>'}</span>
+          ${g.cat ? `<button class="ibtn sm" data-catup="${esc(g.cat)}" ${ri(g) === 0 ? 'disabled' : ''} aria-label="Subir categoria">${ic('chevDown', 16).replace('<svg', '<svg style="transform:rotate(180deg)"')}</button>
+          <button class="ibtn sm" data-catdn="${esc(g.cat)}" ${ri(g) === real().length - 1 ? 'disabled' : ''} aria-label="Descer categoria">${ic('chevDown', 16)}</button>` : ''}</div>
+        ${g.chs.length ? g.chs.map((c, i) => chRow(c, g, i)).join('') : '<div class="ordempty">Nenhum canal</div>'}
+      </div>`).join('');
+    const findG = id => groups.find(g => g.chs.some(c => c.id === id));
+    m.querySelectorAll('[data-catup],[data-catdn]').forEach(b => b.onclick = () => {
+      const name = b.dataset.catup || b.dataset.catdn, dir = b.dataset.catup ? -1 : 1;
+      const rs = real(), i = rs.findIndex(g => g.cat === name), j = i + dir; if(j < 0 || j >= rs.length) return;
+      const gi = groups.indexOf(rs[i]), gj = groups.indexOf(rs[j]); [groups[gi], groups[gj]] = [groups[gj], groups[gi]]; draw(m);
+    });
+    m.querySelectorAll('[data-chup],[data-chdn]').forEach(b => b.onclick = () => {
+      const id = b.dataset.chup || b.dataset.chdn, dir = b.dataset.chup ? -1 : 1, g = findG(id);
+      const i = g.chs.findIndex(c => c.id === id), j = i + dir; if(j < 0 || j >= g.chs.length) return;
+      [g.chs[i], g.chs[j]] = [g.chs[j], g.chs[i]]; draw(m);
+    });
+    m.querySelectorAll('[data-mvch]').forEach(sel => sel.onchange = () => {
+      const id = sel.dataset.mvch, from = findG(id), c = from.chs.find(x => x.id === id);
+      from.chs = from.chs.filter(x => x.id !== id);
+      let to = sel.value ? groups.find(g => g.cat === sel.value) : groups.find(g => !g.cat && g.kind === c.kind);
+      if(!to){ to = { title: c.kind === 'voice' ? 'Canais de voz' : 'Canais de texto', cat: null, kind: c.kind, chs: [] }; groups.splice(c.kind === 'voice' ? (groups[0] && !groups[0].cat ? 1 : 0) : 0, 0, to); }
+      to.chs.push(c); draw(m);
+    });
+  };
+  modal(`<div class="mh"><h2>Ordenar canais e categorias</h2><p>Use as setas para mudar a ordem e o seletor para trocar o canal de categoria. No computador também dá para arrastar direto na lista de canais.</p></div>
+    <div class="mc"><div id="ordList" class="ordlist"></div><div class="err" id="ordE"></div></div>
+    <div class="mf"><button class="btn sec" data-close>Cancelar</button><button class="btn" id="ordGo">Salvar ordem</button></div>`, m => {
+    draw(m);
+    m.querySelector('#ordGo').onclick = async () => {
+      const btn = m.querySelector('#ordGo'); btn.disabled = true; btn.textContent = 'Salvando…';
+      const ids = [], cats = [];
+      groups.forEach(g => g.chs.forEach(c => { ids.push(c.id); cats.push(g.cat || ''); }));
+      const names = real().map(g => g.cat);
+      let error = null;
+      if(names.length){ const r = await App.sb.rpc('layout_save', { p_server: s.id, p_cats: names, p_channels: null, p_channel_cats: null }); error = r.error; }
+      if(!error) error = await persistLayout(s.id, ids, cats);
+      if(error){ m.querySelector('#ordE').textContent = errMsg(error); btn.disabled = false; btn.textContent = 'Salvar ordem'; return; }
+      closeModal(); await loadChannels(s.id); renderSidebar(); App.toast('Ordem salva');
+    };
+  });
+}
+App.orderModal = orderModal;

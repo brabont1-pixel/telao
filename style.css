@@ -1672,3 +1672,57 @@ html.touch .wkeys{display:none}
 @media (max-width:760px){ .modal{padding-top:calc(16px + env(safe-area-inset-top))} }
 #menuShade{position:fixed;inset:0;z-index:59;background:rgba(5,5,10,.5);animation:fade .15s}
 #menuShade.hidden{display:none}
+
+/* ===== v6.14: ordenar canais e categorias ===== */
+.ordlist{display:flex;flex-direction:column;gap:10px;max-height:58vh;overflow-y:auto;margin:0 -4px;padding:0 4px}
+.ordgrp{border:1px solid var(--line);border-radius:12px;background:var(--bg1);padding:4px}
+.ordgrp.auto{border-style:dashed}
+.ordrow{display:flex;align-items:center;gap:6px;padding:6px 8px;border-radius:8px}
+.ordrow.cat2{background:rgba(255,255,255,.03)}
+.ordrow.cat2 .ordnm b{font-size:12px;text-transform:uppercase;letter-spacing:.05em;color:var(--txt)}
+.ordrow.cat2 .ordnm small{display:block;font-size:11px;color:var(--mut);text-transform:none;letter-spacing:0}
+.ordrow.ch2{padding-left:14px}
+.ordic{color:var(--mut);display:flex}
+.ordnm{flex:1;min-width:0;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;color:var(--txt2);font-size:14px}
+.ordsel{width:auto;max-width:140px;padding:4px 6px;font-size:12px;height:30px}
+.ordrow .ibtn.sm{width:30px;height:30px;border-radius:8px}
+.ordrow .ibtn:disabled{opacity:.25;cursor:default}
+.ordempty{padding:6px 14px 8px;font-size:12px;color:var(--mut)}
+
+/* ===== v6.14: backup do servidor ===== */
+.bkcard{background:var(--bg1);border:1px solid var(--line);border-radius:12px;padding:16px 18px;margin:12px 0}
+.bkcard h3{display:flex;align-items:center;gap:8px;margin:0 0 2px;font-size:15px;color:var(--txt)}
+.bkcard>p{margin:0 0 10px}
+.bkacts{display:flex;flex-wrap:wrap;gap:8px}
+.bkbox{display:flex;gap:10px;align-items:flex-start;padding:10px 12px;border-radius:10px;background:var(--accs);color:var(--txt2);font-size:13px;margin-bottom:12px}
+.bkbox .ico{color:var(--acc);flex:none;margin-top:1px}
+/* v6.14: pastas e ordem dos servidores na barra */
+.rfold{display:flex;flex-direction:column;align-items:center;gap:8px;border-radius:14px;flex:none}
+.rfold.open{background:color-mix(in srgb,var(--fc) 16%,transparent);padding:0 0 8px;box-shadow:inset 0 0 0 1px color-mix(in srgb,var(--fc) 35%,transparent)}
+.rfh{background:color-mix(in srgb,var(--fc) 22%,var(--panel));border-color:color-mix(in srgb,var(--fc) 40%,transparent)}
+.rfold.open .rfh{background:transparent;border-color:transparent;color:var(--fc);box-shadow:none}
+.rminis{display:grid;grid-template-columns:1fr 1fr;gap:3px;width:36px;height:36px}
+.rminis.n1{grid-template-columns:1fr}
+.rmini{display:flex;align-items:center;justify-content:center;border-radius:5px;background:var(--sc);color:#fff;font-size:7px;font-weight:800;overflow:hidden;min-width:0;min-height:0;line-height:1}
+.rminis.n1 .rmini{font-size:13px;border-radius:8px}
+.rmini img{width:100%;height:100%;object-fit:cover;border-radius:inherit}
+.rmini.big{width:28px;height:28px;font-size:10px;border-radius:8px;flex:none}
+#railGhost{position:fixed;z-index:9999;pointer-events:none;opacity:.85;transform:scale(1.05);box-shadow:0 10px 30px rgba(0,0,0,.5)}
+#railLine{position:fixed;z-index:9998;height:3px;border-radius:3px;background:var(--acc);pointer-events:none;display:none}
+.ricon.rdragging{opacity:.35}
+.ricon.rdrop{box-shadow:0 0 0 3px var(--acc)!important;transform:scale(1.08)}
+.pfcolors{display:flex;gap:8px;flex-wrap:wrap;margin-top:6px}
+.pfc{width:30px;height:30px;border-radius:50%;border:2px solid transparent}
+.pfc.on{border-color:#fff;box-shadow:0 0 0 2px var(--acc)}
+.ordrow.in{padding-left:28px}
+.ordgrp{border-left:3px solid var(--fc)}
+.ordrow .ordfn{flex:1;min-width:0;padding:6px 8px;font-weight:700}
+.ordrow.fold{gap:6px}.ordrow.fold .ico{color:var(--fc)}
+/* v6.14: templates do Discord/Xenon */
+.tpin{display:flex;gap:8px}.tpin .inp{flex:1;min-width:0}
+.tpprev{margin-top:12px}
+.tphead{margin-bottom:10px}.tphead small{color:var(--txt3);margin-left:8px}.tphead p{margin:4px 0 0;color:var(--txt2);font-size:13px}
+.tplist{max-height:220px;overflow:auto;border:1px solid var(--line);border-radius:10px;padding:6px 10px;margin-bottom:10px}
+.tpcat{font-size:11px;font-weight:800;text-transform:uppercase;letter-spacing:.04em;color:var(--txt3);margin:8px 0 2px}
+.tpch{display:flex;align-items:center;gap:6px;padding:3px 0;font-size:13px;color:var(--txt2)}.tpch .ico{flex:none;color:var(--txt3)}
+.tproles{margin-bottom:8px}
