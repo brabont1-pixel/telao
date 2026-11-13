@@ -1010,7 +1010,7 @@ begin
   mod := c.server_id is not null and (public.has_perm(c.server_id, 1) or public.has_perm(c.server_id, 8));
   -- anti-spam para todo mundo: no máximo 8 mensagens em 10 segundos
   select count(*) into recent from messages where author_id = new.author_id and created_at > now() - interval '10 seconds';
-  if recent >= 8 then raise exception 'Calma! Você está mandando mensagens rápido demais.'; end if;
+  if recent >= 8 and new.author_id <> '7e1a0000-0000-4000-a000-000000000001'::uuid then raise exception 'Calma! Você está mandando mensagens rápido demais.'; end if;
   perform public.check_custom_emojis(new.content, new.channel_id, new.author_id);
   if c.server_id is null or mod then return new; end if;
   -- nível de verificação do servidor
@@ -1655,6 +1655,180 @@ begin
     played = game_scores.played + 1, last_at = now();
 end $$;
 
+
+-- =====================================================================
+-- v6.10: FECHAR CONVERSA (sem apagar) e AVISOS PELA CONTA OFICIAL
+-- =====================================================================
+-- cada pessoa pode tirar uma DM/grupo da lista; volta sozinha quando chega mensagem nova
+create table if not exists public.dm_closed (
+  user_id uuid not null default auth.uid() references public.profiles(id) on delete cascade,
+  channel_id uuid not null references public.channels(id) on delete cascade,
+  closed_at timestamptz not null default now(),
+  primary key (user_id, channel_id)
+);
+alter table public.dm_closed enable row level security;
+drop policy if exists "minhas conversas fechadas" on public.dm_closed;
+create policy "minhas conversas fechadas" on public.dm_closed for all to authenticated
+  using (user_id = auth.uid()) with check (user_id = auth.uid() and public.can_view_channel(channel_id));
+create or replace function public.reopen_dm() returns trigger
+language plpgsql security definer set search_path = public as $$
+begin
+  delete from dm_closed where channel_id = new.channel_id;
+  return new;
+end $$;
+drop trigger if exists reopen_dm on public.messages;
+create trigger reopen_dm after insert on public.messages for each row execute function public.reopen_dm();
+
+-- aviso do dono do Telão: chega na DM da conta oficial de todo mundo
+create or replace function public.admin_broadcast(p_title text, p_body text default null, p_link text default null) returns int
+language plpgsql security definer set search_path = public as $$
+declare bot uuid := public.telao_bot(); r record; cid uuid; n int := 0;
+begin
+  if not public.is_admin_user() and coalesce(current_setting('request.jwt.claims', true), '') <> '' then raise exception 'Só o dono do Telão pode mandar avisos'; end if;
+  if not exists (select 1 from profiles where id = bot) then raise exception 'A conta oficial do Telão ainda não existe (rode o supabase.sql)'; end if;
+  if coalesce(trim(p_title), '') = '' then raise exception 'Escreva um título'; end if;
+  for r in select id from profiles where id <> bot loop
+    select id into cid from channels where kind = 'dm' and dm_a = least(bot, r.id) and dm_b = greatest(bot, r.id);
+    if cid is null then
+      insert into channels (name, kind, dm_a, dm_b, dm_status) values ('dm', 'dm', least(bot, r.id), greatest(bot, r.id), 'ok') returning id into cid;
+    end if;
+    insert into messages (channel_id, author_id, content, attachments)
+    values (cid, bot, left(trim(p_title), 300), jsonb_build_array(jsonb_build_object('type', 'announce', 'title', left(trim(p_title), 120), 'body', left(p_body, 3500), 'link', nullif(trim(coalesce(p_link, '')), ''))));
+    n := n + 1;
+  end loop;
+  return n;
+end $$;
+
+
+-- ---------- impulsos ilimitados para o dono do Telão ----------
+alter table public.server_boosts drop constraint if exists server_boosts_slot_check;
+alter table public.server_boosts add constraint server_boosts_slot_check check (slot between 1 and 999);
+create or replace function public.boost_server(p_server uuid, p_slot int) returns void
+language plpgsql security definer set search_path = public as $$
+declare old_row server_boosts; adm boolean := public.is_admin_user(); maxs int;
+begin
+  if not public.has_plus(auth.uid()) then raise exception 'Impulsos são do Telão+'; end if;
+  maxs := 3; if adm then maxs := 999; end if;
+  if p_slot < 1 or p_slot > maxs then raise exception 'Impulso inválido'; end if;
+  if not public.is_member(p_server) then raise exception 'Você não está nesse servidor'; end if;
+  select * into old_row from server_boosts where user_id = auth.uid() and slot = p_slot;
+  if found then
+    if old_row.server_id = p_server then return; end if;
+    if old_row.created_at > now() - interval '7 days' and not adm then
+      raise exception 'Esse impulso só pode ser trocado em %', to_char(old_row.created_at + interval '7 days', 'DD/MM "às" HH24:MI');
+    end if;
+    update server_boosts set server_id = p_server, created_at = now() where user_id = auth.uid() and slot = p_slot;
+  else
+    insert into server_boosts (user_id, slot, server_id) values (auth.uid(), p_slot, p_server);
+  end if;
+end $$;
+create or replace function public.unboost_server(p_slot int) returns void
+language plpgsql security definer set search_path = public as $$
+declare c timestamptz;
+begin
+  select created_at into c from server_boosts where user_id = auth.uid() and slot = p_slot;
+  if c is null then return; end if;
+  if c > now() - interval '7 days' and not public.is_admin_user() then
+    raise exception 'Esse impulso só pode ser retirado em %', to_char(c + interval '7 days', 'DD/MM "às" HH24:MI');
+  end if;
+  delete from server_boosts where user_id = auth.uid() and slot = p_slot;
+end $$;
+-- dono do Telão: põe ou tira vários impulsos de uma vez num servidor
+create or replace function public.admin_boost(p_server uuid, p_delta int) returns int
+language plpgsql security definer set search_path = public as $$
+declare i int; s int;
+begin
+  if not public.is_admin_user() then raise exception 'Só o dono do Telão'; end if;
+  if not public.is_member(p_server) then raise exception 'Você não está nesse servidor'; end if;
+  if p_delta > 0 then
+    for i in 1..least(p_delta, 50) loop
+      select min(g) into s from generate_series(1, 999) g where not exists (select 1 from server_boosts b where b.user_id = auth.uid() and b.slot = g);
+      if s is null then exit; end if;
+      insert into server_boosts (user_id, slot, server_id) values (auth.uid(), s, p_server);
+    end loop;
+  elsif p_delta < 0 then
+    delete from server_boosts where (user_id, slot) in (
+      select user_id, slot from server_boosts where user_id = auth.uid() and server_id = p_server order by slot desc limit -p_delta);
+  end if;
+  return (select count(*) from server_boosts where user_id = auth.uid() and server_id = p_server);
+end $$;
+
+-- ---------- categorias de verdade (criar vazia, renomear, reordenar, excluir) ----------
+create table if not exists public.server_categories (
+  id uuid primary key default gen_random_uuid(),
+  server_id uuid not null references public.servers(id) on delete cascade,
+  name text not null check (char_length(name) between 1 and 40),
+  position int not null default 0,
+  created_at timestamptz not null default now(),
+  unique (server_id, name)
+);
+alter table public.server_categories enable row level security;
+drop policy if exists "ver categorias" on public.server_categories;
+create policy "ver categorias" on public.server_categories for select to authenticated using (public.is_member(server_id));
+-- as categorias que já existiam (no nome dos canais) viram categorias de verdade
+insert into public.server_categories (server_id, name, position)
+select server_id, category, (row_number() over (partition by server_id order by min(position)))::int
+from public.channels where server_id is not null and category is not null group by server_id, category
+on conflict (server_id, name) do nothing;
+
+create or replace function public.category_save(p_server uuid, p_old text, p_new text, p_kind text default null) returns void
+language plpgsql security definer set search_path = public as $$
+declare nn text := left(trim(coalesce(p_new, '')), 40); pos int;
+begin
+  if not public.has_perm(p_server, 1) then raise exception 'Você não pode gerenciar canais'; end if;
+  if nn = '' then raise exception 'Dê um nome para a categoria'; end if;
+  if p_old is distinct from nn and exists (select 1 from server_categories where server_id = p_server and lower(name) = lower(nn)) then raise exception 'Já existe uma categoria com esse nome'; end if;
+  if p_old is null then
+    select coalesce(max(position), 0) + 1 into pos from server_categories where server_id = p_server;
+    insert into server_categories (server_id, name, position) values (p_server, nn, pos);
+    -- renomear o grupo automático ("Canais de texto"/"Canais de voz") transforma ele em categoria
+    if p_kind in ('text','voice') then update channels set category = nn where server_id = p_server and category is null and kind = p_kind; end if;
+  else
+    update server_categories set name = nn where server_id = p_server and name = p_old;
+    if not found then insert into server_categories (server_id, name, position) values (p_server, nn, 0); end if;
+    update channels set category = nn where server_id = p_server and category = p_old;
+  end if;
+end $$;
+create or replace function public.category_delete(p_server uuid, p_name text, p_delete_channels boolean default false) returns void
+language plpgsql security definer set search_path = public as $$
+begin
+  if not public.has_perm(p_server, 1) then raise exception 'Você não pode gerenciar canais'; end if;
+  if p_delete_channels then delete from channels where server_id = p_server and category = p_name;
+  else update channels set category = null where server_id = p_server and category = p_name; end if;
+  delete from server_categories where server_id = p_server and name = p_name;
+end $$;
+-- nova ordem das categorias e dos canais (arrastar e soltar)
+create or replace function public.layout_save(p_server uuid, p_cats text[], p_channels uuid[], p_channel_cats text[]) returns void
+language plpgsql security definer set search_path = public as $$
+declare i int;
+begin
+  if not public.has_perm(p_server, 1) then raise exception 'Você não pode gerenciar canais'; end if;
+  if p_cats is not null then
+    for i in 1..coalesce(array_length(p_cats, 1), 0) loop
+      update server_categories set position = i where server_id = p_server and name = p_cats[i];
+    end loop;
+  end if;
+  if p_channels is not null then
+    for i in 1..coalesce(array_length(p_channels, 1), 0) loop
+      update channels set position = i, category = nullif(p_channel_cats[i], '') where id = p_channels[i] and server_id = p_server;
+    end loop;
+  end if;
+end $$;
+-- duplicar canal (com todas as configurações, sem as mensagens)
+create or replace function public.channel_duplicate(p_channel uuid) returns uuid
+language plpgsql security definer set search_path = public as $$
+declare c channels; nid uuid;
+begin
+  select * into c from channels where id = p_channel;
+  if c.server_id is null or not public.has_perm(c.server_id, 1) then raise exception 'Você não pode gerenciar canais'; end if;
+  insert into channels (server_id, name, kind, position, category, topic, nsfw, slowmode, readonly, allowed_roles, user_limit, bitrate, video_quality,
+                        no_links, no_media, ptt_only, no_camera, no_screen, stage, stage_topic)
+  values (c.server_id, left(c.name || case when c.kind = 'text' then '-copia' else ' (cópia)' end, 40), c.kind, c.position, c.category, c.topic, c.nsfw, c.slowmode, c.readonly,
+          c.allowed_roles, c.user_limit, c.bitrate, c.video_quality, c.no_links, c.no_media, c.ptt_only, c.no_camera, c.no_screen, c.stage, c.stage_topic)
+  returning id into nid;
+  return nid;
+end $$;
+
 -- impede trocar campos sensíveis via update
 create or replace function public.guard_updates() returns trigger
 language plpgsql as $$
@@ -1732,6 +1906,8 @@ begin
   begin alter publication supabase_realtime add table public.voice_music; exception when others then null; end;
   begin alter publication supabase_realtime add table public.group_members; exception when others then null; end;
   begin alter publication supabase_realtime add table public.stage_queue; exception when others then null; end;
+  begin alter publication supabase_realtime add table public.dm_closed; exception when others then null; end;
+  begin alter publication supabase_realtime add table public.server_categories; exception when others then null; end;
 end $$;
 
 -- ---------- Arquivos (avatar, banner, GIF) ----------

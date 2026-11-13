@@ -276,8 +276,8 @@ App.onReaction = p => {
 /* ---------- renderização ---------- */
 function attHtml(m){
   const at = m.attachments || []; if(!at.length) return '';
-  const imgs = at.filter(a => isImg(a) || isVid(a)), others = at.filter(a => !isImg(a) && !isVid(a) && a.type !== 'poll' && a.type !== 'gift' && a.type !== 'welcome');
-  let h = at.filter(a => a.type === 'welcome').map(a => App.welcomeCardHtml ? App.welcomeCardHtml(a) : '').join('') + at.filter(a => a.type === 'poll').map(a => pollHtml(m, a)).join('') + at.filter(a => a.type === 'gift').map(a => App.giftCardHtml(a)).join('');
+  const imgs = at.filter(a => isImg(a) || isVid(a)), others = at.filter(a => !isImg(a) && !isVid(a) && a.type !== 'poll' && a.type !== 'gift' && a.type !== 'welcome' && a.type !== 'announce');
+  let h = at.filter(a => a.type === 'welcome').map(a => App.welcomeCardHtml ? App.welcomeCardHtml(a) : '').join('') + at.filter(a => a.type === 'announce').map(a => App.announceCardHtml ? App.announceCardHtml(a) : '').join('') + at.filter(a => a.type === 'poll').map(a => pollHtml(m, a)).join('') + at.filter(a => a.type === 'gift').map(a => App.giftCardHtml(a)).join('');
   if(imgs.length){
     const n = Math.min(imgs.length, 4);
     h += `<div class="mgrid g${n}">` + imgs.map((a, i) => {
@@ -333,8 +333,8 @@ function msgHtml(m, prev){
   const meta = `<span class="mtime" title="${new Date(m.created_at).toLocaleString('pt-BR')}">${m.edited_at ? '<span class="edited">editado</span> · ' : ''}${m._sending ? ic('clock',11) : time}${m.pinned ? ' ' + ic('pin',11) : ''}</span>`;
   const content = M.editing === m.id
     ? `<textarea class="editbox" id="edBox" rows="2" maxlength="4000">${esc(m.content)}</textarea><div class="edithint">Esc para <a data-edcancel>cancelar</a> · Enter para <a data-edsave>salvar</a></div>`
-    : (m.content && !(m.attachments || []).some(a => a.type === 'welcome') ? `<div class="ct ${emo?'jumbo':''}">${richText(m.content)}</div>` : '');
-  const bub = `<div class="bub ${emo?'emo':''} ${onlyMedia || (m.attachments || []).some(a => a.type === 'welcome')?'media':''}">${content}${atts}${emb}${meta}</div>`;
+    : (m.content && !(m.attachments || []).some(a => a.type === 'welcome' || a.type === 'announce') ? `<div class="ct ${emo?'jumbo':''}">${richText(m.content)}</div>` : '');
+  const bub = `<div class="bub ${emo?'emo':''} ${onlyMedia || (m.attachments || []).some(a => a.type === 'welcome' || a.type === 'announce')?'media':''}">${content}${atts}${emb}${meta}</div>`;
   const tools = m._sending ? '' : `<div class="acts">
       ${EMOJI.QUICK.slice(0,3).map(e => `<button data-quick="${e}" data-mid="${m.id}" title="Reagir">${e}</button>`).join('')}
       <button data-addrx="${m.id}" title="Adicionar reação">${ic('smilePlus',17)}</button>

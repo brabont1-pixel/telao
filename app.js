@@ -9,7 +9,7 @@ const esc = s => String(s ?? '').replace(/[&<>"']/g, c => ({'&':'&amp;','<':'&lt
 const COLORS = ['#5865f2','#eb459e','#3ba55c','#faa61a','#ed4245','#f47b67','#1abc9c','#9b59b6','#e67e22','#607d8b'];
 const ls = { get(k,d){ try{ const v=localStorage.getItem(k); return v==null?d:JSON.parse(v); }catch(e){ return d; } }, set(k,v){ try{ localStorage.setItem(k, JSON.stringify(v)); }catch(e){} } };
 
-const APP_VERSION = '6.9';
+const APP_VERSION = '6.10';
 const S = {
   me: null, profiles: new Map(), servers: [], channels: new Map(), members: new Map(),
   friends: [], dms: [], dmActivity: ls.get('telao-dmact', {}), online: new Set(),
@@ -728,12 +728,11 @@ function renderSidebar(){
   head.onclick = e => serverMenu(s, e);
   const list = (S.channels.get(s.id) || []).slice().sort((a,b) => a.position - b.position);
   // agrupa por categoria (ou Texto/Voz)
-  const groups = new Map();
-  list.forEach(c => { const g = c.category || (c.kind === 'text' ? 'Canais de texto' : 'Canais de voz'); if(!groups.has(g)) groups.set(g, []); groups.get(g).push(c); });
   let h = s.description ? `<div class="srvdesc">${esc(s.description)}</div>` : '';
-  groups.forEach((chs, g) => {
+  channelGroups(s, list).forEach(({ title: g, cat, kind, chs }) => {
     const key = s.id + ':' + g, col = COLLAPSED.has(key);
-    h += `<div class="cat ${col?'col':''}" data-cat="${esc(key)}"><span>${ic('chevDown',12)} ${esc(g)}</span>${canCh?`<button data-new="${chs[0].kind}" data-newcat="${esc(chs[0].category||'')}" data-tip="Criar canal">${ic('plus',16)}</button>`:''}</div>`;
+    h += `<div class="cat ${col?'col':''} ${cat ? 'real' : ''}" data-cat="${esc(key)}" data-catname="${esc(cat || '')}" data-catkind="${kind || ''}"><span>${ic('chevDown',12)} ${esc(g)}</span>${canCh?`<span class="catb"><button data-catmenu data-tip="Opções da categoria">${ic('dots',16)}</button><button data-new="${chs[0] ? chs[0].kind : (kind || 'text')}" data-newcat="${esc(cat || '')}" data-tip="Criar canal">${ic('plus',16)}</button></span>`:''}</div>`;
+    if(!chs.length && canCh && !col) h += `<div class="catempty" data-dropcat="${esc(cat || '')}">Nenhum canal. Arraste um canal para cá ou clique no +.</div>`;
     chs.forEach(c => {
       const on = S.route.cid === c.id, un = S.unread.has(c.id);
       if(col && !on && !un && !(c.kind === 'voice' && voiceUsers(c).length)) return;
@@ -756,7 +755,7 @@ function renderSidebar(){
     if(c.kind === 'voice' && !(Voice.channel && Voice.channel.id === c.id)) joinVoice(c);
   });
   body.querySelectorAll('[data-cat]').forEach(el => el.onclick = e => {
-    if(e.target.closest('[data-new]')) return;
+    if(e.target.closest('[data-new]') || e.target.closest('[data-catmenu]')) return;
     const k = el.dataset.cat; COLLAPSED.has(k) ? COLLAPSED.delete(k) : COLLAPSED.add(k); ls.set('telao-collapsed', [...COLLAPSED]); renderSidebar();
   });
   body.querySelectorAll('[data-new]').forEach(b => b.onclick = () => createChannelModal(s, b.dataset.new, b.dataset.newcat));
@@ -1305,8 +1304,8 @@ App.onReaction = p => {
 /* ---------- renderização ---------- */
 function attHtml(m){
   const at = m.attachments || []; if(!at.length) return '';
-  const imgs = at.filter(a => isImg(a) || isVid(a)), others = at.filter(a => !isImg(a) && !isVid(a) && a.type !== 'poll' && a.type !== 'gift' && a.type !== 'welcome');
-  let h = at.filter(a => a.type === 'welcome').map(a => App.welcomeCardHtml ? App.welcomeCardHtml(a) : '').join('') + at.filter(a => a.type === 'poll').map(a => pollHtml(m, a)).join('') + at.filter(a => a.type === 'gift').map(a => App.giftCardHtml(a)).join('');
+  const imgs = at.filter(a => isImg(a) || isVid(a)), others = at.filter(a => !isImg(a) && !isVid(a) && a.type !== 'poll' && a.type !== 'gift' && a.type !== 'welcome' && a.type !== 'announce');
+  let h = at.filter(a => a.type === 'welcome').map(a => App.welcomeCardHtml ? App.welcomeCardHtml(a) : '').join('') + at.filter(a => a.type === 'announce').map(a => App.announceCardHtml ? App.announceCardHtml(a) : '').join('') + at.filter(a => a.type === 'poll').map(a => pollHtml(m, a)).join('') + at.filter(a => a.type === 'gift').map(a => App.giftCardHtml(a)).join('');
   if(imgs.length){
     const n = Math.min(imgs.length, 4);
     h += `<div class="mgrid g${n}">` + imgs.map((a, i) => {
@@ -1362,8 +1361,8 @@ function msgHtml(m, prev){
   const meta = `<span class="mtime" title="${new Date(m.created_at).toLocaleString('pt-BR')}">${m.edited_at ? '<span class="edited">editado</span> · ' : ''}${m._sending ? ic('clock',11) : time}${m.pinned ? ' ' + ic('pin',11) : ''}</span>`;
   const content = M.editing === m.id
     ? `<textarea class="editbox" id="edBox" rows="2" maxlength="4000">${esc(m.content)}</textarea><div class="edithint">Esc para <a data-edcancel>cancelar</a> · Enter para <a data-edsave>salvar</a></div>`
-    : (m.content && !(m.attachments || []).some(a => a.type === 'welcome') ? `<div class="ct ${emo?'jumbo':''}">${richText(m.content)}</div>` : '');
-  const bub = `<div class="bub ${emo?'emo':''} ${onlyMedia || (m.attachments || []).some(a => a.type === 'welcome')?'media':''}">${content}${atts}${emb}${meta}</div>`;
+    : (m.content && !(m.attachments || []).some(a => a.type === 'welcome' || a.type === 'announce') ? `<div class="ct ${emo?'jumbo':''}">${richText(m.content)}</div>` : '');
+  const bub = `<div class="bub ${emo?'emo':''} ${onlyMedia || (m.attachments || []).some(a => a.type === 'welcome' || a.type === 'announce')?'media':''}">${content}${atts}${emb}${meta}</div>`;
   const tools = m._sending ? '' : `<div class="acts">
       ${EMOJI.QUICK.slice(0,3).map(e => `<button data-quick="${e}" data-mid="${m.id}" title="Reagir">${e}</button>`).join('')}
       <button data-addrx="${m.id}" title="Adicionar reação">${ic('smilePlus',17)}</button>
@@ -4308,8 +4307,9 @@ document.addEventListener('contextmenu', e => { const row = e.target.closest('.v
 const A11Y_DEF = { a11yMotion:false, a11yContrast:false, a11yFont:false, a11yLinks:false, a11yBig:false, a11ySat:100, a11yTTS:false, a11yCaps:false, a11yCapsShow:true, a11yFocus:true, a11yAltWarn:false };
 Object.keys(A11Y_DEF).forEach(k => { if(P[k] === undefined) P[k] = A11Y_DEF[k]; });
 function applyA11y(){
-  const b = document.body.classList, sysMotion = matchMedia('(prefers-reduced-motion: reduce)').matches;
-  b.toggle('a11y-motion', !!P.a11yMotion || sysMotion);
+  // os efeitos só somem pelas configurações do próprio Telão (Acessibilidade ou Desempenho), nunca pela do Windows
+  const b = document.body.classList;
+  b.toggle('a11y-motion', !!P.a11yMotion);
   b.toggle('a11y-contrast', !!P.a11yContrast);
   b.toggle('a11y-links', !!P.a11yLinks);
   b.toggle('a11y-big', !!P.a11yBig);
@@ -4406,7 +4406,7 @@ function secA11y(box, back){
     <div class="srow"><div class="t"><b>Saturação das cores · <span id="aSatL">${P.a11ySat}%</span></b><small>Diminua se as cores incomodam; 0% deixa tudo em tons de cinza.</small></div></div>
     <input type="range" class="range" id="aSat" min="0" max="100" step="5" value="${P.a11ySat}">
     <hr class="sdiv"><h3>Movimento</h3>
-    ${row('Reduzir animações', 'Desliga partículas, brilhos e transições. Também segue a configuração do seu sistema.', toggle('aMot', P.a11yMotion))}
+    ${row('Reduzir animações', 'Desliga partículas, brilhos e transições. Só muda aqui no Telão (a configuração de animações do Windows não desliga os efeitos).', toggle('aMot', P.a11yMotion))}
     <hr class="sdiv"><h3>Leitura e audição</h3>
     ${row('Ler mensagens novas em voz alta', 'Lê as mensagens que chegam na conversa aberta.', toggle('aTTS', P.a11yTTS))}
     <div class="srow"><div class="t"><b>Velocidade da leitura · <span id="aRateL">${(P.ttsRate || 1).toFixed(1)}×</span></b></div><button class="btn sec sm" id="aTest">Testar</button></div>
@@ -5768,20 +5768,25 @@ async function noticesPanel(){
   if(data){ S.me = data; S.profiles.set(data.id, data); } updateBellDot();
 }
 function noticeForm(){
-  modal(`<form id="nF"><div class="mh"><h2>Publicar para todo o Telão</h2><p>Aparece em Novidades para todas as contas, inclusive quem entrar depois.</p></div>
+  modal(`<form id="nF"><div class="mh"><h2>Aviso para todo o Telão</h2><p>Escolha onde ele aparece: em Novidades, na DM da conta oficial, ou nos dois.</p></div>
     <div class="mc"><label class="field"><span>Tipo</span><select class="inp" id="nK"><option value="announce">Anúncio</option><option value="update">Atualização (o que mudou)</option><option value="event">Evento</option></select></label>
       <label class="field"><span>Título</span><input class="inp" id="nT" maxlength="120" required placeholder="Chegou a versão 6.5"></label>
       <label class="field"><span>Texto</span><textarea class="inp" id="nB" rows="6" maxlength="4000" placeholder="- Solicitações de mensagem&#10;- Comunidades&#10;- Emojis de servidor"></textarea></label>
       <label class="field"><span>Link (opcional)</span><input class="inp" id="nL" placeholder="https://"></label>
-      ${row('Mostrar agora na tela de quem está online', 'Além de ficar em Novidades.', toggle('nNow', true))}<div class="err" id="nE"></div></div>
+      ${row('Publicar em Novidades', 'Fica no sininho para todas as contas, inclusive quem entrar depois.', toggle('nPub', true))}
+      ${row('Mandar na DM da conta oficial', 'Chega como mensagem da conta Telão para todo mundo (com notificação).', toggle('nDm', true))}
+      ${row('Mostrar agora na tela de quem está online', '', toggle('nNow', true))}<div class="err" id="nE"></div></div>
     <div class="mf"><button type="button" class="btn sec" data-close>Cancelar</button><button class="btn">Publicar</button></div></form>`, m => {
     m.querySelector('#nF').onsubmit = async e => {
       e.preventDefault();
       const row_ = { kind: m.querySelector('#nK').value, title: m.querySelector('#nT').value.trim(), body: m.querySelector('#nB').value.trim() || null, link: m.querySelector('#nL').value.trim() || null, version: m.querySelector('#nK').value === 'update' ? APP_VERSION : null };
-      const now = m.querySelector('#nNow').checked;
-      const { error } = await App.sb.from('app_notices').insert(row_);
-      if(error){ m.querySelector('#nE').textContent = error.message; return; }
-      closeModal(); App.toast('Publicado para todo mundo.');
+      const now = m.querySelector('#nNow').checked, pub = m.querySelector('#nPub').checked, dm = m.querySelector('#nDm').checked;
+      if(!pub && !dm){ m.querySelector('#nE').textContent = 'Escolha pelo menos um lugar para publicar.'; return; }
+      const btn = m.querySelector('#nF button:not([type])'); if(btn){ btn.disabled = true; btn.textContent = 'Enviando…'; }
+      if(pub){ const { error } = await App.sb.from('app_notices').insert(row_); if(error){ m.querySelector('#nE').textContent = error.message; if(btn){ btn.disabled = false; btn.textContent = 'Publicar'; } return; } }
+      let sent = 0;
+      if(dm){ const { data, error } = await App.sb.rpc('admin_broadcast', { p_title: row_.title, p_body: row_.body, p_link: row_.link }); if(error){ m.querySelector('#nE').textContent = error.message; if(btn){ btn.disabled = false; btn.textContent = 'Publicar'; } return; } sent = data || 0; }
+      closeModal(); App.toast(dm ? `Aviso enviado na DM de ${sent} pessoa${sent === 1 ? '' : 's'}.` : 'Publicado para todo mundo.');
       if(now && App.sendAviso) App.sendAviso(row_.title, false);
       loadNotices();
     };
@@ -6583,7 +6588,11 @@ document.addEventListener('click', e => {
 
 /* na conversa com a conta oficial: sem caixa de mensagem e sem ligar */
 const _mountMessagesB = mountMessages;
-mountMessages = async function(ch){
+mountMessages = async function(ch, container, welcome){
+  if(ch && ch.kind === 'dm' && isBot(dmOther(ch))){
+    const p = prof(TELAO_BOT);
+    arguments[2] = `<div class="welcome">${avatar(p, 'xl')}<h1>Telão ${officialBadge()}</h1><p>Canal oficial do Telão: as boas-vindas, novidades e avisos importantes chegam por aqui.</p></div>`;
+  }
   const r = await _mountMessagesB.apply(this, arguments);
   if(ch && ch.kind === 'dm' && isBot(dmOther(ch))){
     const c = document.querySelector('.composer');
@@ -6611,6 +6620,17 @@ renderMain = function(){
   }
   return r;
 };
+
+/* aviso do dono do Telão, mandado pela conta oficial para todo mundo */
+function announceCardHtml(a){
+  return `<div class="wcard acard">
+    <div class="wtop"><div class="wglow"></div><img class="wlogo" src="/icons/simbolo.svg" alt="">
+      <div class="wtx"><span class="weye">${ic('bell', 11)} AVISO DO TELÃO</span><h3>${esc(a.title || '')}</h3></div></div>
+    ${a.body ? `<div class="abody">${richText(a.body)}</div>` : ''}
+    ${a.link ? `<div class="alink"><a class="btn sm" href="${esc(a.link)}" target="_blank" rel="noopener">Saiba mais ${ic('chevRight', 14)}</a></div>` : ''}
+  </div>`;
+}
+App.announceCardHtml = announceCardHtml;
 /* =====================================================================
    v6.9: TRANSCREVER MENSAGEM DE VOZ
    Quando o texto não saiu na hora da gravação (ex.: app do Windows, Firefox), o botão
@@ -7262,6 +7282,309 @@ const _leaveVoiceG = leaveVoice;
 leaveVoice = async function(){ if(G.st && G.st.players.includes(S.me.id) && !amHost()) send('act', { a: 'leave' }); G.st = null; if(G.el) G.el.remove(); return _leaveVoiceG.apply(this, arguments); };
 App.gameNew = gameNew;
 App.gameState = () => G.st;
+/* =====================================================================
+   v6.10: FECHAR CONVERSA — tira a DM/grupo da lista sem apagar nada.
+   Volta sozinha quando chega mensagem nova (o banco reabre) ou quando você abre de novo.
+   ===================================================================== */
+S.closedDms = new Set();
+let closedRt = null;
+async function loadClosedDms(){
+  const { data } = await App.sb.from('dm_closed').select('channel_id').eq('user_id', S.me.id);
+  S.closedDms = new Set((data || []).map(r => r.channel_id));
+  if(!closedRt) closedRt = App.sb.channel('dmclosed-rt').on('postgres_changes', { event: '*', schema: 'public', table: 'dm_closed' }, async () => {
+    await loadClosedDms(); if(S.route.kind === 'home') renderSidebar();
+  }).subscribe();
+}
+async function closeDm(id){
+  S.closedDms.add(id);
+  if(S.route.kind === 'home' && S.route.dm === id) go({ kind: 'home', dm: null }); else renderSidebar();
+  const { error } = await App.sb.from('dm_closed').upsert({ user_id: S.me.id, channel_id: id, closed_at: new Date().toISOString() });
+  if(error){ S.closedDms.delete(id); renderSidebar(); App.toast(error.message, true); return; }
+  App.toast('Conversa fechada. Ela volta para a lista quando chegar mensagem nova.');
+}
+function reopenDm(id){
+  if(!S.closedDms.has(id)) return;
+  S.closedDms.delete(id);
+  App.sb.from('dm_closed').delete().eq('user_id', S.me.id).eq('channel_id', id).then(() => {}, () => {});
+}
+App.closeDm = closeDm;
+
+const _loadDmsDc = loadDms;
+loadDms = async function(){ const r = await _loadDmsDc.apply(this, arguments); try{ await loadClosedDms(); }catch(e){} return r; };
+
+const _renderSidebarDc = renderSidebar;
+renderSidebar = function(){
+  // abriu uma conversa fechada (pelo perfil, amigos, busca…): ela volta para a lista
+  if(S.route.kind === 'home' && S.route.dm) reopenDm(S.route.dm);
+  const r = _renderSidebarDc.apply(this, arguments);
+  document.querySelectorAll('.dmitem[data-dm]').forEach(el => {
+    const id = el.dataset.dm;
+    if(S.closedDms.has(id)){ el.remove(); return; }
+    if(el.querySelector('.dmclose')) return;
+    const b = document.createElement('button');
+    b.className = 'dmclose'; b.dataset.tip = 'Fechar conversa'; b.innerHTML = ic('x', 14);
+    b.onclick = e => { e.preventDefault(); e.stopPropagation(); closeDm(id); };
+    el.appendChild(b);
+  });
+  return r;
+};
+/* =====================================================================
+   v6.10: GERENCIAR CANAIS E CATEGORIAS + IMPULSOS ILIMITADOS DO DONO DO TELÃO
+   ===================================================================== */
+S.cats = new Map(); // server_id -> [{ name, position }]
+let catsRt = null;
+async function loadCats(sid){
+  const { data } = await App.sb.from('server_categories').select('name, position').eq('server_id', sid).order('position');
+  S.cats.set(sid, data || []);
+  if(!catsRt) catsRt = App.sb.channel('cats-rt').on('postgres_changes', { event: '*', schema: 'public', table: 'server_categories' }, async p => {
+    const sid2 = (p.new && p.new.server_id) || (p.old && p.old.server_id) || (S.route.kind === 'server' && S.route.sid);
+    if(sid2 && S.channels.has(sid2)){ await loadCats(sid2); if(S.route.kind === 'server' && S.route.sid === sid2) renderSidebar(); }
+  }).subscribe();
+}
+const _loadChannelsG = loadChannels;
+loadChannels = async function(sid){ const r = await _loadChannelsG.apply(this, arguments); try{ await loadCats(sid); }catch(e){} return r; };
+
+/* grupos na ordem certa: sem categoria (texto, voz) primeiro, depois as categorias (inclusive vazias) */
+function channelGroups(s, list){
+  const out = [];
+  const t = list.filter(c => !c.category && c.kind === 'text'), v = list.filter(c => !c.category && c.kind === 'voice');
+  if(t.length) out.push({ title: 'Canais de texto', cat: null, kind: 'text', chs: t });
+  if(v.length) out.push({ title: 'Canais de voz', cat: null, kind: 'voice', chs: v });
+  const cats = (S.cats.get(s.id) || []).map(c => c.name);
+  list.forEach(c => { if(c.category && !cats.includes(c.category)) cats.push(c.category); });
+  cats.forEach(name => out.push({ title: name, cat: name, kind: null, chs: list.filter(c => c.category === name) }));
+  return out;
+}
+
+/* ---------- categorias ---------- */
+createCategoryModal = function(s){
+  modal(`<form id="cgF"><div class="mh"><h2>Criar categoria</h2><p>Agrupe os canais (ex.: “Jogos”, “Avisos”). Depois é só arrastar canais para dentro dela ou criar canais pelo + da categoria.</p></div>
+    <div class="mc"><label class="field"><span>Nome da categoria</span><input class="inp" id="cgN" maxlength="40" required placeholder="Jogos"></label><div class="err" id="cgE"></div></div>
+    <div class="mf"><button type="button" class="btn sec" data-close>Cancelar</button><button class="btn">Criar categoria</button></div></form>`, m => {
+    m.querySelector('#cgF').onsubmit = async e => {
+      e.preventDefault();
+      const n = m.querySelector('#cgN').value.trim(); if(!n) return;
+      const { error } = await App.sb.rpc('category_save', { p_server: s.id, p_old: null, p_new: n, p_kind: null });
+      if(error){ m.querySelector('#cgE').textContent = error.message; return; }
+      closeModal(); await loadCats(s.id); renderSidebar(); App.toast(`Categoria “${n}” criada`);
+    };
+  });
+};
+function renameCategoryModal(s, cat, kind, title){
+  modal(`<form id="rcF"><div class="mh"><h2>Renomear categoria</h2>${cat ? '' : `<p>“${esc(title)}” é o grupo automático dos canais sem categoria. Ao dar um nome, ele vira uma categoria de verdade.</p>`}</div>
+    <div class="mc"><label class="field"><span>Nome</span><input class="inp" id="rcN" maxlength="40" required value="${esc(cat || '')}" placeholder="${esc(title)}"></label><div class="err" id="rcE"></div></div>
+    <div class="mf"><button type="button" class="btn sec" data-close>Cancelar</button><button class="btn">Salvar</button></div></form>`, m => {
+    const inp = m.querySelector('#rcN'); setTimeout(() => { inp.focus(); inp.select(); }, 50);
+    m.querySelector('#rcF').onsubmit = async e => {
+      e.preventDefault();
+      const n = inp.value.trim(); if(!n || n === cat) { closeModal(); return; }
+      const { error } = await App.sb.rpc('category_save', { p_server: s.id, p_old: cat || null, p_new: n, p_kind: cat ? null : kind });
+      if(error){ m.querySelector('#rcE').textContent = error.message; return; }
+      closeModal(); await loadChannels(s.id); renderSidebar(); App.toast('Categoria renomeada');
+    };
+  });
+}
+function deleteCategoryModal(s, cat){
+  const chs = (S.channels.get(s.id) || []).filter(c => c.category === cat);
+  modal(`<div class="mh"><h2>Excluir “${esc(cat)}”</h2><p>${chs.length ? `Essa categoria tem ${chs.length} canal${chs.length > 1 ? 'is' : ''}. O que fazer com ${chs.length > 1 ? 'eles' : 'ele'}?` : 'A categoria está vazia.'}</p></div>
+    ${chs.length ? `<div class="mc"><label class="radiorow"><input type="radio" name="dcO" value="keep" checked><span><b>Manter os canais</b><small>Eles vão para “sem categoria”, com todas as mensagens.</small></span></label>
+      <label class="radiorow danger"><input type="radio" name="dcO" value="del"><span><b>Apagar os canais junto</b><small>Apaga ${chs.map(c => esc(c.name)).slice(0, 5).join(', ')}${chs.length > 5 ? '…' : ''} e as mensagens. Não dá para desfazer.</small></span></label></div>` : ''}
+    <div class="mf"><button class="btn sec" data-close>Cancelar</button><button class="btn red" id="dcGo">Excluir categoria</button></div>`, m => {
+    m.querySelector('#dcGo').onclick = async () => {
+      const del = !!m.querySelector('input[name="dcO"][value="del"]:checked');
+      const { error } = await App.sb.rpc('category_delete', { p_server: s.id, p_name: cat, p_delete_channels: del });
+      if(error){ App.toast(error.message, true); return; }
+      closeModal(); await loadChannels(s.id); renderSidebar(); App.toast('Categoria excluída');
+    };
+  });
+}
+async function moveCategory(s, cat, dir){
+  const names = channelGroups(s, S.channels.get(s.id) || []).filter(g => g.cat).map(g => g.cat);
+  const i = names.indexOf(cat), j = i + dir; if(i < 0 || j < 0 || j >= names.length) return;
+  [names[i], names[j]] = [names[j], names[i]];
+  S.cats.set(s.id, names.map((name, k) => ({ name, position: k + 1 }))); renderSidebar();
+  const { error } = await App.sb.rpc('layout_save', { p_server: s.id, p_cats: names, p_channels: null, p_channel_cats: null });
+  if(error){ App.toast(error.message, true); await loadCats(s.id); renderSidebar(); }
+}
+function categoryMenu(s, el, x, y){
+  const cat = el.dataset.catname || null, kind = el.dataset.catkind || null, title = el.querySelector('span').textContent.trim();
+  const items = [
+    { label: 'Criar canal de texto', icon: ic('hash', 18), onClick: () => createChannelModal(s, 'text', cat || '') },
+    { label: 'Criar canal de voz', icon: ic('volume', 18), onClick: () => createChannelModal(s, 'voice', cat || '') },
+    '-',
+    { label: cat ? 'Renomear categoria' : 'Dar nome (virar categoria)', icon: ic('edit', 18), onClick: () => renameCategoryModal(s, cat, kind, title) },
+  ];
+  if(cat){
+    items.push({ label: 'Mover para cima', icon: ic('chevDown', 18).replace('<svg', '<svg style="transform:rotate(180deg)"'), onClick: () => moveCategory(s, cat, -1) },
+      { label: 'Mover para baixo', icon: ic('chevDown', 18), onClick: () => moveCategory(s, cat, 1) },
+      '-', { label: 'Excluir categoria', icon: ic('trash', 18), danger: true, onClick: () => deleteCategoryModal(s, cat) });
+  }
+  menu(x, y, items);
+}
+
+/* ---------- canais: menu, mover, duplicar ---------- */
+async function saveLayout(s, groups){
+  const ids = [], cats = [];
+  groups.forEach(g => g.chs.forEach(c => { ids.push(c.id); cats.push(g.cat || ''); }));
+  // aplica na hora (sem esperar o banco)
+  const list = S.channels.get(s.id) || [];
+  ids.forEach((id, i) => { const c = list.find(x => x.id === id); if(c){ c.position = i + 1; c.category = cats[i] || null; } });
+  renderSidebar();
+  const { error } = await App.sb.rpc('layout_save', { p_server: s.id, p_cats: null, p_channels: ids, p_channel_cats: cats });
+  if(error){ App.toast(error.message, true); await loadChannels(s.id); renderSidebar(); }
+}
+function currentGroups(s){
+  const list = (S.channels.get(s.id) || []).slice().sort((a, b) => a.position - b.position);
+  return channelGroups(s, list).map(g => ({ ...g, chs: g.chs.slice() }));
+}
+function moveChannel(s, cid, targetCat, beforeId, after){
+  const groups = currentGroups(s);
+  let ch = null;
+  groups.forEach(g => { const i = g.chs.findIndex(c => c.id === cid); if(i >= 0) ch = g.chs.splice(i, 1)[0]; });
+  if(!ch) return;
+  // canal sem categoria vai para o grupo automático do tipo dele
+  let g = targetCat ? groups.find(x => x.cat === targetCat) : groups.find(x => !x.cat && x.kind === ch.kind);
+  if(!g){ g = { title: '', cat: targetCat || null, kind: ch.kind, chs: [] }; groups.push(g); }
+  let idx = beforeId ? g.chs.findIndex(c => c.id === beforeId) : -1;
+  if(idx < 0) idx = g.chs.length; else if(after) idx++;
+  g.chs.splice(idx, 0, ch);
+  saveLayout(s, groups);
+}
+function stepChannel(s, c, dir){
+  const g = currentGroups(s).find(x => x.chs.some(y => y.id === c.id)); if(!g) return;
+  const i = g.chs.findIndex(y => y.id === c.id), j = i + dir; if(j < 0 || j >= g.chs.length) return;
+  moveChannel(s, c.id, g.cat, g.chs[j].id, dir > 0);
+}
+function moveToCategoryModal(s, c){
+  const cats = channelGroups(s, S.channels.get(s.id) || []).filter(g => g.cat).map(g => g.cat);
+  modal(`<div class="mh"><h2>Mover ${c.kind === 'text' ? '#' : ''}${esc(c.name)}</h2><p>Escolha a categoria.</p></div>
+    <div class="mc"><div class="catpick"><button data-mv="">${ic('slash', 16)} Sem categoria</button>${cats.map(n => `<button data-mv="${esc(n)}" class="${c.category === n ? 'on' : ''}">${ic('folder', 16)} ${esc(n)}</button>`).join('')}
+</div>
+      <div class="catnew"><input class="inp" id="mvN" maxlength="40" placeholder="Ou crie uma categoria nova"><button class="btn sm" data-mvnew>Criar e mover</button></div></div>
+    <div class="mf"><button class="btn sec" data-close>Cancelar</button></div>`, m => {
+    m.querySelectorAll('[data-mv]').forEach(b => b.onclick = () => { closeModal(); moveChannel(s, c.id, b.dataset.mv || null); });
+    m.querySelector('[data-mvnew]').onclick = () => {
+      const n = m.querySelector('#mvN').value; if(!n || !n.trim()) return;
+      App.sb.rpc('category_save', { p_server: s.id, p_old: null, p_new: n.trim(), p_kind: null }).then(async ({ error }) => {
+        if(error){ App.toast(error.message, true); return; }
+        closeModal(); await loadCats(s.id); moveChannel(s, c.id, n.trim());
+      });
+    };
+  });
+}
+async function duplicateChannel(s, c){
+  const { data, error } = await App.sb.rpc('channel_duplicate', { p_channel: c.id });
+  if(error){ App.toast(error.message, true); return; }
+  await loadChannels(s.id);
+  const list = S.channels.get(s.id) || [];
+  const nc = list.find(x => x.id === data);
+  if(nc) moveChannel(s, nc.id, c.category, c.id, true); else renderSidebar();
+  App.toast('Canal duplicado (com as mesmas configurações, sem as mensagens)');
+}
+function channelMenu(s, c, x, y){
+  const items = [
+    { label: 'Editar canal', icon: ic('gear', 18), onClick: () => editChannelModal(c) },
+    { label: 'Duplicar canal', icon: ic('copy', 18), onClick: () => duplicateChannel(s, c) },
+    { label: 'Mover para categoria…', icon: ic('folder', 18), onClick: () => moveToCategoryModal(s, c) },
+    { label: 'Mover para cima', icon: ic('chevDown', 18).replace('<svg', '<svg style="transform:rotate(180deg)"'), onClick: () => stepChannel(s, c, -1) },
+    { label: 'Mover para baixo', icon: ic('chevDown', 18), onClick: () => stepChannel(s, c, 1) },
+    '-',
+    { label: 'Apagar canal', icon: ic('trash', 18), danger: true, onClick: async () => {
+      if(!(await confirmBox('Apagar canal', `Apagar <b>${esc(c.name)}</b>? ${c.kind === 'text' ? 'Todas as mensagens serão perdidas.' : ''}`, 'Apagar canal'))) return;
+      const { error } = await App.sb.from('channels').delete().eq('id', c.id);
+      if(error) App.toast(error.message, true); else { await loadChannels(s.id); renderSidebar(); }
+    } },
+  ];
+  menu(x, y, items);
+}
+
+/* liga menus e arrastar-e-soltar na lista de canais */
+const _renderSidebarG = renderSidebar;
+renderSidebar = function(){
+  const r = _renderSidebarG.apply(this, arguments);
+  if(S.route.kind !== 'server') return r;
+  const s = S.servers.find(x => x.id === S.route.sid); if(!s || !App.hasPerm(s.id, 1)) return r;
+  const body = document.getElementById('sbBody'); if(!body) return r;
+  const list = S.channels.get(s.id) || [];
+  body.querySelectorAll('[data-catmenu]').forEach(b => b.onclick = e => { e.stopPropagation(); const rc = b.getBoundingClientRect(); categoryMenu(s, b.closest('.cat'), rc.left, rc.bottom + 4); });
+  body.querySelectorAll('.cat[data-cat]').forEach(el => el.oncontextmenu = e => { e.preventDefault(); categoryMenu(s, el, e.clientX, e.clientY); });
+  body.querySelectorAll('.ch[data-cid]').forEach(el => {
+    const c = list.find(x => x.id === el.dataset.cid); if(!c) return;
+    el.oncontextmenu = e => { e.preventDefault(); channelMenu(s, c, e.clientX, e.clientY); };
+    if(isMobile()) return;
+    el.draggable = true;
+    el.ondragstart = e => { e.dataTransfer.setData('text/telao-ch', c.id); e.dataTransfer.effectAllowed = 'move'; el.classList.add('dragging'); body.classList.add('dragging-ch'); };
+    el.ondragend = () => { el.classList.remove('dragging'); body.classList.remove('dragging-ch'); body.querySelectorAll('.dropbefore,.dropafter,.dropin').forEach(x => x.classList.remove('dropbefore', 'dropafter', 'dropin')); };
+    el.ondragover = e => {
+      if(!e.dataTransfer.types.includes('text/telao-ch')) return; e.preventDefault();
+      const rc = el.getBoundingClientRect(), after = e.clientY > rc.top + rc.height / 2;
+      el.classList.toggle('dropafter', after); el.classList.toggle('dropbefore', !after);
+    };
+    el.ondragleave = () => el.classList.remove('dropbefore', 'dropafter');
+    el.ondrop = e => {
+      const id = e.dataTransfer.getData('text/telao-ch'); if(!id || id === c.id) return; e.preventDefault();
+      const rc = el.getBoundingClientRect(), after = e.clientY > rc.top + rc.height / 2;
+      moveChannel(s, id, c.category || null, c.id, after);
+    };
+  });
+  // soltar em cima da categoria (ou da área vazia dela) põe o canal no fim dela
+  body.querySelectorAll('.cat[data-cat], .catempty').forEach(el => {
+    const cat = el.dataset.catname !== undefined ? el.dataset.catname : el.dataset.dropcat;
+    el.ondragover = e => {
+      if(e.dataTransfer.types.includes('text/telao-ch') || (e.dataTransfer.types.includes('text/telao-cat') && el.classList.contains('real'))){ e.preventDefault(); el.classList.add('dropin'); }
+    };
+    el.ondragleave = () => el.classList.remove('dropin');
+    el.ondrop = e => {
+      el.classList.remove('dropin');
+      const id = e.dataTransfer.getData('text/telao-ch');
+      if(id){ e.preventDefault(); moveChannel(s, id, cat || null); return; }
+      const from = e.dataTransfer.getData('text/telao-cat');
+      if(from && cat && from !== cat){
+        e.preventDefault();
+        const names = channelGroups(s, list).filter(g => g.cat).map(g => g.cat).filter(n => n !== from);
+        names.splice(names.indexOf(cat), 0, from);
+        S.cats.set(s.id, names.map((name, k) => ({ name, position: k + 1 }))); renderSidebar();
+        App.sb.rpc('layout_save', { p_server: s.id, p_cats: names, p_channels: null, p_channel_cats: null }).then(({ error }) => { if(error) App.toast(error.message, true); });
+      }
+    };
+  });
+  if(!isMobile()) body.querySelectorAll('.cat.real').forEach(el => {
+    el.draggable = true;
+    el.ondragstart = e => { e.dataTransfer.setData('text/telao-cat', el.dataset.catname); el.classList.add('dragging'); };
+    el.ondragend = () => el.classList.remove('dragging');
+  });
+  return r;
+};
+
+/* ---------- impulsos ilimitados para o dono do Telão ---------- */
+const _boostModalA = boostServerModal;
+boostServerModal = async function(s){
+  if(!S.me.is_admin) return _boostModalA.apply(this, arguments);
+  const mine = () => S.boosts.filter(b => b.user_id === S.me.id && b.server_id === s.id).length;
+  const draw = m => {
+    const n = boostCount(s.id), lv = serverLevel(s.id), next = LEVELS[lv + 1];
+    m.querySelector('#abInfo').innerHTML = `<div class="abbig">${BOOST_SVG(30)}<b>${n}</b><span>impulso${n === 1 ? '' : 's'} no servidor · ${LEVELS[lv].nome}</span></div>
+      <p class="mut small">${mine()} deles são seus. ${next ? `Faltam ${next.need - n} para o ${next.nome}.` : 'Nível máximo!'}</p>`;
+    m.querySelector('#abMax').disabled = lv >= 3;
+    m.querySelector('#abRm').disabled = !mine();
+  };
+  modal(`<div class="mh"><h2>${BOOST_SVG(22)} Impulsionar ${esc(s.name)}</h2><p>Você é o dono do Telão: seus impulsos são ilimitados e podem ser tirados quando quiser.</p></div>
+    <div class="mc"><div id="abInfo"></div>
+      <div class="abbtns"><button class="btn" data-ab="1">${BOOST_SVG(16)} +1 impulso</button><button class="btn sec" data-ab="5">+5</button><button class="btn sec" id="abMax">Até o nível 3</button><button class="btn sec" id="abRm">Tirar os meus</button></div></div>
+    <div class="mf"><button class="btn sec" data-close>Fechar</button></div>`, m => {
+    const run = async delta => {
+      if(!delta) return;
+      const { error } = await App.sb.rpc('admin_boost', { p_server: s.id, p_delta: delta });
+      if(error){ App.toast(error.message, true); return; }
+      await loadBoosts(); draw(m); renderSidebar(); renderMembers();
+      if(delta > 0){ boostCelebrate(); App.toast(`+${delta} impulso${delta > 1 ? 's' : ''} em ${s.name}`); }
+    };
+    m.querySelectorAll('[data-ab]').forEach(b => b.onclick = () => run(+b.dataset.ab));
+    m.querySelector('#abMax').onclick = () => run(Math.max(0, 9 - boostCount(s.id)));
+    m.querySelector('#abRm').onclick = () => run(-mine());
+    draw(m);
+  });
+};
 /* ---------------- PWA ---------------- */
 window.addEventListener('beforeinstallprompt', e => {
   e.preventDefault(); if(window.telaoDesktop) return; S.installEvt = e;

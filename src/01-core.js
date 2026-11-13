@@ -9,7 +9,7 @@ const esc = s => String(s ?? '').replace(/[&<>"']/g, c => ({'&':'&amp;','<':'&lt
 const COLORS = ['#5865f2','#eb459e','#3ba55c','#faa61a','#ed4245','#f47b67','#1abc9c','#9b59b6','#e67e22','#607d8b'];
 const ls = { get(k,d){ try{ const v=localStorage.getItem(k); return v==null?d:JSON.parse(v); }catch(e){ return d; } }, set(k,v){ try{ localStorage.setItem(k, JSON.stringify(v)); }catch(e){} } };
 
-const APP_VERSION = '6.9';
+const APP_VERSION = '6.10';
 const S = {
   me: null, profiles: new Map(), servers: [], channels: new Map(), members: new Map(),
   friends: [], dms: [], dmActivity: ls.get('telao-dmact', {}), online: new Set(),
@@ -728,12 +728,11 @@ function renderSidebar(){
   head.onclick = e => serverMenu(s, e);
   const list = (S.channels.get(s.id) || []).slice().sort((a,b) => a.position - b.position);
   // agrupa por categoria (ou Texto/Voz)
-  const groups = new Map();
-  list.forEach(c => { const g = c.category || (c.kind === 'text' ? 'Canais de texto' : 'Canais de voz'); if(!groups.has(g)) groups.set(g, []); groups.get(g).push(c); });
   let h = s.description ? `<div class="srvdesc">${esc(s.description)}</div>` : '';
-  groups.forEach((chs, g) => {
+  channelGroups(s, list).forEach(({ title: g, cat, kind, chs }) => {
     const key = s.id + ':' + g, col = COLLAPSED.has(key);
-    h += `<div class="cat ${col?'col':''}" data-cat="${esc(key)}"><span>${ic('chevDown',12)} ${esc(g)}</span>${canCh?`<button data-new="${chs[0].kind}" data-newcat="${esc(chs[0].category||'')}" data-tip="Criar canal">${ic('plus',16)}</button>`:''}</div>`;
+    h += `<div class="cat ${col?'col':''} ${cat ? 'real' : ''}" data-cat="${esc(key)}" data-catname="${esc(cat || '')}" data-catkind="${kind || ''}"><span>${ic('chevDown',12)} ${esc(g)}</span>${canCh?`<span class="catb"><button data-catmenu data-tip="Opções da categoria">${ic('dots',16)}</button><button data-new="${chs[0] ? chs[0].kind : (kind || 'text')}" data-newcat="${esc(cat || '')}" data-tip="Criar canal">${ic('plus',16)}</button></span>`:''}</div>`;
+    if(!chs.length && canCh && !col) h += `<div class="catempty" data-dropcat="${esc(cat || '')}">Nenhum canal. Arraste um canal para cá ou clique no +.</div>`;
     chs.forEach(c => {
       const on = S.route.cid === c.id, un = S.unread.has(c.id);
       if(col && !on && !un && !(c.kind === 'voice' && voiceUsers(c).length)) return;
@@ -756,7 +755,7 @@ function renderSidebar(){
     if(c.kind === 'voice' && !(Voice.channel && Voice.channel.id === c.id)) joinVoice(c);
   });
   body.querySelectorAll('[data-cat]').forEach(el => el.onclick = e => {
-    if(e.target.closest('[data-new]')) return;
+    if(e.target.closest('[data-new]') || e.target.closest('[data-catmenu]')) return;
     const k = el.dataset.cat; COLLAPSED.has(k) ? COLLAPSED.delete(k) : COLLAPSED.add(k); ls.set('telao-collapsed', [...COLLAPSED]); renderSidebar();
   });
   body.querySelectorAll('[data-new]').forEach(b => b.onclick = () => createChannelModal(s, b.dataset.new, b.dataset.newcat));

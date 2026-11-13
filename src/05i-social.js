@@ -220,20 +220,25 @@ async function noticesPanel(){
   if(data){ S.me = data; S.profiles.set(data.id, data); } updateBellDot();
 }
 function noticeForm(){
-  modal(`<form id="nF"><div class="mh"><h2>Publicar para todo o Telão</h2><p>Aparece em Novidades para todas as contas, inclusive quem entrar depois.</p></div>
+  modal(`<form id="nF"><div class="mh"><h2>Aviso para todo o Telão</h2><p>Escolha onde ele aparece: em Novidades, na DM da conta oficial, ou nos dois.</p></div>
     <div class="mc"><label class="field"><span>Tipo</span><select class="inp" id="nK"><option value="announce">Anúncio</option><option value="update">Atualização (o que mudou)</option><option value="event">Evento</option></select></label>
       <label class="field"><span>Título</span><input class="inp" id="nT" maxlength="120" required placeholder="Chegou a versão 6.5"></label>
       <label class="field"><span>Texto</span><textarea class="inp" id="nB" rows="6" maxlength="4000" placeholder="- Solicitações de mensagem&#10;- Comunidades&#10;- Emojis de servidor"></textarea></label>
       <label class="field"><span>Link (opcional)</span><input class="inp" id="nL" placeholder="https://"></label>
-      ${row('Mostrar agora na tela de quem está online', 'Além de ficar em Novidades.', toggle('nNow', true))}<div class="err" id="nE"></div></div>
+      ${row('Publicar em Novidades', 'Fica no sininho para todas as contas, inclusive quem entrar depois.', toggle('nPub', true))}
+      ${row('Mandar na DM da conta oficial', 'Chega como mensagem da conta Telão para todo mundo (com notificação).', toggle('nDm', true))}
+      ${row('Mostrar agora na tela de quem está online', '', toggle('nNow', true))}<div class="err" id="nE"></div></div>
     <div class="mf"><button type="button" class="btn sec" data-close>Cancelar</button><button class="btn">Publicar</button></div></form>`, m => {
     m.querySelector('#nF').onsubmit = async e => {
       e.preventDefault();
       const row_ = { kind: m.querySelector('#nK').value, title: m.querySelector('#nT').value.trim(), body: m.querySelector('#nB').value.trim() || null, link: m.querySelector('#nL').value.trim() || null, version: m.querySelector('#nK').value === 'update' ? APP_VERSION : null };
-      const now = m.querySelector('#nNow').checked;
-      const { error } = await App.sb.from('app_notices').insert(row_);
-      if(error){ m.querySelector('#nE').textContent = error.message; return; }
-      closeModal(); App.toast('Publicado para todo mundo.');
+      const now = m.querySelector('#nNow').checked, pub = m.querySelector('#nPub').checked, dm = m.querySelector('#nDm').checked;
+      if(!pub && !dm){ m.querySelector('#nE').textContent = 'Escolha pelo menos um lugar para publicar.'; return; }
+      const btn = m.querySelector('#nF button:not([type])'); if(btn){ btn.disabled = true; btn.textContent = 'Enviando…'; }
+      if(pub){ const { error } = await App.sb.from('app_notices').insert(row_); if(error){ m.querySelector('#nE').textContent = error.message; if(btn){ btn.disabled = false; btn.textContent = 'Publicar'; } return; } }
+      let sent = 0;
+      if(dm){ const { data, error } = await App.sb.rpc('admin_broadcast', { p_title: row_.title, p_body: row_.body, p_link: row_.link }); if(error){ m.querySelector('#nE').textContent = error.message; if(btn){ btn.disabled = false; btn.textContent = 'Publicar'; } return; } sent = data || 0; }
+      closeModal(); App.toast(dm ? `Aviso enviado na DM de ${sent} pessoa${sent === 1 ? '' : 's'}.` : 'Publicado para todo mundo.');
       if(now && App.sendAviso) App.sendAviso(row_.title, false);
       loadNotices();
     };

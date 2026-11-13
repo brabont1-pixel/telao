@@ -105,8 +105,9 @@ document.addEventListener('contextmenu', e => { const row = e.target.closest('.v
 const A11Y_DEF = { a11yMotion:false, a11yContrast:false, a11yFont:false, a11yLinks:false, a11yBig:false, a11ySat:100, a11yTTS:false, a11yCaps:false, a11yCapsShow:true, a11yFocus:true, a11yAltWarn:false };
 Object.keys(A11Y_DEF).forEach(k => { if(P[k] === undefined) P[k] = A11Y_DEF[k]; });
 function applyA11y(){
-  const b = document.body.classList, sysMotion = matchMedia('(prefers-reduced-motion: reduce)').matches;
-  b.toggle('a11y-motion', !!P.a11yMotion || sysMotion);
+  // os efeitos só somem pelas configurações do próprio Telão (Acessibilidade ou Desempenho), nunca pela do Windows
+  const b = document.body.classList;
+  b.toggle('a11y-motion', !!P.a11yMotion);
   b.toggle('a11y-contrast', !!P.a11yContrast);
   b.toggle('a11y-links', !!P.a11yLinks);
   b.toggle('a11y-big', !!P.a11yBig);
@@ -203,7 +204,7 @@ function secA11y(box, back){
     <div class="srow"><div class="t"><b>Saturação das cores · <span id="aSatL">${P.a11ySat}%</span></b><small>Diminua se as cores incomodam; 0% deixa tudo em tons de cinza.</small></div></div>
     <input type="range" class="range" id="aSat" min="0" max="100" step="5" value="${P.a11ySat}">
     <hr class="sdiv"><h3>Movimento</h3>
-    ${row('Reduzir animações', 'Desliga partículas, brilhos e transições. Também segue a configuração do seu sistema.', toggle('aMot', P.a11yMotion))}
+    ${row('Reduzir animações', 'Desliga partículas, brilhos e transições. Só muda aqui no Telão (a configuração de animações do Windows não desliga os efeitos).', toggle('aMot', P.a11yMotion))}
     <hr class="sdiv"><h3>Leitura e audição</h3>
     ${row('Ler mensagens novas em voz alta', 'Lê as mensagens que chegam na conversa aberta.', toggle('aTTS', P.a11yTTS))}
     <div class="srow"><div class="t"><b>Velocidade da leitura · <span id="aRateL">${(P.ttsRate || 1).toFixed(1)}×</span></b></div><button class="btn sec sm" id="aTest">Testar</button></div>

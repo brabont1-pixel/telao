@@ -42,7 +42,11 @@ document.addEventListener('click', e => {
 
 /* na conversa com a conta oficial: sem caixa de mensagem e sem ligar */
 const _mountMessagesB = mountMessages;
-mountMessages = async function(ch){
+mountMessages = async function(ch, container, welcome){
+  if(ch && ch.kind === 'dm' && isBot(dmOther(ch))){
+    const p = prof(TELAO_BOT);
+    arguments[2] = `<div class="welcome">${avatar(p, 'xl')}<h1>Telão ${officialBadge()}</h1><p>Canal oficial do Telão: as boas-vindas, novidades e avisos importantes chegam por aqui.</p></div>`;
+  }
   const r = await _mountMessagesB.apply(this, arguments);
   if(ch && ch.kind === 'dm' && isBot(dmOther(ch))){
     const c = document.querySelector('.composer');
@@ -70,3 +74,14 @@ renderMain = function(){
   }
   return r;
 };
+
+/* aviso do dono do Telão, mandado pela conta oficial para todo mundo */
+function announceCardHtml(a){
+  return `<div class="wcard acard">
+    <div class="wtop"><div class="wglow"></div><img class="wlogo" src="/icons/simbolo.svg" alt="">
+      <div class="wtx"><span class="weye">${ic('bell', 11)} AVISO DO TELÃO</span><h3>${esc(a.title || '')}</h3></div></div>
+    ${a.body ? `<div class="abody">${richText(a.body)}</div>` : ''}
+    ${a.link ? `<div class="alink"><a class="btn sm" href="${esc(a.link)}" target="_blank" rel="noopener">Saiba mais ${ic('chevRight', 14)}</a></div>` : ''}
+  </div>`;
+}
+App.announceCardHtml = announceCardHtml;

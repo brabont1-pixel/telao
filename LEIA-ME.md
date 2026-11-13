@@ -311,3 +311,14 @@ O "Spotify direto" (com Ouvir junto) continua opcional e só aparece se você co
 - **Transcrição de mensagens de voz:** enquanto você grava, o texto vai aparecendo e é enviado junto com o áudio (no Chrome e no Edge, que usam o reconhecimento de voz do navegador). Quando não sai texto (app do Windows, Firefox ou áudios antigos), aparece **Transcrever**: o Telão baixa um transcritor (Whisper, cerca de 75 MB, só na primeira vez) e transcreve no próprio aparelho. Se o áudio for seu, o texto fica salvo para todo mundo.
 - **Filtro anti-nudez removido:** a tela e a câmera não são mais analisadas, e quem estava bloqueado de transmitir foi liberado.
 - Correções: o aviso de toque de chamada some quando você entra pelo botão; a barra de controles da chamada não quebra mais em duas linhas.
+
+# Versão 6.10: fechar conversa, avisos pela conta oficial, categorias e impulsos do dono
+
+**Rode o `supabase.sql` de novo.**
+
+- **Fechar conversa:** passe o mouse numa DM ou grupo na lista e clique no **×**. A conversa sai da lista mas nada é apagado; ela volta sozinha quando chegar mensagem nova, ou quando você abrir de novo (pelo perfil, amigos ou Ctrl+K). Vale em todos os aparelhos.
+- **Avisos pela conta oficial:** no sininho → **Publicar aviso**, agora dá para escolher onde ele aparece: em **Novidades**, na **DM da conta oficial Telão** de todo mundo (chega com notificação), ou nos dois. Só você (dono do Telão) consegue mandar.
+- **Efeitos sempre ligados:** a opção do Windows de desligar animações não desliga mais os efeitos do Telão. Eles só somem pelo próprio Telão: Configurações → Desempenho (Equilibrado / Modo jogo) ou Acessibilidade → Reduzir animações.
+- **Categorias de verdade:** criar categoria (mesmo vazia), renomear, mover para cima/baixo, arrastar para reordenar e excluir (escolhendo se os canais ficam ou são apagados junto). Clique nos **⋯** da categoria ou com o botão direito nela. O grupo automático "Canais de texto/voz" também pode ganhar nome e virar categoria.
+- **Mais opções nos canais** (botão direito no canal): editar, duplicar (com as mesmas configurações), mover para outra categoria, subir/descer e apagar. No computador dá para **arrastar e soltar** os canais entre categorias.
+- **Impulsos ilimitados para o dono do Telão:** em "Impulsionar servidor" você coloca +1, +5 ou "até o nível 3" de uma vez, e tira quando quiser (sem a espera de 7 dias).
