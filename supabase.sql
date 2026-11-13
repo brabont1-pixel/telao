@@ -115,15 +115,17 @@ declare
   base text; final text; n int := 0;
   colors text[] := array['#5865f2','#eb459e','#3ba55c','#faa61a','#ed4245','#f47b67','#1abc9c','#9b59b6'];
 begin
+  -- a conta oficial do Telão cria o próprio perfil (ver v6.9)
+  if coalesce(current_setting('telao.skip_profile', true), '') = '1' then return new; end if;
   base := regexp_replace(lower(coalesce(new.raw_user_meta_data->>'username', split_part(new.email, '@', 1))), '[^a-z0-9_]', '', 'g');
   if char_length(base) < 3 then base := base || 'user'; end if;
   base := left(base, 20);
   final := base;
-  while exists (select 1 from profiles where username = final) loop
+  while exists (select 1 from public.profiles p where p.username = final) loop
     n := n + 1; final := base || n;
   end loop;
   begin
-    insert into profiles (id, username, display_name, avatar_color, avatar_url)
+    insert into public.profiles (id, username, display_name, avatar_color, avatar_url)
     values (new.id, final,
             left(coalesce(nullif(trim(new.raw_user_meta_data->>'display_name'), ''),
                           nullif(trim(new.raw_user_meta_data->>'full_name'), ''),
@@ -132,7 +134,7 @@ begin
             nullif(new.raw_user_meta_data->>'avatar_url', ''));
   exception when others then
     -- nunca deixa o cadastro (e o login com Google) falhar por causa do perfil
-    insert into profiles (id, username, display_name, avatar_color)
+    insert into public.profiles (id, username, display_name, avatar_color)
     values (new.id, 'user' || substr(replace(new.id::text, '-', ''), 1, 10), 'Novo usuário', '#ff6b4a')
     on conflict (id) do nothing;
   end;
@@ -1509,23 +1511,35 @@ end $$;
 -- =====================================================================
 -- conta oficial "Telão" (não faz login: não tem senha). Ela manda a DM de boas-vindas.
 create or replace function public.telao_bot() returns uuid language sql immutable as $$ select '7e1a0000-0000-4000-a000-000000000001'::uuid $$;
-do $$ begin
-  if not exists (select 1 from auth.users where id = public.telao_bot()) then
-    begin
-      insert into auth.users (id, instance_id, aud, role, email, encrypted_password, email_confirmed_at, raw_app_meta_data, raw_user_meta_data, created_at, updated_at,
-        confirmation_token, recovery_token, email_change_token_new, email_change, email_change_token_current, phone_change, phone_change_token, reauthentication_token)
-      values (public.telao_bot(), '00000000-0000-0000-0000-000000000000', 'authenticated', 'authenticated', 'oficial@telao.invalid', '', now(),
-        '{"provider":"email","providers":["email"]}', '{"username":"telao","display_name":"Telão"}', now(), now(), '', '', '', '', '', '', '', '');
-    exception when undefined_column then
-      insert into auth.users (id, email, raw_user_meta_data) values (public.telao_bot(), 'oficial@telao.invalid', '{"username":"telao","display_name":"Telão"}');
-    end;
-  end if;
-  perform set_config('telao.priv_ok', '1', true);
-  update public.profiles set display_name = 'Telão', avatar_url = '/icons/icon-512.png', avatar_color = '#ff2e9a' where id = public.telao_bot();
-  if not exists (select 1 from public.profiles where username = 'telao' and id <> public.telao_bot()) then
-    update public.profiles set username = 'telao' where id = public.telao_bot();
-  end if;
+do $$
+declare uname text := 'telao';
+begin
+  begin
+    if not exists (select 1 from auth.users where id = public.telao_bot()) then
+      perform set_config('telao.skip_profile', '1', true);
+      begin
+        insert into auth.users (id, instance_id, aud, role, email, encrypted_password, email_confirmed_at, raw_app_meta_data, raw_user_meta_data, created_at, updated_at,
+          confirmation_token, recovery_token, email_change_token_new, email_change, email_change_token_current, phone_change, phone_change_token, reauthentication_token)
+        values (public.telao_bot(), '00000000-0000-0000-0000-000000000000', 'authenticated', 'authenticated', 'oficial@telao.invalid', '', now(),
+          '{"provider":"email","providers":["email"]}', '{"username":"telao","display_name":"Telão"}', now(), now(), '', '', '', '', '', '', '', '');
+      exception when undefined_column then
+        insert into auth.users (id, email, raw_user_meta_data) values (public.telao_bot(), 'oficial@telao.invalid', '{"username":"telao","display_name":"Telão"}');
+      end;
+      perform set_config('telao.skip_profile', '', true);
+    end if;
+    if exists (select 1 from public.profiles p where p.username = 'telao' and p.id <> public.telao_bot()) then uname := 'telao_oficial'; end if;
+    insert into public.profiles (id, username, display_name, avatar_color, avatar_url)
+    values (public.telao_bot(), uname, 'Telão', '#ff2e9a', '/icons/icon-512.png')
+    on conflict (id) do nothing;
+    perform set_config('telao.priv_ok', '1', true);
+    update public.profiles set display_name = 'Telão', avatar_url = '/icons/icon-512.png', avatar_color = '#ff2e9a' where id = public.telao_bot();
+    perform set_config('telao.priv_ok', '', true);
+  exception when others then
+    perform set_config('telao.skip_profile', '', true);
+    raise notice 'Não deu para criar a conta oficial do Telão agora (%). O resto do script continua normalmente.', sqlerrm;
+  end;
   -- fim do filtro anti-nudez: ninguém fica mais bloqueado de transmitir
+  perform set_config('telao.priv_ok', '1', true);
   update public.profiles set share_block_until = null where share_block_until is not null;
   perform set_config('telao.priv_ok', '', true);
 end $$;
