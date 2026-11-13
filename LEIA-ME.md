@@ -322,3 +322,10 @@ O "Spotify direto" (com Ouvir junto) continua opcional e só aparece se você co
 - **Categorias de verdade:** criar categoria (mesmo vazia), renomear, mover para cima/baixo, arrastar para reordenar e excluir (escolhendo se os canais ficam ou são apagados junto). Clique nos **⋯** da categoria ou com o botão direito nela. O grupo automático "Canais de texto/voz" também pode ganhar nome e virar categoria.
 - **Mais opções nos canais** (botão direito no canal): editar, duplicar (com as mesmas configurações), mover para outra categoria, subir/descer e apagar. No computador dá para **arrastar e soltar** os canais entre categorias.
 - **Impulsos ilimitados para o dono do Telão:** em "Impulsionar servidor" você coloca +1, +5 ou "até o nível 3" de uma vez, e tira quando quiser (sem a espera de 7 dias).
+
+# Versão 6.11: ordenar canais e categorias como no Discord
+
+- **Arrastar e soltar novo:** segure e arraste um canal ou uma categoria na lista. Um "fantasma" segue o mouse e uma linha rosa mostra exatamente onde vai cair. Solte em cima do nome de uma categoria para colocar o canal no começo dela. A lista rola sozinha perto da borda e **Esc** cancela.
+- **No celular:** segure o dedo uns instantes em cima do canal ou da categoria e arraste.
+- A ordem dos canais é salva mesmo se o `supabase.sql` novo ainda não tiver sido rodado.
+- Impulsos ilimitados, criar/renomear categorias e duplicar canal precisam do `supabase.sql` da 6.10. Sem ele, agora aparece um aviso claro dizendo isso, em vez de um erro técnico.

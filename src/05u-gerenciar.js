@@ -35,7 +35,7 @@ createCategoryModal = function(s){
       e.preventDefault();
       const n = m.querySelector('#cgN').value.trim(); if(!n) return;
       const { error } = await App.sb.rpc('category_save', { p_server: s.id, p_old: null, p_new: n, p_kind: null });
-      if(error){ m.querySelector('#cgE').textContent = error.message; return; }
+      if(error){ m.querySelector('#cgE').textContent = errMsg(error); return; }
       closeModal(); await loadCats(s.id); renderSidebar(); App.toast(`Categoria “${n}” criada`);
     };
   });
@@ -49,7 +49,7 @@ function renameCategoryModal(s, cat, kind, title){
       e.preventDefault();
       const n = inp.value.trim(); if(!n || n === cat) { closeModal(); return; }
       const { error } = await App.sb.rpc('category_save', { p_server: s.id, p_old: cat || null, p_new: n, p_kind: cat ? null : kind });
-      if(error){ m.querySelector('#rcE').textContent = error.message; return; }
+      if(error){ m.querySelector('#rcE').textContent = errMsg(error); return; }
       closeModal(); await loadChannels(s.id); renderSidebar(); App.toast('Categoria renomeada');
     };
   });
@@ -74,7 +74,7 @@ async function moveCategory(s, cat, dir){
   [names[i], names[j]] = [names[j], names[i]];
   S.cats.set(s.id, names.map((name, k) => ({ name, position: k + 1 }))); renderSidebar();
   const { error } = await App.sb.rpc('layout_save', { p_server: s.id, p_cats: names, p_channels: null, p_channel_cats: null });
-  if(error){ App.toast(error.message, true); await loadCats(s.id); renderSidebar(); }
+  if(error){ App.toast(errMsg(error), true); await loadCats(s.id); renderSidebar(); }
 }
 function categoryMenu(s, el, x, y){
   const cat = el.dataset.catname || null, kind = el.dataset.catkind || null, title = el.querySelector('span').textContent.trim();
@@ -93,7 +93,7 @@ function categoryMenu(s, el, x, y){
 }
 
 /* ---------- canais: menu, mover, duplicar ---------- */
-async function saveLayout(s, groups){
+let saveLayout = async function(s, groups){
   const ids = [], cats = [];
   groups.forEach(g => g.chs.forEach(c => { ids.push(c.id); cats.push(g.cat || ''); }));
   // aplica na hora (sem esperar o banco)
@@ -102,7 +102,7 @@ async function saveLayout(s, groups){
   renderSidebar();
   const { error } = await App.sb.rpc('layout_save', { p_server: s.id, p_cats: null, p_channels: ids, p_channel_cats: cats });
   if(error){ App.toast(error.message, true); await loadChannels(s.id); renderSidebar(); }
-}
+};
 function currentGroups(s){
   const list = (S.channels.get(s.id) || []).slice().sort((a, b) => a.position - b.position);
   return channelGroups(s, list).map(g => ({ ...g, chs: g.chs.slice() }));
@@ -168,61 +168,145 @@ function channelMenu(s, c, x, y){
   menu(x, y, items);
 }
 
-/* liga menus e arrastar-e-soltar na lista de canais */
+/* erro de função que não existe no banco = falta rodar o supabase.sql novo */
+const sqlMissing = e => e && (e.code === 'PGRST202' || /could not find the function|does not exist/i.test(e.message || ''));
+const errMsg = e => sqlMissing(e) ? 'Falta rodar o supabase.sql novo no Supabase (projeto do Telão) para isso funcionar.' : (e && e.message) || 'Algo deu errado';
+
+/* salva a nova ordem; se o banco ainda não tem a função nova, salva canal por canal */
+async function persistLayout(sid, ids, cats){
+  const { error } = await App.sb.rpc('layout_save', { p_server: sid, p_cats: null, p_channels: ids, p_channel_cats: cats });
+  if(!error) return null;
+  if(!sqlMissing(error)) return error;
+  for(let i = 0; i < ids.length; i++){
+    const { error: e2 } = await App.sb.from('channels').update({ position: i + 1, category: cats[i] || null }).eq('id', ids[i]);
+    if(e2) return e2;
+  }
+  return null;
+}
+saveLayout = async function(s, groups){
+  const ids = [], cats = [];
+  groups.forEach(g => g.chs.forEach(c => { ids.push(c.id); cats.push(g.cat || ''); }));
+  const list = S.channels.get(s.id) || [];
+  ids.forEach((id, i) => { const c = list.find(x => x.id === id); if(c){ c.position = i + 1; c.category = cats[i] || null; } });
+  renderSidebar();
+  const error = await persistLayout(s.id, ids, cats);
+  if(error){ App.toast(errMsg(error), true); await loadChannels(s.id); renderSidebar(); }
+};
+async function saveCatOrder(s, names){
+  S.cats.set(s.id, names.map((name, k) => ({ name, position: k + 1 }))); renderSidebar();
+  const { error } = await App.sb.rpc('layout_save', { p_server: s.id, p_cats: names, p_channels: null, p_channel_cats: null });
+  if(error){ App.toast(errMsg(error), true); await loadCats(s.id); renderSidebar(); }
+}
+
+/* ---------- arrastar e soltar estilo Discord (mouse e toque) ---------- */
+const DR = { on: false };
+function dragLine(){ let l = document.getElementById('dragLine'); if(!l){ l = document.createElement('div'); l.id = 'dragLine'; document.body.appendChild(l); } return l; }
+function dragCleanup(){
+  document.getElementById('dragGhost')?.remove(); document.getElementById('dragLine')?.remove();
+  document.querySelectorAll('.dragging,.dropin').forEach(x => x.classList.remove('dragging', 'dropin'));
+  document.body.classList.remove('isdragging');
+  DR.on = false; DR.target = null;
+}
+function startDrag(s, el, kind, id, x, y){
+  DR.on = true; DR.s = s; DR.kind = kind; DR.id = id; DR.el = el; DR.target = null;
+  el.classList.add('dragging'); document.body.classList.add('isdragging');
+  const g = el.cloneNode(true); g.id = 'dragGhost'; g.classList.remove('dragging', 'on');
+  const rc = el.getBoundingClientRect(); g.style.width = rc.width + 'px'; DR.dx = x - rc.left; DR.dy = y - rc.top;
+  document.body.appendChild(g); moveDrag(x, y);
+  if(navigator.vibrate && kind) try{ navigator.vibrate(12); }catch(e){}
+}
+function moveDrag(x, y){
+  const g = document.getElementById('dragGhost'); if(g){ g.style.left = (x - DR.dx) + 'px'; g.style.top = (y - DR.dy) + 'px'; }
+  const body = document.getElementById('sbBody'); if(!body) return;
+  // rola a lista quando chega perto da borda
+  const br = body.getBoundingClientRect();
+  if(y < br.top + 30) body.scrollTop -= 8; else if(y > br.bottom - 30) body.scrollTop += 8;
+  const line = dragLine(); line.style.display = 'none';
+  document.querySelectorAll('.dropin').forEach(z => z.classList.remove('dropin'));
+  const under = document.elementFromPoint(x, y);
+  if(!under || !body.contains(under)){ DR.target = null; return; }
+  const place = (rect, after) => { line.style.display = 'block'; line.style.left = (rect.left + 6) + 'px'; line.style.width = (rect.width - 12) + 'px'; line.style.top = ((after ? rect.bottom : rect.top) - 1) + 'px'; };
+  if(DR.kind === 'ch'){
+    const ch = under.closest('.ch[data-cid]'), cat = under.closest('.cat[data-cat]'), empty = under.closest('.catempty');
+    if(ch && ch.dataset.cid !== DR.id){
+      const rc = ch.getBoundingClientRect(), after = y > rc.top + rc.height / 2;
+      const c = (S.channels.get(DR.s.id) || []).find(z => z.id === ch.dataset.cid);
+      DR.target = { cat: c ? c.category || null : null, before: ch.dataset.cid, after }; place(rc, after);
+    }else if(cat){
+      cat.classList.add('dropin');
+      DR.target = { cat: cat.dataset.catname || null, top: true, kindOf: cat.dataset.catkind || null };
+    }else if(empty){
+      empty.classList.add('dropin'); DR.target = { cat: empty.dataset.dropcat || null };
+    }else DR.target = null;
+  }else{
+    // categorias: a linha aparece entre as categorias
+    const heads = [...body.querySelectorAll('.cat.real')].filter(h => h.dataset.catname !== DR.id);
+    if(!heads.length){ DR.target = null; return; }
+    let idx = heads.findIndex(h => { const r = h.getBoundingClientRect(); return y < r.top + r.height / 2; });
+    if(idx < 0) idx = heads.length;
+    DR.target = { idx, names: heads.map(h => h.dataset.catname) };
+    if(idx < heads.length) place(heads[idx].getBoundingClientRect(), false);
+    else { const last = body.lastElementChild; place((last || heads[heads.length - 1]).getBoundingClientRect(), true); }
+  }
+}
+function endDrag(){
+  const { s, kind, id, target } = DR; dragCleanup();
+  if(!target) return;
+  if(kind === 'ch'){
+    if(target.top){
+      // soltou no nome da categoria: vai para o começo dela
+      const g = currentGroups(s).find(x => (target.cat ? x.cat === target.cat : !x.cat && x.kind === target.kindOf));
+      const first = g && g.chs.find(c => c.id !== id);
+      moveChannel(s, id, target.cat, first ? first.id : null, false);
+    }else moveChannel(s, id, target.cat, target.before || null, !!target.after);
+  }else{
+    const names = target.names.slice(); names.splice(target.idx, 0, id);
+    saveCatOrder(s, names);
+  }
+}
+function bindDrag(s, el, kind, id){
+  el.addEventListener('pointerdown', e => {
+    if(e.button !== 0 || e.target.closest('button,[data-edch],[data-catmenu],[data-new]')) return;
+    const sx = e.clientX, sy = e.clientY, touch = e.pointerType !== 'mouse';
+    let started = false, timer = null;
+    const begin = (x, y) => { started = true; startDrag(s, el, kind, id, x, y); };
+    if(touch) timer = setTimeout(() => begin(sx, sy), 380);   // no celular: segurar para arrastar
+    const mv = ev => {
+      if(started){ ev.preventDefault(); moveDrag(ev.clientX, ev.clientY); return; }
+      const d = Math.hypot(ev.clientX - sx, ev.clientY - sy);
+      if(touch){ if(d > 10){ clearTimeout(timer); cleanup(); } }
+      else if(d > 6) begin(ev.clientX, ev.clientY);
+    };
+    const up = () => {
+      clearTimeout(timer); cleanup();
+      if(started){ endDrag(); const stop = ev => { ev.stopPropagation(); ev.preventDefault(); }; el.addEventListener('click', stop, { capture: true, once: true }); setTimeout(() => el.removeEventListener('click', stop, { capture: true }), 50); }
+    };
+    const cleanup = () => { window.removeEventListener('pointermove', mv); window.removeEventListener('pointerup', up); window.removeEventListener('pointercancel', up); };
+    window.addEventListener('pointermove', mv, { passive: false }); window.addEventListener('pointerup', up); window.addEventListener('pointercancel', up);
+  });
+  if(kind) el.addEventListener('contextmenu', e => { if(DR.on) e.preventDefault(); });
+  el.style.touchAction = 'pan-y';
+}
+document.addEventListener('keydown', e => { if(e.key === 'Escape' && DR.on){ dragCleanup(); } });
+
+/* liga menus e arrastar na lista de canais */
 const _renderSidebarG = renderSidebar;
 renderSidebar = function(){
   const r = _renderSidebarG.apply(this, arguments);
-  if(S.route.kind !== 'server') return r;
+  if(S.route.kind !== 'server' || DR.on) return r;
   const s = S.servers.find(x => x.id === S.route.sid); if(!s || !App.hasPerm(s.id, 1)) return r;
   const body = document.getElementById('sbBody'); if(!body) return r;
   const list = S.channels.get(s.id) || [];
+  body.classList.add('canorder');
   body.querySelectorAll('[data-catmenu]').forEach(b => b.onclick = e => { e.stopPropagation(); const rc = b.getBoundingClientRect(); categoryMenu(s, b.closest('.cat'), rc.left, rc.bottom + 4); });
-  body.querySelectorAll('.cat[data-cat]').forEach(el => el.oncontextmenu = e => { e.preventDefault(); categoryMenu(s, el, e.clientX, e.clientY); });
+  body.querySelectorAll('.cat[data-cat]').forEach(el => el.oncontextmenu = e => { e.preventDefault(); if(!DR.on) categoryMenu(s, el, e.clientX, e.clientY); });
   body.querySelectorAll('.ch[data-cid]').forEach(el => {
     const c = list.find(x => x.id === el.dataset.cid); if(!c) return;
-    el.oncontextmenu = e => { e.preventDefault(); channelMenu(s, c, e.clientX, e.clientY); };
-    if(isMobile()) return;
-    el.draggable = true;
-    el.ondragstart = e => { e.dataTransfer.setData('text/telao-ch', c.id); e.dataTransfer.effectAllowed = 'move'; el.classList.add('dragging'); body.classList.add('dragging-ch'); };
-    el.ondragend = () => { el.classList.remove('dragging'); body.classList.remove('dragging-ch'); body.querySelectorAll('.dropbefore,.dropafter,.dropin').forEach(x => x.classList.remove('dropbefore', 'dropafter', 'dropin')); };
-    el.ondragover = e => {
-      if(!e.dataTransfer.types.includes('text/telao-ch')) return; e.preventDefault();
-      const rc = el.getBoundingClientRect(), after = e.clientY > rc.top + rc.height / 2;
-      el.classList.toggle('dropafter', after); el.classList.toggle('dropbefore', !after);
-    };
-    el.ondragleave = () => el.classList.remove('dropbefore', 'dropafter');
-    el.ondrop = e => {
-      const id = e.dataTransfer.getData('text/telao-ch'); if(!id || id === c.id) return; e.preventDefault();
-      const rc = el.getBoundingClientRect(), after = e.clientY > rc.top + rc.height / 2;
-      moveChannel(s, id, c.category || null, c.id, after);
-    };
+    el.oncontextmenu = e => { e.preventDefault(); if(!DR.on) channelMenu(s, c, e.clientX, e.clientY); };
+    el.draggable = false;
+    bindDrag(s, el, 'ch', c.id);
   });
-  // soltar em cima da categoria (ou da área vazia dela) põe o canal no fim dela
-  body.querySelectorAll('.cat[data-cat], .catempty').forEach(el => {
-    const cat = el.dataset.catname !== undefined ? el.dataset.catname : el.dataset.dropcat;
-    el.ondragover = e => {
-      if(e.dataTransfer.types.includes('text/telao-ch') || (e.dataTransfer.types.includes('text/telao-cat') && el.classList.contains('real'))){ e.preventDefault(); el.classList.add('dropin'); }
-    };
-    el.ondragleave = () => el.classList.remove('dropin');
-    el.ondrop = e => {
-      el.classList.remove('dropin');
-      const id = e.dataTransfer.getData('text/telao-ch');
-      if(id){ e.preventDefault(); moveChannel(s, id, cat || null); return; }
-      const from = e.dataTransfer.getData('text/telao-cat');
-      if(from && cat && from !== cat){
-        e.preventDefault();
-        const names = channelGroups(s, list).filter(g => g.cat).map(g => g.cat).filter(n => n !== from);
-        names.splice(names.indexOf(cat), 0, from);
-        S.cats.set(s.id, names.map((name, k) => ({ name, position: k + 1 }))); renderSidebar();
-        App.sb.rpc('layout_save', { p_server: s.id, p_cats: names, p_channels: null, p_channel_cats: null }).then(({ error }) => { if(error) App.toast(error.message, true); });
-      }
-    };
-  });
-  if(!isMobile()) body.querySelectorAll('.cat.real').forEach(el => {
-    el.draggable = true;
-    el.ondragstart = e => { e.dataTransfer.setData('text/telao-cat', el.dataset.catname); el.classList.add('dragging'); };
-    el.ondragend = () => el.classList.remove('dragging');
-  });
+  body.querySelectorAll('.cat.real').forEach(el => bindDrag(s, el, 'cat', el.dataset.catname));
   return r;
 };
 
@@ -240,12 +324,13 @@ boostServerModal = async function(s){
   };
   modal(`<div class="mh"><h2>${BOOST_SVG(22)} Impulsionar ${esc(s.name)}</h2><p>Você é o dono do Telão: seus impulsos são ilimitados e podem ser tirados quando quiser.</p></div>
     <div class="mc"><div id="abInfo"></div>
-      <div class="abbtns"><button class="btn" data-ab="1">${BOOST_SVG(16)} +1 impulso</button><button class="btn sec" data-ab="5">+5</button><button class="btn sec" id="abMax">Até o nível 3</button><button class="btn sec" id="abRm">Tirar os meus</button></div></div>
+      <div class="abbtns"><button class="btn" data-ab="1">${BOOST_SVG(16)} +1 impulso</button><button class="btn sec" data-ab="5">+5</button><button class="btn sec" id="abMax">Até o nível 3</button><button class="btn sec" id="abRm">Tirar os meus</button></div><div class="err" id="abErr"></div></div>
     <div class="mf"><button class="btn sec" data-close>Fechar</button></div>`, m => {
     const run = async delta => {
       if(!delta) return;
       const { error } = await App.sb.rpc('admin_boost', { p_server: s.id, p_delta: delta });
-      if(error){ App.toast(error.message, true); return; }
+      if(error){ App.toast(errMsg(error), true); m.querySelector('#abErr').textContent = errMsg(error); return; }
+      m.querySelector('#abErr').textContent = '';
       await loadBoosts(); draw(m); renderSidebar(); renderMembers();
       if(delta > 0){ boostCelebrate(); App.toast(`+${delta} impulso${delta > 1 ? 's' : ''} em ${s.name}`); }
     };
