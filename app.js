@@ -9,7 +9,7 @@ const esc = s => String(s ?? '').replace(/[&<>"']/g, c => ({'&':'&amp;','<':'&lt
 const COLORS = ['#5865f2','#eb459e','#3ba55c','#faa61a','#ed4245','#f47b67','#1abc9c','#9b59b6','#e67e22','#607d8b'];
 const ls = { get(k,d){ try{ const v=localStorage.getItem(k); return v==null?d:JSON.parse(v); }catch(e){ return d; } }, set(k,v){ try{ localStorage.setItem(k, JSON.stringify(v)); }catch(e){} } };
 
-const APP_VERSION = '6.8';
+const APP_VERSION = '6.9';
 const S = {
   me: null, profiles: new Map(), servers: [], channels: new Map(), members: new Map(),
   friends: [], dms: [], dmActivity: ls.get('telao-dmact', {}), online: new Set(),
@@ -1305,8 +1305,8 @@ App.onReaction = p => {
 /* ---------- renderização ---------- */
 function attHtml(m){
   const at = m.attachments || []; if(!at.length) return '';
-  const imgs = at.filter(a => isImg(a) || isVid(a)), others = at.filter(a => !isImg(a) && !isVid(a) && a.type !== 'poll' && a.type !== 'gift');
-  let h = at.filter(a => a.type === 'poll').map(a => pollHtml(m, a)).join('') + at.filter(a => a.type === 'gift').map(a => App.giftCardHtml(a)).join('');
+  const imgs = at.filter(a => isImg(a) || isVid(a)), others = at.filter(a => !isImg(a) && !isVid(a) && a.type !== 'poll' && a.type !== 'gift' && a.type !== 'welcome');
+  let h = at.filter(a => a.type === 'welcome').map(a => App.welcomeCardHtml ? App.welcomeCardHtml(a) : '').join('') + at.filter(a => a.type === 'poll').map(a => pollHtml(m, a)).join('') + at.filter(a => a.type === 'gift').map(a => App.giftCardHtml(a)).join('');
   if(imgs.length){
     const n = Math.min(imgs.length, 4);
     h += `<div class="mgrid g${n}">` + imgs.map((a, i) => {
@@ -1320,15 +1320,18 @@ function attHtml(m){
     }).join('') + '</div>';
   }
   others.forEach(a => {
-    if(isAud(a) && a.voice) h += voicePlayerHtml(a);
+    if(isAud(a) && a.voice) h += voicePlayerHtml(a, m);
     else if(isAud(a)) h += `<div class="fcard">${ic('music',26)}<div class="t"><a href="${esc(a.url)}" target="_blank" rel="noopener">${esc(a.name || 'áudio')}</a><small>${fmtSize(a.size||0)}</small><audio src="${esc(a.url)}" controls preload="none"></audio></div></div>`;
     else h += `<div class="fcard">${ic('file',26)}<div class="t"><a href="${esc(a.url)}" target="_blank" rel="noopener" download>${esc(a.name || 'arquivo')}</a><small>${fmtSize(a.size||0)}</small></div><a class="dl" href="${esc(a.url)}" target="_blank" rel="noopener" download title="Baixar">${ic('download',20)}</a></div>`;
   });
   return h;
 }
-function voicePlayerHtml(a){
+function voicePlayerHtml(a, m){
   const wave = (a.wave || Array(40).fill(4)).map(v => `<i style="height:${Math.max(3, Math.min(28, v))}px"></i>`).join('');
-  return `<div class="vplayer" data-voice="${esc(a.url)}" data-dur="${a.dur||0}"><button class="vplay">${ic('play',16)}</button><div class="vwave">${wave}</div><span class="vtime">${fmtDur(a.dur||0)}</span></div>`;
+  const txt = a.text || (App.trCache && App.trCache(a.url));
+  const tr = txt ? `<div class="vtext"><span class="vtl">${ic('chat', 12)} Transcrição</span>${esc(txt)}</div>`
+    : m && !m._sending ? `<button class="vtr" data-trans="${m.id}" data-turl="${esc(a.url)}">${ic('pen', 13)} Transcrever</button>` : '';
+  return `<div class="vbox"><div class="vplayer" data-voice="${esc(a.url)}" data-dur="${a.dur||0}"><button class="vplay">${ic('play',16)}</button><div class="vwave">${wave}</div><span class="vtime">${fmtDur(a.dur||0)}</span></div>${tr}</div>`;
 }
 const fmtDur = s => { s = Math.round(s); return Math.floor(s/60) + ':' + String(s%60).padStart(2,'0'); };
 function embedsHtml(m){
@@ -1359,8 +1362,8 @@ function msgHtml(m, prev){
   const meta = `<span class="mtime" title="${new Date(m.created_at).toLocaleString('pt-BR')}">${m.edited_at ? '<span class="edited">editado</span> · ' : ''}${m._sending ? ic('clock',11) : time}${m.pinned ? ' ' + ic('pin',11) : ''}</span>`;
   const content = M.editing === m.id
     ? `<textarea class="editbox" id="edBox" rows="2" maxlength="4000">${esc(m.content)}</textarea><div class="edithint">Esc para <a data-edcancel>cancelar</a> · Enter para <a data-edsave>salvar</a></div>`
-    : (m.content ? `<div class="ct ${emo?'jumbo':''}">${richText(m.content)}</div>` : '');
-  const bub = `<div class="bub ${emo?'emo':''} ${onlyMedia?'media':''}">${content}${atts}${emb}${meta}</div>`;
+    : (m.content && !(m.attachments || []).some(a => a.type === 'welcome') ? `<div class="ct ${emo?'jumbo':''}">${richText(m.content)}</div>` : '');
+  const bub = `<div class="bub ${emo?'emo':''} ${onlyMedia || (m.attachments || []).some(a => a.type === 'welcome')?'media':''}">${content}${atts}${emb}${meta}</div>`;
   const tools = m._sending ? '' : `<div class="acts">
       ${EMOJI.QUICK.slice(0,3).map(e => `<button data-quick="${e}" data-mid="${m.id}" title="Reagir">${e}</button>`).join('')}
       <button data-addrx="${m.id}" title="Adicionar reação">${ic('smilePlus',17)}</button>
@@ -1696,7 +1699,7 @@ async function uploadOne(f){
   let blob = f.file, meta = { name: f.file.name, type: f.file.type || 'application/octet-stream', size: f.file.size };
   if(/^image\//.test(f.file.type)){ try{ const c = await compressImage(f.file); blob = c.blob; Object.assign(meta, { type: c.type, w: c.w, h: c.h, thumb: c.thumb, size: c.blob.size }); }catch(e){} }
   else if(/^video\//.test(f.file.type)){ Object.assign(meta, await vidDims(f.file)); }
-  if(f.voice) Object.assign(meta, { voice: true, dur: f.dur, wave: f.wave });
+  if(f.voice) Object.assign(meta, { voice: true, dur: f.dur, wave: f.wave }, f.text ? { text: f.text.slice(0, 4000) } : {});
   if(f.spoiler) meta.spoiler = true;
   const ext = (meta.type.split('/')[1] || 'bin').replace('jpeg','jpg').replace(/[^a-z0-9]/g,'').slice(0,5) || 'bin';
   const base = (f.file.name || 'arquivo').replace(/\.[^.]+$/, '').normalize('NFD').replace(/[^\w-]+/g, '_').slice(0, 40) || 'arquivo';
@@ -1754,8 +1757,25 @@ async function startRecording(){
   M.rec = { rec, stream, ctx, chunks, peaks, t0, cancel:false };
   rec.ondataavailable = e => e.data.size && chunks.push(e.data);
   rec.start(250);
+  // transcrição ao vivo (reconhecimento de voz do navegador, quando existe)
+  const R0 = M.rec, SRc = window.SpeechRecognition || window.webkitSpeechRecognition;
+  R0.fin = ''; R0.inter = '';
+  if(SRc && P.voiceText !== false){
+    try{
+      const sr = new SRc(); sr.continuous = true; sr.interimResults = true; sr.lang = ({ en:'en-US', es:'es-ES' })[P.lang] || 'pt-BR';
+      sr.onresult = e => {
+        let fin = '', inter = '';
+        for(let i = 0; i < e.results.length; i++){ const x = e.results[i]; if(x.isFinal) fin += x[0].transcript + ' '; else inter += x[0].transcript; }
+        R0.fin = (R0.base || '') + fin; R0.inter = inter;
+        const tx = $('#recTx'); if(tx && M.rec === R0) tx.textContent = (R0.fin + R0.inter).trim().slice(-90);
+      };
+      sr.onend = () => { if(M.rec === R0){ R0.base = R0.fin; try{ sr.start(); }catch(e){} } else if(R0.srDone) R0.srDone(); };
+      sr.onerror = () => {};
+      sr.start(); R0.sr = sr;
+    }catch(e){}
+  }
   const bar = $('#recBar'); bar.classList.remove('hidden'); $('#cmpF').classList.add('hidden');
-  bar.innerHTML = `<button class="cbtn2" id="recX" title="Descartar">${ic('trash',20)}</button><span class="recdot"></span><span id="recT">0:00</span><div class="recwave" id="recW"></div><button class="btn sm" id="recOk">${ic('send',16)} Enviar</button>`;
+  bar.innerHTML = `<button class="cbtn2" id="recX" title="Descartar">${ic('trash',20)}</button><span class="recdot"></span><span id="recT">0:00</span><div class="recwave" id="recW"></div><span class="rectx" id="recTx"></span><button class="btn sm" id="recOk">${ic('send',16)} Enviar</button>`;
   $('#recX').onclick = () => stopRecording(true);
   $('#recOk').onclick = () => stopRecording(false);
   M.rec.timer = setInterval(() => {
@@ -1770,9 +1790,12 @@ function stopRecording(cancel){
   const R = M.rec; if(!R) return; M.rec = null;
   clearInterval(R.timer);
   const bar = $('#recBar'); if(bar){ bar.classList.add('hidden'); bar.innerHTML = ''; } const f = $('#cmpF'); if(f) f.classList.remove('hidden');
-  R.rec.onstop = () => {
+  const srEnd = R.sr ? new Promise(res => { R.srDone = res; try{ R.sr.stop(); }catch(e){ res(); } setTimeout(res, 1500); }) : Promise.resolve();
+  R.rec.onstop = async () => {
     R.stream.getTracks().forEach(t => t.stop()); R.ctx.close().catch(()=>{});
-    if(cancel) return;
+    if(cancel){ try{ R.sr && R.sr.abort(); }catch(e){} return; }
+    await srEnd;
+    const text = ((R.fin || '') + ' ' + (R.inter || '')).replace(/\s+/g, ' ').trim();
     const dur = (Date.now() - R.t0) / 1000;
     if(dur < 0.7){ App.toast('Áudio muito curto.'); return; }
     const type = (R.rec.mimeType || 'audio/webm').split(';')[0];
@@ -1780,7 +1803,7 @@ function stopRecording(cancel){
     const n = 40, step = Math.max(1, Math.floor(R.peaks.length / n));
     const wave = Array.from({ length: n }, (_, i) => Math.round(Math.max(...R.peaks.slice(i*step, i*step+step).concat([2])) / 2.2));
     const file = new File([blob], 'mensagem-de-voz.' + (type.includes('mp4') ? 'm4a' : type.includes('ogg') ? 'ogg' : 'webm'), { type });
-    sendMessage([{ file, preview: null, voice: true, dur, wave }]);
+    sendMessage([{ file, preview: null, voice: true, dur, wave, text }]);
   };
   R.rec.stop();
 }
@@ -2212,6 +2235,8 @@ function activitiesMenu(anchor){
   const el = $('#menu'); el.className = 'menu actpop';
   el.innerHTML = `<div class="pphead">${ic('gamepad',18)} Atividades</div>
     <button class="actbig" id="acWT"><span class="ai">${ic('tv',26)}</span><div><b>Assistir juntos</b><small>Vídeo do YouTube sincronizado para todo mundo na chamada</small></div></button>
+    <div class="actsec">${ic('dice',15)} Jogos <small>todo mundo da chamada</small></div>
+    <div class="gamegrid">${[['rabisco','🎨','Rabisco','desenhe e adivinhe'],['quiz','🧠','Quiz','10 perguntas'],['provavel','👀','Quem é mais provável','votação da galera']].map(([k,e,n,d]) => `<button data-newgame="${k}"><span>${e}</span><b>${n}</b><small>${d}</small></button>`).join('')}</div>
     <button class="actbig" id="acCap"><span class="ai">🗨️</span><div><b>Legendas ao vivo</b><small>Sua fala vira texto para todo mundo da chamada (acessibilidade)</small></div></button>
     <div class="actsec">${ic('music',15)} Soundboard <small>todos ouvem</small></div>
     <div class="sboard">${soundList().map(([id, e, n]) => `<button data-snd="${id}"><span>${e}</span>${n}</button>`).join('')}</div>
@@ -2222,6 +2247,7 @@ function activitiesMenu(anchor){
   el.style.top = Math.max(8, r.top - el.offsetHeight - 10) + 'px';
   el.querySelector('#acWT').onclick = () => { closeMenu(); wtPrompt(); };
   el.querySelector('#acCap').onclick = () => { closeMenu(); App.toggleCaptions(); };
+  el.querySelectorAll('[data-newgame]').forEach(b => b.onclick = () => { closeMenu(); App.gameNew && App.gameNew(b.dataset.newgame); });
   el.querySelectorAll('[data-snd]').forEach(b => b.onclick = () => {
     if(Date.now() - lastSound < 1500){ App.toast('Calma. Espere um pouquinho entre os sons'); return; }
     lastSound = Date.now(); Voice.sendFx({ t:'sound', id: b.dataset.snd });
@@ -5312,7 +5338,10 @@ editChannelModal = function(c){
           <label class="field"><span>Qualidade das câmeras e telas</span>${sel('ecVq', [['auto','Automática'],['720p','Até 720p (economiza internet)'],['1080p','Até 1080p']], c.video_quality || 'auto')}</label>
           ${row('Só “pressionar para falar”', 'Todo mundo precisa segurar a tecla para falar. Bom para canais cheios.', toggle('ecPtt', c.ptt_only))}
           ${row('Bloquear câmera', 'Ninguém liga a câmera neste canal (moderadores sim).', toggle('ecNoCam', c.no_camera))}
-          ${row('Bloquear compartilhar tela', 'Ninguém compartilha a tela neste canal (moderadores sim).', toggle('ecNoScr', c.no_screen))}`
+          ${row('Bloquear compartilhar tela', 'Ninguém compartilha a tela neste canal (moderadores sim).', toggle('ecNoScr', c.no_screen))}
+          <hr class="sdiv">
+          ${row('Modo palco', 'Para lives, aulas e anúncios: só quem está no palco fala. Quem entra fica na plateia ouvindo e pode levantar a mão. Moderadores chamam para o palco.', toggle('ecStage', c.stage))}
+          <label class="field ${c.stage ? '' : 'hidden'}" id="ecStT"><span>Assunto do palco</span><input class="inp" id="ecStTopic" maxlength="120" value="${esc(c.stage_topic || '')}" placeholder="Ex.: Sexta do karaokê, aula de violão…"></label>`
         : `
           <label class="field"><span>Modo lento</span>${sel('ecSlow', [[0,'Desligado'],[5,'5 segundos'],[10,'10 segundos'],[30,'30 segundos'],[60,'1 minuto'],[300,'5 minutos'],[900,'15 minutos'],[3600,'1 hora'],[21600,'6 horas']], c.slowmode || 0)}</label>
           <small class="mut" style="display:block;margin:-6px 0 12px">Cada pessoa espera esse tempo entre uma mensagem e outra. Moderadores não têm limite.</small>
@@ -5332,6 +5361,7 @@ editChannelModal = function(c){
       m.querySelectorAll('[data-p]').forEach(p => p.classList.toggle('hidden', p.dataset.p !== b.dataset.t));
     });
     q('#ecPriv').onchange = e => q('#ecRoles').classList.toggle('hidden', !e.target.checked);
+    if(q('#ecStage')) q('#ecStage').onchange = e => q('#ecStT').classList.toggle('hidden', !e.target.checked);
     q('#ecDel').onclick = async () => {
       if(!(await confirmBox('Apagar canal', `Apagar <b>${esc(c.name)}</b>? ${voice ? '' : 'Todas as mensagens serão perdidas.'}`, 'Apagar canal'))) return;
       const { error } = await App.sb.from('channels').delete().eq('id', c.id);
@@ -5343,7 +5373,7 @@ editChannelModal = function(c){
       const roleIds = q('#ecPriv').checked ? [...m.querySelectorAll('#ecRoles input:checked')].map(x => x.value) : [];
       if(q('#ecPriv').checked && !roleIds.length){ App.toast('Escolha pelo menos um cargo para o canal privado.', true); return; }
       const up = { name, category: q('#ecC').value.trim() || null, nsfw: q('#ecNs').checked, allowed_roles: roleIds.length ? roleIds : null };
-      if(voice) Object.assign(up, { user_limit: +q('#ecLim').value, bitrate: +q('#ecBr').value, video_quality: q('#ecVq').value, ptt_only: q('#ecPtt').checked, no_camera: q('#ecNoCam').checked, no_screen: q('#ecNoScr').checked });
+      if(voice) Object.assign(up, { user_limit: +q('#ecLim').value, bitrate: +q('#ecBr').value, video_quality: q('#ecVq').value, ptt_only: q('#ecPtt').checked, no_camera: q('#ecNoCam').checked, no_screen: q('#ecNoScr').checked, stage: q('#ecStage').checked, stage_topic: q('#ecStTopic').value.trim() || null });
       else Object.assign(up, { topic: q('#ecT').value.trim() || null, slowmode: +q('#ecSlow').value, readonly: q('#ecRo').checked, no_links: q('#ecNoL').checked, no_media: q('#ecNoM').checked });
       const { error } = await App.sb.from('channels').update(up).eq('id', c.id);
       if(error){ App.toast(error.message, true); return; }
@@ -5376,21 +5406,16 @@ function applyCallRules(){
 const _leaveVoiceS = leaveVoice;
 leaveVoice = async function(){ if(S._modeBefore){ App.prefs.mode = S._modeBefore; S._modeBefore = null; } return _leaveVoiceS.apply(this, arguments); };
 const _startScreen = Voice.startScreen.bind(Voice), _startCamera = Voice.startCamera.bind(Voice);
-const blockedNow = () => S.me.share_block_until && new Date(S.me.share_block_until) > new Date();
 Voice.startScreen = async function(){
   const ch = this.channel;
-  if(blockedNow()){ App.toast(`Você não pode compartilhar a tela até ${new Date(S.me.share_block_until).toLocaleString('pt-BR',{day:'2-digit',month:'2-digit',hour:'2-digit',minute:'2-digit'})}, por causa de conteúdo impróprio detectado.`, true); return; }
   if(ch && ch.no_screen && ch.server_id && !isMod(ch.server_id)){ App.toast('Compartilhar a tela está bloqueado neste canal.', true); return; }
   const r = await _startScreen(...arguments);
-  if(this.screenStream) Guard.watch('screen');
   return r;
 };
 Voice.startCamera = async function(){
   const ch = this.channel;
-  if(blockedNow()){ App.toast('Sua câmera e sua tela estão bloqueadas por 24 h por conteúdo impróprio.', true); return; }
   if(ch && ch.no_camera && ch.server_id && !isMod(ch.server_id)){ App.toast('A câmera está bloqueada neste canal.', true); return; }
   const r = await _startCamera(...arguments);
-  if(this.camStream) Guard.watch('cam');
   return r;
 };
 /* qualidade de vídeo do canal */
@@ -5402,73 +5427,6 @@ clampScreen = function(st){
   return r;
 };
 
-/* ---------- filtro automático: nudez/pornografia na tela ou na câmera ----------
-   Roda no próprio aparelho de quem transmite (nada é enviado para fora). Modelo aberto NSFWJS (MobileNetV2). */
-const Guard = {
-  model: null, loading: null, timers: {}, hits: {},
-  async load(){
-    if(this.model) return this.model;
-    if(!this.loading) this.loading = (async () => {
-      if(!window.tf){
-        await new Promise((res, rej) => { const s = document.createElement('script'); s.src = 'https://cdn.jsdelivr.net/npm/@tensorflow/tfjs@4.22.0/dist/tf.min.js'; s.onload = res; s.onerror = rej; document.head.appendChild(s); });
-      }
-      try{ await tf.setBackend('webgl'); }catch(e){}
-      await tf.ready(); tf.enableProdMode();
-      this.model = await tf.loadLayersModel('/models/nsfw/model.json');
-      tf.tidy(() => this.model.predict(tf.zeros([1, 224, 224, 3])));
-      return this.model;
-    })().catch(e => { this.loading = null; throw e; });
-    return this.loading;
-  },
-  async score(video){
-    const m = await this.load();
-    if(!video.videoWidth) return null;
-    const c = this._c || (this._c = document.createElement('canvas')); c.width = 224; c.height = 224;
-    const g = c.getContext('2d', { willReadFrequently: true });
-    // olha a imagem inteira e também o centro (onde costuma estar o conteúdo)
-    const out = [];
-    for(const crop of [[0, 0, 1], [0.2, 0.15, 0.6]]){
-      const [x, y, s] = crop, w = video.videoWidth, h = video.videoHeight, side = Math.min(w, h) * (s === 1 ? 1 : s * 1.4);
-      if(s === 1) g.drawImage(video, 0, 0, 224, 224); else g.drawImage(video, (w - side) / 2, (h - side) / 2, side, side, 0, 0, 224, 224);
-      const p = tf.tidy(() => m.predict(tf.browser.fromPixels(c).toFloat().div(255).reshape([1, 224, 224, 3])).dataSync());
-      out.push(p);
-    }
-    // classes: 0 desenho · 1 hentai · 2 neutro · 3 pornô · 4 sensual
-    const worst = out.reduce((a, p) => Math.max(a, p[3] + p[1] * 0.9), 0);
-    return worst;
-  },
-  watch(kind){
-    clearInterval(this.timers[kind]); this.hits[kind] = 0;
-    const stream = kind === 'screen' ? Voice.screenStream : Voice.camStream;
-    if(!stream) return;
-    const v = document.createElement('video'); v.muted = true; v.playsInline = true; v.srcObject = stream; v.play().catch(() => {});
-    const check = async () => {
-      if(App.perf === 'game' && (this._skip = !this._skip)) return;   // modo jogo: confere a cada 5 s
-      const cur = kind === 'screen' ? Voice.screenStream : Voice.camStream;
-      if(!cur || cur !== stream){ clearInterval(this.timers[kind]); v.srcObject = null; return; }
-      let sc = null;
-      try{ sc = await this.score(v); }catch(e){ return; }
-      if(sc == null) return;
-      this.hits[kind] = sc > 0.82 ? this.hits[kind] + 1 : sc > 0.6 ? this.hits[kind] : 0;
-      if(sc > 0.95 || this.hits[kind] >= 2) this.trip(kind, sc);
-    };
-    this.load().then(() => { check(); this.timers[kind] = setInterval(check, 2500); }).catch(() => {});
-  },
-  async trip(kind, sc){
-    clearInterval(this.timers[kind]);
-    if(kind === 'screen') Voice.stopScreen(); else Voice.stopCamera();
-    renderStage && renderStage(); renderSidebar();
-    let until = null;
-    try{ const { data } = await App.sb.rpc('report_nsfw', { p_kind: kind === 'screen' ? 'screen_nsfw' : 'camera_nsfw', p_channel: Voice.channel ? Voice.channel.id : null, p_score: Math.round(sc * 100) / 100 }); until = data; }catch(e){}
-    if(until){ S.me.share_block_until = until; }
-    modal(`<div class="mh"><h2>${kind === 'screen' ? 'Compartilhamento de tela parado' : 'Câmera desligada'}</h2>
-      <p>O Telão detectou possível nudez ou pornografia na sua ${kind === 'screen' ? 'tela' : 'câmera'} e parou a transmissão automaticamente.</p></div>
-      <div class="mc"><div class="warnbox">${until ? `Como isso aconteceu de novo, você fica <b>sem compartilhar tela e câmera até ${new Date(until).toLocaleString('pt-BR',{day:'2-digit',month:'2-digit',hour:'2-digit',minute:'2-digit'})}</b>.` : 'Este é um aviso. Se acontecer de novo nas próximas 24 horas, você fica 24 horas sem poder compartilhar tela e câmera.'}</div>
-      <p class="mut small" style="margin-top:10px">A análise é automática e acontece só no seu aparelho. Se foi um engano, é só compartilhar de novo.</p></div>
-      <div class="mf"><button class="btn" data-close>Entendi</button></div>`);
-  },
-};
-App.Guard = Guard;
 
 /* ---------- segurança da conta: verificação em duas etapas, sair de tudo ---------- */
 async function secSecurity(box, back){
@@ -5582,18 +5540,11 @@ async function secSrvSafety(box, back){
   box.innerHTML = `${back}<h2>Segurança do servidor</h2>
     ${row('Servidor +18', 'Todos os canais exigem ter 18 anos ou mais. Quem não tem idade vê um aviso ao entrar.', toggle('ssNs', s.nsfw, !admin))}
     <h3>Nível de verificação</h3><p class="mut small">Quem não cumprir o nível consegue ler, mas não consegue mandar mensagem.</p>
-    <div class="vlevels">${[[0,'Nenhum','Qualquer membro pode falar.'],[1,'Baixo','A conta precisa existir há mais de 5 minutos.'],[2,'Médio','Também precisa estar no servidor há mais de 10 minutos.'],[3,'Alto','Também precisa ter a verificação em duas etapas ligada.']].map(([v, l, d]) => `<button class="vl ${(s.verify_level || 0) === v ? 'on' : ''}" data-vl="${v}" ${admin ? '' : 'disabled'}><b>${l}</b><small>${d}</small></button>`).join('')}</div>
-    <h3>Filtro automático de conteúdo</h3>
-    <p class="mut small">Telas e câmeras com nudez ou pornografia são paradas automaticamente, em qualquer canal. Quem for pego duas vezes em 24 horas fica 24 horas sem transmitir.</p>
-    <div id="ssEv" class="mut small">Carregando ocorrências…</div>`;
+    <div class="vlevels">${[[0,'Nenhum','Qualquer membro pode falar.'],[1,'Baixo','A conta precisa existir há mais de 5 minutos.'],[2,'Médio','Também precisa estar no servidor há mais de 10 minutos.'],[3,'Alto','Também precisa ter a verificação em duas etapas ligada.']].map(([v, l, d]) => `<button class="vl ${(s.verify_level || 0) === v ? 'on' : ''}" data-vl="${v}" ${admin ? '' : 'disabled'}><b>${l}</b><small>${d}</small></button>`).join('')}</div>`;
   const $b = q => box.querySelector(q);
   const upd = async v => { const { error } = await App.sb.from('servers').update(v).eq('id', s.id); if(error){ App.toast(error.message, true); return; } await loadServers(); SET.server = S.servers.find(x => x.id === s.id) || s; renderSettings(); renderSidebar(); };
   $b('#ssNs').onchange = e => upd({ nsfw: e.target.checked });
   box.querySelectorAll('[data-vl]').forEach(b => b.onclick = () => upd({ verify_level: +b.dataset.vl }));
-  const { data } = await App.sb.from('safety_events').select('*').eq('server_id', s.id).order('created_at', { ascending: false }).limit(20);
-  await ensureProfiles((data || []).map(x => x.user_id));
-  const el = $b('#ssEv'); if(!el) return;
-  el.innerHTML = (data || []).length ? `<div class="evlog">${data.map(x => `<div>${avatar(prof(x.user_id), 'xs')} <b>${esc(prof(x.user_id).display_name)}</b> · ${x.kind === 'screen_nsfw' ? 'tela parada' : 'câmera desligada'} · ${new Date(x.created_at).toLocaleString('pt-BR',{day:'2-digit',month:'2-digit',hour:'2-digit',minute:'2-digit'})}</div>`).join('')}</div>` : 'Nenhuma ocorrência.';
 }
 /* =====================================================================
    v6.5: SOLICITAÇÕES DE MENSAGEM · COMUNIDADES · TAGS DE SERVIDOR · AVISOS DO TELÃO · EMOJIS DE SERVIDOR
@@ -6300,6 +6251,9 @@ function renderGroupMain(g, head, body, back, keepMessages){
   mountMessages(g, $('#msgWrap'), `<div class="welcome"><div class="gwel">${avs}</div><h1>${esc(groupName(g))}</h1><p>Este é o começo do grupo. ${n} pessoas: ${(g.members || []).map(u => '<b>' + esc(prof(u).display_name) + '</b>').join(', ')}.</p><p class="mut">Dá para ligar, abrir a câmera e transmitir a tela aqui mesmo.</p></div>`);
 }
 App.newGroupModal = newGroupModal;
+/* entrou na chamada pelo botão (sem atender o toque): o aviso de toque some */
+const _joinVoiceGr = joinVoice;
+joinVoice = async function(ch){ if(ch && S.ringing && S.ringing.channel_id === ch.id) stopRing(); return _joinVoiceGr.apply(this, arguments); };
 /* =====================================================================
    v6.8: TEMPO EM CALL + ESTATÍSTICAS DO SERVIDOR
    ===================================================================== */
@@ -6585,6 +6539,729 @@ function clipModal(blob, start, len, video, who){
     };
   });
 }
+/* =====================================================================
+   v6.9: CONTA OFICIAL DO TELÃO + DM DE BOAS-VINDAS
+   A mensagem é criada pelo banco quando a conta nasce (trigger welcome_new_profile).
+   ===================================================================== */
+const TELAO_BOT = '7e1a0000-0000-4000-a000-000000000001';
+const isBot = uid => uid === TELAO_BOT;
+const officialBadge = (sm) => `<span class="offbadge ${sm ? 'sm' : ''}" data-tip="Conta oficial do Telão">${ic('check', sm ? 10 : 11)} OFICIAL</span>`;
+App.isTelaoBot = isBot;
+
+const _nameHtmlB = nameHtml;
+nameHtml = function(p){ return _nameHtmlB.apply(this, arguments) + (p && isBot(p.id) ? officialBadge(true) : ''); };
+
+function welcomeCardHtml(a){
+  const nm = esc((S.me && S.me.display_name) || a.name || '');
+  const desk = !window.telaoDesktop && S.cfg && S.cfg.desktop_url;
+  const steps = [
+    ['friends', 'userPlus', 'Chame seus amigos', 'Adicione pelo nome de usuário e já dá para conversar, ligar e transmitir a tela com som.'],
+    ['explore', 'globe', 'Encontre (ou crie) um servidor', 'Veja as comunidades abertas ou crie o servidor da sua galera no botão +.'],
+    ['profile', 'palette', 'Deixe o perfil com a sua cara', 'Foto, cor, banner, status e o que você está ouvindo no Spotify.'],
+  ];
+  if(desk) steps.push(['app', 'download', 'Baixe o Telão para Windows', 'Abre sozinho com o computador e fica mais leve enquanto você joga.']);
+  const keys = [['Ctrl', 'K', 'achar qualquer coisa'], ['Alt', 'C', 'clipe dos últimos 30 s'], ['Ctrl', 'Shift', 'G', 'modo jogo']];
+  return `<div class="wcard">
+    <div class="wtop"><div class="wglow"></div><img class="wlogo" src="/icons/simbolo.svg" alt="">
+      <div class="wtx"><span class="weye">BEM-VINDO AO TELÃO</span><h3>Que bom que você chegou, ${nm}! 🎉</h3>
+      <p>Aqui é o lugar da sua galera: chamada de voz e vídeo, tela compartilhada com som, chat, servidores e jogos dentro da call.</p></div></div>
+    <div class="wsteps">${steps.map(([k, i, t, d], n) => `<button class="wstep" data-wact="${k}"><span class="wn">${n + 1}</span><span class="wi">${ic(i, 18)}</span><span class="wt"><b>${t}</b><small>${d}</small></span><span class="wgo">${ic('chevRight', 16)}</span></button>`).join('')}</div>
+    <div class="wkeys"><span class="wkl">${ic('keyboard', 14)} Atalhos que valem ouro</span>${keys.map(k => `<span class="wk">${k.slice(0, -1).map(x => `<kbd>${x}</kbd>`).join('+')}<small>${k[k.length - 1]}</small></span>`).join('')}</div>
+    <div class="wfoot">Esta é a conta oficial do Telão. Ela não responde mensagens, mas é por aqui que chegam as novidades importantes.</div>
+  </div>`;
+}
+App.welcomeCardHtml = welcomeCardHtml;
+
+document.addEventListener('click', e => {
+  const b = e.target.closest('[data-wact]'); if(!b) return;
+  const k = b.dataset.wact;
+  if(k === 'friends'){ S.friendTab = 'add'; go({ kind: 'home', dm: null }); }
+  else if(k === 'explore') App.openExplore && App.openExplore();
+  else if(k === 'profile') openSettings('user', 'profile');
+  else if(k === 'app' && S.cfg && S.cfg.desktop_url) window.open('/baixar', '_blank', 'noopener');
+});
+
+/* na conversa com a conta oficial: sem caixa de mensagem e sem ligar */
+const _mountMessagesB = mountMessages;
+mountMessages = async function(ch){
+  const r = await _mountMessagesB.apply(this, arguments);
+  if(ch && ch.kind === 'dm' && isBot(dmOther(ch))){
+    const c = document.querySelector('.composer');
+    if(c) c.innerHTML = `<div class="botnote">${ic('info', 16)} Esta é a conta oficial do Telão. Ela não responde mensagens.</div>`;
+  }
+  return r;
+};
+const _renderSidebarB = renderSidebar;
+renderSidebar = function(){
+  const r = _renderSidebarB.apply(this, arguments);
+  document.querySelectorAll('.dmitem[data-dm]').forEach(el => {
+    const d = S.dms.find(x => x.id === el.dataset.dm);
+    if(d && isBot(dmOther(d)) && !el.querySelector('.offbadge')){ el.classList.add('botdm'); const n = el.querySelector('.nm, b, .dmt span'); (n || el).insertAdjacentHTML('beforeend', officialBadge(true)); }
+  });
+  return r;
+};
+const _renderMainB = renderMain;
+renderMain = function(){
+  const r = _renderMainB.apply(this, arguments);
+  const d = S.route.kind === 'home' && S.route.dm && S.dms.find(x => x.id === S.route.dm);
+  if(d && isBot(dmOther(d))){
+    ['#dmCall', '#dmVideo', '#dmGroup'].forEach(q => { const b = document.querySelector(q); if(b) b.remove(); });
+    const t = document.querySelector('#mainHead .htitle b, #mainHead .htitle'); if(t && !document.querySelector('#mainHead .offbadge')) t.insertAdjacentHTML('beforeend', officialBadge());
+    document.querySelector('#mainHead')?.classList.add('botdm');
+  }
+  return r;
+};
+/* =====================================================================
+   v6.9: TRANSCREVER MENSAGEM DE VOZ
+   Quando o texto não saiu na hora da gravação (ex.: app do Windows, Firefox), o botão
+   "Transcrever" roda o Whisper no próprio aparelho. O modelo (~75 MB) é baixado uma vez e fica guardado.
+   ===================================================================== */
+const TRX = { pipe: null, loading: null, busy: new Set() };
+const trStore = () => { try{ return JSON.parse(localStorage.getItem('telao-tr') || '{}'); }catch(e){ return {}; } };
+App.trCache = url => trStore()[url] || null;
+function trSave(url, text){
+  try{
+    const o = trStore(); o[url] = text;
+    const keys = Object.keys(o); if(keys.length > 300) keys.slice(0, keys.length - 300).forEach(k => delete o[k]);
+    localStorage.setItem('telao-tr', JSON.stringify(o));
+  }catch(e){}
+}
+async function whisperPipe(onProgress){
+  if(TRX.pipe) return TRX.pipe;
+  if(!TRX.loading) TRX.loading = (async () => {
+    const T = await import('https://cdn.jsdelivr.net/npm/@huggingface/transformers@3');
+    T.env.allowLocalModels = false;
+    TRX.pipe = await T.pipeline('automatic-speech-recognition', 'Xenova/whisper-base', {
+      progress_callback: p => { if(p && p.status === 'progress' && TRX.onProgress) TRX.onProgress(Math.round(p.progress || 0)); },
+    });
+    return TRX.pipe;
+  })().catch(e => { TRX.loading = null; throw e; });
+  TRX.onProgress = onProgress;
+  return TRX.loading;
+}
+async function audio16k(url){
+  const buf = await (await fetch(url)).arrayBuffer();
+  const OAC = window.OfflineAudioContext || window.webkitOfflineAudioContext;
+  const ab = await new OAC(1, 16000, 16000).decodeAudioData(buf);
+  if(ab.numberOfChannels === 1) return ab.getChannelData(0);
+  const a = ab.getChannelData(0), b = ab.getChannelData(1), out = new Float32Array(a.length);
+  for(let i = 0; i < a.length; i++) out[i] = (a[i] + b[i]) / 2;
+  return out;
+}
+async function transcribeVoice(btn){
+  const mid = btn.dataset.trans, url = btn.dataset.turl;
+  if(TRX.busy.has(url)) return;
+  TRX.busy.add(url);
+  const set = h => { const b = document.querySelector(`.vtr[data-turl="${CSS.escape(url)}"]`); if(b) b.innerHTML = h; };
+  set(`<span class="spin xs"></span> ${TRX.pipe ? 'Transcrevendo…' : 'Preparando…'}`);
+  try{
+    const pipe = await whisperPipe(pct => set(`<span class="spin xs"></span> Baixando o transcritor ${pct}% (só na primeira vez)`));
+    set(`<span class="spin xs"></span> Transcrevendo…`);
+    const pcm = await audio16k(url);
+    const lang = ({ en: 'english', es: 'spanish' })[P.lang] || 'portuguese';
+    const out = await pipe(pcm, { language: lang, task: 'transcribe', chunk_length_s: 30, stride_length_s: 5 });
+    const text = String((out && out.text) || '').replace(/\s+/g, ' ').trim();
+    if(!text){ set(`${ic('pen', 13)} Não deu para entender o áudio`); return; }
+    trSave(url, text);
+    const m = M.list.find(x => x.id === mid);
+    // quem mandou o áudio salva o texto na mensagem, aí todo mundo vê
+    if(m && m.author_id === S.me.id){
+      const atts = (m.attachments || []).map(a => a.url === url ? { ...a, text } : a);
+      App.sb.from('messages').update({ attachments: atts }).eq('id', m.id).then(({ error }) => { if(!error) m.attachments = atts; });
+    }
+    const box = document.querySelector(`.vtr[data-turl="${CSS.escape(url)}"]`);
+    if(box) box.outerHTML = `<div class="vtext"><span class="vtl">${ic('chat', 12)} Transcrição</span>${esc(text)}</div>`;
+  }catch(e){
+    console.warn('transcrição', e);
+    set(`${ic('pen', 13)} Não deu para transcrever agora. Tentar de novo`);
+  }finally{ TRX.busy.delete(url); }
+}
+document.addEventListener('click', e => { const b = e.target.closest('.vtr[data-trans]'); if(b){ e.preventDefault(); transcribeVoice(b); } });
+/* =====================================================================
+   v6.9: MODO PALCO — canal de voz em que só quem está no palco fala; a plateia escuta e levanta a mão.
+   Quem não está no palco fica mudo para todo mundo (os outros aparelhos zeram o volume dele),
+   então funciona mesmo se alguém tentar burlar o próprio app.
+   ===================================================================== */
+S.stage = new Map(); // channel_id -> [{ user_id, status, created_at }]
+const isStage = ch => !!(ch && ch.stage && ch.server_id);
+const stageRows = cid => S.stage.get(cid) || [];
+const isSpeaker = (cid, uid) => stageRows(cid).some(r => r.user_id === uid && r.status === 'speaker');
+const handUp = (cid, uid) => stageRows(cid).some(r => r.user_id === uid && r.status === 'hand');
+function stageMod(sid){ const s = S.servers.find(x => x.id === sid); return !!s && (s.owner_id === S.me.id || App.hasPerm(sid, 64) || App.hasPerm(sid, 1)); }
+const inStageAudience = () => isStage(Voice.channel) && !isSpeaker(Voice.channel.id, S.me.id);
+
+async function loadStage(cid){
+  ensureStageRt();
+  const { data } = await App.sb.from('stage_queue').select('*').eq('channel_id', cid);
+  S.stage.set(cid, data || []);
+}
+async function stageSet(uid, status){
+  const ch = Voice.channel || findChannel(S.route.cid);
+  if(!ch) return;
+  const { error } = await App.sb.rpc('stage_set', { p_channel: ch.id, p_user: uid, p_status: status });
+  if(error){ App.toast(error.message, true); return; }
+  await loadStage(ch.id); stageApply(); renderStage();
+}
+
+/* quem está na plateia fica mudo para todos */
+const _srvVoiceMutedP = App.srvVoiceMuted;
+App.srvVoiceMuted = uid => {
+  const ch = Voice.channel;
+  if(isStage(ch) && !isSpeaker(ch.id, uid)) return true;
+  return _srvVoiceMutedP ? _srvVoiceMutedP(uid) : false;
+};
+let wasSpeaker = null;
+function stageApply(){
+  const ch = Voice.channel;
+  if(!isStage(ch)){ wasSpeaker = null; return; }
+  const sid = ch.server_id, m = (S.members.get(sid) || []).find(x => x.user_id === S.me.id) || {};
+  const spk = isSpeaker(ch.id, S.me.id);
+  Voice.setForced(!!m.voice_muted || !spk, !!m.voice_deafened);
+  if(!spk){ if(Voice.screenStream) Voice.stopScreen(); if(Voice.camStream) Voice.stopCamera(); }
+  if(wasSpeaker !== null && wasSpeaker !== spk){
+    App.toast(spk ? '🎤 Você subiu no palco! Ligue o microfone para falar.' : 'Você voltou para a plateia.');
+  }
+  wasSpeaker = spk;
+  Voice.peers.forEach(p => Voice.applyVolume(p));
+  Voice.track && Voice.track();
+}
+const _toggleMuteP = Voice.toggleMute.bind(Voice);
+Voice.toggleMute = function(){
+  if(inStageAudience()){ App.toast('Você está na plateia. Levante a mão ✋ para pedir para falar.'); return; }
+  return _toggleMuteP();
+};
+const _startScreenP = Voice.startScreen, _startCameraP = Voice.startCamera;
+Voice.startScreen = async function(){ if(inStageAudience()){ App.toast('Só quem está no palco pode transmitir a tela.', true); return; } return _startScreenP.apply(this, arguments); };
+Voice.startCamera = async function(){ if(inStageAudience()){ App.toast('Só quem está no palco pode ligar a câmera.', true); return; } return _startCameraP.apply(this, arguments); };
+if(App.onModChange){ const _omc = App.onModChange; App.onModChange = row => { _omc(row); stageApply(); }; }
+
+const _joinVoiceP = joinVoice;
+joinVoice = async function(ch){
+  if(isStage(ch)) await loadStage(ch.id);
+  wasSpeaker = null;
+  const r = await _joinVoiceP.apply(this, arguments);
+  if(isStage(Voice.channel)){
+    stageApply();
+    if(!isSpeaker(ch.id, S.me.id)) App.toast(`Você entrou no palco ${ch.name} como ouvinte. Levante a mão ✋ para pedir para falar.`);
+  }
+  return r;
+};
+const _leaveVoiceP = leaveVoice;
+leaveVoice = async function(){
+  const ch = Voice.channel;
+  if(isStage(ch) && stageRows(ch.id).some(r => r.user_id === S.me.id)) App.sb.rpc('stage_set', { p_channel: ch.id, p_user: S.me.id, p_status: null }).then(() => {}, () => {});
+  wasSpeaker = null;
+  return _leaveVoiceP.apply(this, arguments);
+};
+
+/* tempo real */
+let stageRt = null;
+function ensureStageRt(){
+  if(stageRt) return;
+  stageRt = App.sb.channel('stage-rt').on('postgres_changes', { event: '*', schema: 'public', table: 'stage_queue' }, async p => {
+  const cid = (p.new && p.new.channel_id) || (p.old && p.old.channel_id);
+  const watching = (Voice.channel && Voice.channel.id === cid) || S.stage.has(cid);
+  if(!watching) return;
+  const before = Voice.channel && Voice.channel.id === cid && stageRows(cid).filter(r => r.status === 'hand').length;
+  await loadStage(cid);
+  if(Voice.channel && Voice.channel.id === cid){
+    stageApply();
+    const hands = stageRows(cid).filter(r => r.status === 'hand').length;
+    if(stageMod(Voice.channel.server_id) && hands > before) App.sfx && App.sfx('msg');
+  }
+  renderStage(); renderSidebar();
+}).subscribe();
+}
+
+/* ---------- tela do palco ---------- */
+const _renderStageP = renderStage;
+renderStage = function(){
+  _renderStageP.apply(this, arguments);
+  const wrap = $('#stageWrap'); if(!wrap) return;
+  const { ch } = stageChannel(); if(!isStage(ch)) return;
+  const inThis = Voice.channel && Voice.channel.id === ch.id;
+  const users = voiceUsers(ch);
+  if(!inThis){
+    const j = wrap.querySelector('#stJoin'); if(j) j.innerHTML = `${ic('headphones', 18)} Entrar como ouvinte`;
+    const h = wrap.querySelector('.joincard h2'); if(h) h.insertAdjacentHTML('afterend', `<div class="stgtopic">${ic('signal', 14)} Palco${ch.stage_topic ? ' · ' + esc(ch.stage_topic) : ''}</div>`);
+    return;
+  }
+  const stg = wrap.querySelector('.stage'); if(!stg) return;
+  const mod = stageMod(ch.server_id), me = S.me.id;
+  const present = new Set(users.map(u => u.user_id));
+  const speakers = [...new Set(users.filter(u => isSpeaker(ch.id, u.user_id)).map(u => u.user_id))];
+  const audience = [...new Set(users.map(u => u.user_id))].filter(u => !speakers.includes(u));
+  const hands = stageRows(ch.id).filter(r => r.status === 'hand' && present.has(r.user_id)).sort((a, b) => a.created_at.localeCompare(b.created_at));
+
+  // só quem está no palco aparece em destaque
+  const grid = stg.querySelector('.tiles.grid');
+  stg.querySelectorAll('.tile[data-vuser]').forEach(t => { if(!speakers.includes(t.dataset.vuser)) t.remove(); });
+  if(grid){
+    grid.className = `tiles grid n${Math.max(1, Math.min(speakers.length, 9))}`;
+    if(!speakers.length) grid.innerHTML = `<div class="stgempty">${ic('signal', 34)}<b>Ninguém no palco ainda</b><span>${mod ? 'Suba no palco ou chame alguém que levantou a mão.' : 'Levante a mão para pedir para falar.'}</span></div>`;
+  }
+  const chip = (uid, extra = '') => `<span class="stgchip">${avatar(prof(uid), 'xs')}<span>${esc(prof(uid).display_name)}${uid === me ? ' (você)' : ''}</span>${extra}</span>`;
+  const panel = document.createElement('div'); panel.className = 'stgpanel';
+  panel.innerHTML = `
+    <div class="stgh"><span class="stglive">${ic('signal', 13)} PALCO</span><b>${esc(ch.stage_topic || ch.name)}</b><span class="mut small">${speakers.length} no palco · ${audience.length} ouvindo</span></div>
+    ${mod && hands.length ? `<div class="stghands"><span class="stgl">${ic('hand', 14)} Mãos levantadas (${hands.length})</span>${hands.map(r => chip(r.user_id, `<button class="btn sm" data-stup="${r.user_id}">Chamar</button><button class="ibtn sm" data-stdown="${r.user_id}" data-tip="Recusar">${ic('x', 14)}</button>`)).join('')}</div>` : ''}
+    ${speakers.length && mod ? `<div class="stgrow"><span class="stgl">No palco</span>${speakers.map(u => chip(u, u === me ? '' : `<button class="ibtn sm" data-stdown="${u}" data-tip="Tirar do palco">${ic('x', 14)}</button>`)).join('')}</div>` : ''}
+    <div class="stgrow"><span class="stgl">Plateia</span>${audience.length ? `<span class="stgavs">${audience.slice(0, 18).map(u => `<span class="stgav" data-tip="${esc(prof(u).display_name)}${handUp(ch.id, u) ? ' levantou a mão' : ''}">${avatar(prof(u), 'sm')}${handUp(ch.id, u) ? '<i>✋</i>' : ''}</span>`).join('')}${audience.length > 18 ? `<span class="mut small">+${audience.length - 18}</span>` : ''}</span>` : '<span class="mut small">ninguém só ouvindo</span>'}</div>`;
+  stg.insertBefore(panel, stg.firstChild);
+  // botão de ação no lugar certo da barra
+  const bar = stg.querySelector('.stagebar .sbg');
+  const spk = isSpeaker(ch.id, me);
+  const act = spk ? `<button class="cbtn" id="sbStage" data-tip="Descer para a plateia">${ic('arrowDown', 22)}</button>`
+    : mod ? `<button class="cbtn on" id="sbStage" data-tip="Subir no palco">${ic('signal', 22)}</button>`
+    : `<button class="cbtn ${handUp(ch.id, me) ? 'on' : ''}" id="sbStage" data-tip="${handUp(ch.id, me) ? 'Baixar a mão' : 'Levantar a mão'}"><span class="handic">✋</span></button>`;
+  if(bar) bar.insertAdjacentHTML('beforeend', act);
+  const mic = stg.querySelector('#sbMic'); if(mic && !spk){ mic.classList.add('off', 'locked'); mic.dataset.tip = 'Você está na plateia'; }
+  const sb = stg.querySelector('#sbStage');
+  if(sb) sb.onclick = () => spk ? stageSet(me, null) : mod ? stageSet(me, 'speaker') : stageSet(me, handUp(ch.id, me) ? null : 'hand');
+  panel.querySelectorAll('[data-stup]').forEach(b => b.onclick = () => stageSet(b.dataset.stup, 'speaker'));
+  panel.querySelectorAll('[data-stdown]').forEach(b => b.onclick = () => stageSet(b.dataset.stdown, null));
+};
+
+/* lista de canais: etiqueta de palco */
+const _renderSidebarP = renderSidebar;
+renderSidebar = function(){
+  _renderSidebarP.apply(this, arguments);
+  document.querySelectorAll('#sbBody .ch[data-cid]').forEach(el => {
+    const c = findChannel(el.dataset.cid); if(!isStage(c) || el.querySelector('.stgtag')) return;
+    const nm = el.querySelector('.nm'); if(nm) nm.insertAdjacentHTML('afterend', `<span class="stgtag" data-tip="Palco: só quem está no palco fala">PALCO</span>`);
+  });
+};
+App.loadStage = loadStage;
+/* =====================================================================
+   v6.9: JOGOS DENTRO DA CHAMADA — Rabisco (desenhe e adivinhe), Quiz e Quem é mais provável
+   Quem abre o jogo é o anfitrião: o aparelho dele guarda o estado e manda para todos pela chamada.
+   Se o anfitrião sair, o próximo jogador assume sozinho, sem perder a partida.
+   ===================================================================== */
+const GAMES = {
+  rabisco: { name: 'Rabisco', icon: '🎨', desc: 'Um desenha, o resto adivinha. Quanto mais rápido, mais pontos.', min: 2 },
+  quiz: { name: 'Quiz', icon: '🧠', desc: '10 perguntas de conhecimentos gerais. Acertar rápido vale mais.', min: 1 },
+  provavel: { name: 'Quem é mais provável', icon: '👀', desc: 'Todo mundo vota em quem combina mais com a frase. Sem certo nem errado.', min: 3 },
+};
+const T_PICK = 15000, T_DRAW = 80000, T_REVEAL = 5000, T_Q = 15000, T_ANS = 4500, T_VOTE = 20000, T_RES = 6000;
+const WORDS = ('casa,sol,gato,cachorro,árvore,carro,bicicleta,avião,foguete,peixe,pizza,hambúrguer,sorvete,banana,maçã,abacaxi,melancia,uva,bolo,café,xícara,garrafa,celular,computador,teclado,mouse,fone de ouvido,televisão,controle,cadeira,mesa,cama,sofá,janela,porta,chave,cadeado,relógio,óculos,chapéu,sapato,camiseta,guarda-chuva,nuvem,chuva,raio,arco-íris,lua,estrela,montanha,praia,ilha,vulcão,rio,ponte,castelo,coroa,espada,escudo,dragão,fantasma,robô,alienígena,astronauta,pirata,mago,sereia,palhaço,bola,gol,troféu,medalha,violão,bateria,microfone,piano,livro,lápis,tesoura,mochila,presente,balão,vela,fogo,flor,cacto,cogumelo,folha,borboleta,abelha,aranha,cobra,tartaruga,coelho,leão,girafa,elefante,macaco,pinguim,coruja,pato,galinha,vaca,porco,cavalo,polvo,tubarão,baleia,caranguejo,dinossauro,unicórnio,boneco de neve,pipoca,cachorro-quente,ovo,queijo,pão,coxinha,brigadeiro,sanduíche,escova de dente,chuveiro,lâmpada,barco,trem,ônibus,moto,semáforo,roda-gigante,barraca,mapa,bússola,âncora,cometa,planeta,igreja,farol,trator,helicóptero,submarino,skate,patins,pipa,ioiô,dado,baralho,tênis,meia,luva,cachecol,bigode,dente,olho,nariz,orelha,mão,pé,coração,cérebro,esqueleto,múmia,vampiro,zumbi,bruxa,anjo').split(',');
+const QUIZ = [
+  ['Qual é a capital da Austrália?', ['Canberra', 'Sydney', 'Melbourne', 'Perth']],
+  ['Quantos jogadores de cada time ficam em campo numa partida de futebol?', ['11', '10', '12', '9']],
+  ['Qual planeta é conhecido como Planeta Vermelho?', ['Marte', 'Júpiter', 'Vênus', 'Saturno']],
+  ['Quem pintou a Mona Lisa?', ['Leonardo da Vinci', 'Michelangelo', 'Rafael', 'Van Gogh']],
+  ['Qual é o maior oceano do mundo?', ['Pacífico', 'Atlântico', 'Índico', 'Ártico']],
+  ['Em que ano o Brasil ganhou a primeira Copa do Mundo?', ['1958', '1962', '1970', '1950']],
+  ['Qual é o símbolo químico do ouro?', ['Au', 'Ag', 'Fe', 'Go']],
+  ['Quantos lados tem um hexágono?', ['6', '5', '7', '8']],
+  ['Qual é o maior país do mundo em área?', ['Rússia', 'Canadá', 'China', 'Estados Unidos']],
+  ['Quantos estados tem o Brasil (sem contar o Distrito Federal)?', ['26', '27', '25', '28']],
+  ['Qual é o maior mamífero do mundo?', ['Baleia-azul', 'Elefante-africano', 'Girafa', 'Tubarão-baleia']],
+  ['Qual é a capital do Canadá?', ['Ottawa', 'Toronto', 'Vancouver', 'Montreal']],
+  ['Quanto é 7 × 8?', ['56', '54', '64', '48']],
+  ['Qual gás as plantas absorvem na fotossíntese?', ['Gás carbônico', 'Oxigênio', 'Nitrogênio', 'Hélio']],
+  ['Quem escreveu "Dom Casmurro"?', ['Machado de Assis', 'José de Alencar', 'Clarice Lispector', 'Jorge Amado']],
+  ['Qual é o osso mais longo do corpo humano?', ['Fêmur', 'Tíbia', 'Úmero', 'Rádio']],
+  ['Em qual continente fica o Egito?', ['África', 'Ásia', 'Europa', 'Oceania']],
+  ['Qual é a velocidade aproximada da luz no vácuo?', ['300 mil km/s', '30 mil km/s', '3 milhões de km/s', '300 km/s']],
+  ['Quantos minutos tem um dia?', ['1.440', '1.240', '1.600', '1.340']],
+  ['Qual é a moeda do Japão?', ['Iene', 'Yuan', 'Won', 'Rupia']],
+  ['Qual instrumento tem 88 teclas no modelo padrão?', ['Piano', 'Violão', 'Bateria', 'Saxofone']],
+  ['Qual é o menor planeta do Sistema Solar?', ['Mercúrio', 'Marte', 'Vênus', 'Terra']],
+  ['Qual país tem o formato de uma bota no mapa?', ['Itália', 'Portugal', 'Grécia', 'Chile']],
+  ['Quantas cordas tem um violão comum?', ['6', '4', '7', '5']],
+  ['Qual gás existe em maior quantidade no ar que respiramos?', ['Nitrogênio', 'Oxigênio', 'Gás carbônico', 'Argônio']],
+  ['Qual é a capital de Minas Gerais?', ['Belo Horizonte', 'Ouro Preto', 'Uberlândia', 'Juiz de Fora']],
+  ['Qual é a capital do Paraná?', ['Curitiba', 'Londrina', 'Maringá', 'Foz do Iguaçu']],
+  ['Quem foi o primeiro ser humano a pisar na Lua?', ['Neil Armstrong', 'Buzz Aldrin', 'Yuri Gagarin', 'Michael Collins']],
+  ['Qual é a fórmula química da água?', ['H₂O', 'CO₂', 'O₂', 'H₂O₂']],
+  ['Qual esporte Ayrton Senna praticava?', ['Fórmula 1', 'Tênis', 'Futebol', 'Vôlei']],
+  ['Qual é o maior deserto quente do mundo?', ['Saara', 'Gobi', 'Atacama', 'Kalahari']],
+  ['Qual fruta é a base do guacamole?', ['Abacate', 'Limão', 'Manga', 'Tomate']],
+  ['Em que cidade fica o Cristo Redentor?', ['Rio de Janeiro', 'São Paulo', 'Salvador', 'Brasília']],
+  ['Quantos segundos tem uma hora?', ['3.600', '360', '6.000', '3.000']],
+  ['Qual metal fica líquido em temperatura ambiente?', ['Mercúrio', 'Chumbo', 'Alumínio', 'Estanho']],
+  ['Qual órgão bombeia o sangue pelo corpo?', ['Coração', 'Fígado', 'Pulmão', 'Rim']],
+  ['Misturando tinta azul com tinta amarela, que cor aparece?', ['Verde', 'Roxo', 'Laranja', 'Marrom']],
+  ['Qual é o maior planeta do Sistema Solar?', ['Júpiter', 'Saturno', 'Netuno', 'Urano']],
+  ['Quantos graus tem um ângulo reto?', ['90', '180', '45', '360']],
+  ['Qual é a capital da Argentina?', ['Buenos Aires', 'Córdoba', 'Rosário', 'Montevidéu']],
+  ['Qual animal é o mascote do Linux?', ['Pinguim', 'Raposa', 'Gato', 'Coruja']],
+  ['Em qual jogo aparece o Creeper?', ['Minecraft', 'Fortnite', 'Roblox', 'Terraria']],
+  ['Quantos bits tem um byte?', ['8', '4', '16', '10']],
+  ['Quantos anos tem um século?', ['100', '10', '1.000', '50']],
+  ['Qual é o planeta mais próximo do Sol?', ['Mercúrio', 'Vênus', 'Terra', 'Marte']],
+  ['Qual é a capital da Bahia?', ['Salvador', 'Feira de Santana', 'Ilhéus', 'Porto Seguro']],
+  ['Quantas patas tem uma aranha?', ['8', '6', '10', '4']],
+  ['Qual é o maior órgão do corpo humano?', ['Pele', 'Fígado', 'Coração', 'Pulmão']],
+];
+const PROVAVEL = ['dormir no meio da call', 'virar meme sem querer', 'esquecer o aniversário de alguém', 'ficar rico do nada', 'chegar atrasado até no próprio aniversário',
+  'comer a última fatia de pizza sem perguntar', 'largar o jogo no meio de raiva', 'virar streamer famoso', 'mandar um áudio de 5 minutos', 'sumir por uma semana e voltar como se nada tivesse acontecido',
+  'ganhar um reality show', 'se perder num shopping', 'rir na hora errada', 'ter 300 abas abertas no navegador', 'zerar um jogo inteiro num fim de semana', 'adotar 10 gatos',
+  'mandar mensagem para a pessoa errada', 'esquecer o microfone ligado', 'ficar acordado até as 5 da manhã', 'ser presidente um dia', 'chorar vendo filme de animação', 'dar spoiler sem querer',
+  'comprar uma coisa inútil só porque estava na promoção', 'cozinhar o melhor almoço do grupo', 'responder "kkkk" para tudo', 'marcar o rolê e desmarcar em cima da hora',
+  'sobreviver a um apocalipse zumbi', 'virar coach de alguma coisa', 'ganhar uma discussão sem ter razão', 'dançar sozinho no meio da rua', 'ler os termos de uso inteiros', 'trocar o dia pela noite nas férias'];
+
+const G = { st: null, el: null, cv: null, ctx: null, strokes: [], cur: null, buf: [], color: '#111111', size: 6, tick: null, reported: new Set(), lb: {}, leftAt: 0, inp: null, closeHint: 0 };
+const now = () => Date.now();
+const shuffle = a => { a = a.slice(); for(let i = a.length - 1; i > 0; i--){ const j = Math.floor(Math.random() * (i + 1)); [a[i], a[j]] = [a[j], a[i]]; } return a; };
+const norm = t => String(t || '').normalize('NFD').replace(/[̀-ͯ]/g, '').toLowerCase().replace(/[^a-z0-9 ]/g, ' ').replace(/\s+/g, ' ').trim();
+function lev(a, b){ if(Math.abs(a.length - b.length) > 2) return 9; const d = Array.from({ length: a.length + 1 }, (_, i) => [i]); for(let j = 1; j <= b.length; j++) d[0][j] = j;
+  for(let i = 1; i <= a.length; i++) for(let j = 1; j <= b.length; j++) d[i][j] = Math.min(d[i - 1][j] + 1, d[i][j - 1] + 1, d[i - 1][j - 1] + (a[i - 1] === b[j - 1] ? 0 : 1)); return d[a.length][b.length]; }
+const gameCh = () => Voice.channel;
+const presentIds = () => { const ch = gameCh(); return ch ? [...new Set(voiceUsers(ch).map(u => u.user_id))] : []; };
+const amHost = () => G.st && G.st.host === S.me.id;
+const send = (k, extra) => Voice.sendFx({ t: 'game', k, cid: gameCh() && gameCh().id, ...extra });
+
+/* ---------- anfitrião: muda o estado e manda para todos ---------- */
+function setDeadline(ms){ G.st.dl = now() + ms; G.st.dur = ms; }
+function pushState(){ if(!amHost()) return; G.st.v = (G.st.v || 0) + 1; const left = G.st.dl ? Math.max(0, G.st.dl - now()) : 0; send('st', { st: G.st, left }); renderGame(); if(G.el && !G.el.isConnected && !G.hidden) renderStage(); }
+function feed(item){ G.st.feed = (G.st.feed || []).concat([item]).slice(-30); }
+
+function gameNew(game){
+  if(!Voice.channel){ App.toast('Entre numa chamada para jogar.', true); return; }
+  if(G.st && G.st.phase !== 'end'){ App.toast('Já tem um jogo rolando nesta chamada.', true); return; }
+  G.st = { id: Math.random().toString(36).slice(2, 10), game, host: S.me.id, phase: 'lobby', players: [S.me.id], scores: {}, feed: [], round: 0 };
+  G.strokes = []; clearCanvas();
+  pushState(); loadLeaderboard(game);
+}
+function hostStart(){
+  const st = G.st, here = new Set(presentIds());
+  st.players = st.players.filter(u => here.has(u));
+  if(st.players.length < GAMES[st.game].min){ App.toast(`${GAMES[st.game].name} precisa de pelo menos ${GAMES[st.game].min} pessoas no jogo.`, true); return; }
+  st.scores = Object.fromEntries(st.players.map(u => [u, 0])); st.feed = [];
+  if(st.game === 'rabisco'){ st.order = shuffle(st.players); st.rounds = st.players.length <= 3 ? 3 : 2; st.turn = -1; rabNextTurn(); }
+  else if(st.game === 'quiz'){ st.qs = shuffle(QUIZ.map((q, i) => i)).slice(0, 10); st.qi = -1; quizNext(); }
+  else { st.ps = shuffle(PROVAVEL.map((q, i) => i)).slice(0, 8); st.pi = -1; st.titles = []; provNext(); }
+}
+function endGame(){ const st = G.st; st.phase = 'end'; st.dl = 0; delete st.word; delete st.opts; pushState(); }
+// Rabisco
+function rabNextTurn(){
+  const st = G.st; st.turn++;
+  const n = st.order.length;
+  if(st.turn >= n * st.rounds){ endGame(); return; }
+  st.round = Math.floor(st.turn / n) + 1;
+  st.drawer = st.order[st.turn % n];
+  if(!presentIds().includes(st.drawer)){ rabNextTurn(); return; }
+  st.phase = 'pick'; st.opts = shuffle(WORDS).slice(0, 3); st.word = null; st.reveal = []; st.guessed = [];
+  G.strokes = []; clearCanvas(); send('clear');
+  setDeadline(T_PICK); pushState();
+}
+function rabPick(i){
+  const st = G.st; if(st.phase !== 'pick') return;
+  st.word = st.opts[Math.max(0, Math.min(2, i | 0))]; st.opts = null; st.phase = 'draw'; st.reveal = [];
+  setDeadline(T_DRAW); pushState();
+}
+function rabReveal(){ const st = G.st; st.phase = 'reveal'; setDeadline(T_REVEAL); pushState(); }
+function rabGuess(uid, text){
+  const st = G.st; if(st.phase !== 'draw' || uid === st.drawer || st.guessed.includes(uid) || !st.players.includes(uid)) return;
+  const g = norm(text), w = norm(st.word);
+  if(!g) return;
+  if(g === w){
+    const left = Math.max(0, st.dl - now());
+    const pts = Math.max(60, Math.round(320 * left / T_DRAW));
+    st.scores[uid] = (st.scores[uid] || 0) + pts; st.scores[st.drawer] = (st.scores[st.drawer] || 0) + 60;
+    st.guessed.push(uid); feed({ uid, ok: true, pts });
+    const others = st.players.filter(u => u !== st.drawer && presentIds().includes(u));
+    if(others.every(u => st.guessed.includes(u))){ rabReveal(); return; }
+    pushState(); return;
+  }
+  if(w.length > 3 && lev(g, w) <= 1) send('close', { to: uid });
+  feed({ uid, text: String(text).slice(0, 60) }); pushState();
+}
+// Quiz
+function quizNext(){
+  const st = G.st; st.qi++;
+  if(st.qi >= st.qs.length){ endGame(); return; }
+  const [q, opts] = QUIZ[st.qs[st.qi]];
+  const order = shuffle([0, 1, 2, 3]);
+  st.q = { text: q, opts: order.map(i => opts[i]) }; st.ci = order.indexOf(0); st.answers = {};
+  st.phase = 'question'; setDeadline(T_Q); pushState();
+}
+function quizAnswer(uid, i){
+  const st = G.st; if(st.phase !== 'question' || st.answers[uid] || !st.players.includes(uid)) return;
+  const left = Math.max(0, st.dl - now());
+  st.answers[uid] = { i: i | 0 };
+  if((i | 0) === st.ci) st.scores[uid] = (st.scores[uid] || 0) + 500 + Math.round(500 * left / T_Q);
+  if(st.players.filter(u => presentIds().includes(u)).every(u => st.answers[u])){ st.phase = 'answer'; setDeadline(T_ANS); }
+  pushState();
+}
+// Quem é mais provável
+function provNext(){
+  const st = G.st; st.pi++;
+  if(st.pi >= st.ps.length){ endGame(); return; }
+  st.prompt = PROVAVEL[st.ps[st.pi]]; st.votes = {}; st.phase = 'vote'; setDeadline(T_VOTE); pushState();
+}
+function provVote(uid, who){
+  const st = G.st; if(st.phase !== 'vote' || !st.players.includes(uid) || !st.players.includes(who)) return;
+  st.votes[uid] = who;
+  if(st.players.filter(u => presentIds().includes(u)).every(u => st.votes[u])) provResult(); else pushState();
+}
+function provResult(){
+  const st = G.st; const tally = {};
+  Object.values(st.votes).forEach(u => { tally[u] = (tally[u] || 0) + 1; st.scores[u] = (st.scores[u] || 0) + 100; });
+  const max = Math.max(0, ...Object.values(tally));
+  st.top = max ? Object.keys(tally).filter(u => tally[u] === max) : [];
+  if(st.top.length) st.titles.push({ prompt: st.prompt, uids: st.top });
+  st.tally = tally; st.phase = 'result'; setDeadline(T_RES); pushState();
+}
+function hostAct(uid, a){
+  const st = G.st; if(!st) return;
+  if(a.a === 'join' && st.phase === 'lobby' && !st.players.includes(uid)){ st.players.push(uid); pushState(); }
+  else if(a.a === 'join' && st.phase !== 'lobby' && st.phase !== 'end' && !st.players.includes(uid)){ st.players.push(uid); st.scores[uid] = 0; if(st.order) st.order.push(uid); pushState(); }
+  else if(a.a === 'leave'){ st.players = st.players.filter(u => u !== uid); pushState(); }
+  else if(a.a === 'guess') rabGuess(uid, a.text);
+  else if(a.a === 'pick' && uid === st.drawer) rabPick(a.i);
+  else if(a.a === 'answer') quizAnswer(uid, a.i);
+  else if(a.a === 'vote') provVote(uid, a.who);
+}
+function hostTick(){
+  const st = G.st; if(!st || !amHost() || !st.dl || now() < st.dl) return;
+  st.dl = 0;
+  if(st.game === 'rabisco'){
+    if(st.phase === 'pick') rabPick(Math.floor(Math.random() * 3));
+    else if(st.phase === 'draw') rabReveal();
+    else if(st.phase === 'reveal') rabNextTurn();
+  }else if(st.game === 'quiz'){
+    if(st.phase === 'question'){ st.phase = 'answer'; setDeadline(T_ANS); pushState(); }
+    else if(st.phase === 'answer') quizNext();
+  }else{
+    if(st.phase === 'vote') provResult();
+    else if(st.phase === 'result') provNext();
+  }
+}
+function hostHints(){
+  const st = G.st; if(!st || !amHost() || st.game !== 'rabisco' || st.phase !== 'draw' || !st.word) return;
+  const frac = 1 - (st.dl - now()) / T_DRAW;
+  const letters = [...st.word].map((c, i) => /[^\s-]/.test(c) ? i : -1).filter(i => i >= 0);
+  const want = frac > 0.75 ? Math.ceil(letters.length * 0.4) : frac > 0.5 ? Math.ceil(letters.length * 0.2) : 0;
+  if(want > (st.reveal || []).length && letters.length > 2){
+    const rest = shuffle(letters.filter(i => !st.reveal.includes(i)));
+    st.reveal = st.reveal.concat(rest.slice(0, want - st.reveal.length)); pushState();
+  }
+  // o desenhista saiu da chamada: pula a vez
+  if(!presentIds().includes(st.drawer)) rabReveal();
+}
+// se o anfitrião sair, o próximo jogador presente assume
+function checkHost(){
+  const st = G.st; if(!st || st.phase === 'end' || !Voice.channel) return;
+  const here = presentIds(); if(here.includes(st.host) || !here.length) return;
+  const next = st.players.filter(u => here.includes(u)).sort()[0] || here.sort()[0];
+  if(next === S.me.id){ st.host = S.me.id; if(st.dl && !G.leftAt) st.dl = now() + 3000; pushState(); App.toast('Você virou o anfitrião do jogo.'); }
+}
+
+/* ---------- recebendo da chamada ---------- */
+function onGame(pl, mine){
+  if(!Voice.channel || (pl.cid && pl.cid !== Voice.channel.id)) return;
+  const k = pl.k;
+  if(k === 'st'){
+    if(mine) return;
+    const old = G.st;
+    if(old && old.id === pl.st.id && (pl.st.v || 0) < (old.v || 0)) return;
+    G.st = pl.st; if(G.st.dl) G.st.dl = now() + (pl.left || 0);
+    if(!old || old.id !== G.st.id) loadLeaderboard(G.st.game);
+    if(!G.el || !G.el.isConnected) renderStage(); else renderGame();
+  }else if(k === 'act'){
+    if(amHost()) hostAct(pl.uid, pl);
+  }else if(k === 'hello'){
+    if(amHost() && !mine){ pushState(); if(G.strokes.length) send('strokes', { list: G.strokes.slice(-400) }); }
+  }else if(k === 'strokes'){
+    if(mine) return; G.strokes = pl.list || []; redraw();
+  }else if(k === 'draw'){
+    if(mine) return;
+    let s = G.strokes.find(x => x.id === pl.id);
+    if(!s){ s = { id: pl.id, c: pl.c, w: pl.w, pts: [] }; G.strokes.push(s); }
+    const from = s.pts.length; s.pts.push(...pl.pts); drawSeg(s, Math.max(0, from - 1));
+  }else if(k === 'clear'){ if(!mine){ G.strokes = []; clearCanvas(); } }
+  else if(k === 'undo'){ if(!mine){ G.strokes = G.strokes.filter(x => x.id !== pl.id); redraw(); } }
+  else if(k === 'close'){ if(pl.to === S.me.id){ G.closeHint = now(); renderGame(); } }
+  else if(k === 'quit'){ if(G.st && pl.uid === G.st.host && !mine){ G.st = null; renderGame(); renderStage(); } }
+}
+const _onFxG = Voice.onFx;
+Voice.onFx = (pl, mine) => { if(pl && pl.t === 'game'){ onGame(pl, mine); return; } _onFxG(pl, mine); };
+function act(a){ if(amHost()) hostAct(S.me.id, a); else send('act', a); }
+
+/* ---------- desenho ---------- */
+function ensureCanvas(){
+  if(G.cv) return;
+  G.cv = document.createElement('canvas'); G.cv.width = 960; G.cv.height = 600; G.cv.className = 'gcanvas';
+  G.ctx = G.cv.getContext('2d'); clearCanvas();
+  const pos = e => { const r = G.cv.getBoundingClientRect(); return [Math.max(0, Math.min(1, (e.clientX - r.left) / r.width)), Math.max(0, Math.min(1, (e.clientY - r.top) / r.height))]; };
+  G.cv.addEventListener('pointerdown', e => {
+    if(!canDraw()) return; e.preventDefault(); G.cv.setPointerCapture(e.pointerId);
+    G.cur = { id: Math.random().toString(36).slice(2, 9), c: G.color, w: G.size, pts: [pos(e)] }; G.strokes.push(G.cur); G.buf = [pos(e)];
+    drawSeg(G.cur, 0);
+  });
+  G.cv.addEventListener('pointermove', e => {
+    if(!G.cur) return; const p = pos(e); const s = G.cur; s.pts.push(p); G.buf.push(p); drawSeg(s, s.pts.length - 2);
+  });
+  const up = () => { if(!G.cur) return; flushStroke(); G.cur = null; };
+  G.cv.addEventListener('pointerup', up); G.cv.addEventListener('pointercancel', up);
+  setInterval(() => { if(G.cur) flushStroke(); }, 80);
+}
+function flushStroke(){
+  if(!G.cur || !G.buf.length) return;
+  send('draw', { id: G.cur.id, c: G.cur.c, w: G.cur.w, pts: G.buf.map(([x, y]) => [+x.toFixed(4), +y.toFixed(4)]) });
+  G.buf = [];
+}
+const canDraw = () => G.st && G.st.game === 'rabisco' && G.st.phase === 'draw' && G.st.drawer === S.me.id;
+function clearCanvas(){ if(!G.ctx) return; G.ctx.fillStyle = '#ffffff'; G.ctx.fillRect(0, 0, G.cv.width, G.cv.height); }
+function drawSeg(s, from){
+  if(!G.ctx || !s.pts.length) return;
+  const c = G.ctx, W = G.cv.width, H = G.cv.height;
+  c.strokeStyle = s.c; c.fillStyle = s.c; c.lineWidth = s.w * W / 960; c.lineCap = 'round'; c.lineJoin = 'round';
+  if(s.pts.length === 1){ c.beginPath(); c.arc(s.pts[0][0] * W, s.pts[0][1] * H, c.lineWidth / 2, 0, Math.PI * 2); c.fill(); return; }
+  c.beginPath(); c.moveTo(s.pts[from][0] * W, s.pts[from][1] * H);
+  for(let i = from + 1; i < s.pts.length; i++) c.lineTo(s.pts[i][0] * W, s.pts[i][1] * H);
+  c.stroke();
+}
+function redraw(){ clearCanvas(); G.strokes.forEach(s => drawSeg(s, 0)); }
+
+/* ---------- ranking do servidor ---------- */
+async function loadLeaderboard(game){
+  const ch = gameCh(); if(!ch || !ch.server_id) return;
+  const { data } = await App.sb.from('game_scores').select('*').eq('server_id', ch.server_id).eq('game', game).order('points', { ascending: false }).limit(5);
+  await ensureProfiles((data || []).map(r => r.user_id));
+  G.lb[game] = data || []; renderGame();
+}
+function reportEnd(){
+  const st = G.st; if(!st || st.phase !== 'end' || G.reported.has(st.id) || !st.players.includes(S.me.id)) return;
+  G.reported.add(st.id);
+  const ch = gameCh(); if(!ch || !ch.server_id) return;
+  const mine = st.scores[S.me.id] || 0, max = Math.max(0, ...Object.values(st.scores));
+  App.sb.rpc('game_report', { p_channel: ch.id, p_game: st.game, p_points: mine, p_won: mine > 0 && mine === max }).then(() => setTimeout(() => loadLeaderboard(st.game), 800), () => {});
+}
+
+/* ---------- tela do jogo ---------- */
+const nm = uid => esc(prof(uid).display_name);
+function scoreList(st, mark){
+  const rows = st.players.slice().sort((a, b) => (st.scores[b] || 0) - (st.scores[a] || 0));
+  return `<div class="gscores">${rows.map((u, i) => `<div class="gsr ${u === S.me.id ? 'me' : ''}"><span class="gpos">${i + 1}</span>${avatar(prof(u), 'xs')}<span class="gname">${nm(u)}</span>${mark ? mark(u) : ''}<b>${st.scores[u] || 0}</b></div>`).join('')}</div>`;
+}
+function timerHtml(){ return G.st && G.st.dl ? `<span class="gtimer" id="gTimer">${Math.max(0, Math.ceil((G.st.dl - now()) / 1000))}</span>` : ''; }
+function maskWord(st){
+  const show = st.phase === 'reveal' || st.drawer === S.me.id || (st.guessed || []).includes(S.me.id);
+  if(!st.word) return '';
+  return [...st.word].map((c, i) => c === ' ' ? '<span class="gsp"></span>' : c === '-' ? '<span class="gl">-</span>' : `<span class="gl ${show || (st.reveal || []).includes(i) ? 'on' : ''}">${show || (st.reveal || []).includes(i) ? esc(c.toUpperCase()) : ''}</span>`).join('') + `<small>${[...st.word].filter(c => /[^\s-]/.test(c)).length} letras</small>`;
+}
+function renderGame(){
+  const st = G.st;
+  if(!st){ if(G.el) G.el.remove(); return; }
+  if(!G.el){ G.el = document.createElement('div'); G.el.className = 'gpanel'; G.el.addEventListener('click', onPanelClick); }
+  const info = GAMES[st.game], here = presentIds(), inGame = st.players.includes(S.me.id);
+  let body = '';
+  if(st.phase === 'lobby'){
+    const lb = G.lb[st.game] || [];
+    body = `<div class="globby"><div class="gicon">${info.icon}</div><h2>${info.name}</h2><p>${info.desc}</p>
+      <div class="gplayers">${st.players.map(u => `<span class="gpl">${avatar(prof(u), 'sm')}<span>${nm(u)}${u === st.host ? ' 👑' : ''}</span></span>`).join('')}</div>
+      <div class="gacts">${inGame ? '' : `<button class="btn" data-g="join">Entrar no jogo</button>`}
+        ${amHost() ? `<button class="btn ok big" data-g="start" ${st.players.length < info.min ? 'disabled' : ''}>Começar (${st.players.length})</button><button class="btn sec" data-g="invite">Chamar todo mundo da call</button>` : `<span class="mut small">Esperando ${nm(st.host)} começar…</span>`}</div>
+      ${st.players.length < info.min ? `<p class="mut small">Precisa de pelo menos ${info.min} pessoas.</p>` : ''}
+      ${lb.length ? `<div class="glb"><span class="gsec">${ic('crown', 14)} Ranking do servidor</span>${lb.map((r, i) => `<div class="gsr"><span class="gpos">${['🥇', '🥈', '🥉'][i] || i + 1}</span>${avatar(prof(r.user_id), 'xs')}<span class="gname">${nm(r.user_id)}</span><small class="mut">${r.wins} vitória${r.wins === 1 ? '' : 's'}</small><b>${Number(r.points).toLocaleString('pt-BR')}</b></div>`).join('')}</div>` : ''}</div>`;
+  }else if(st.phase === 'end'){
+    const rows = st.players.slice().sort((a, b) => (st.scores[b] || 0) - (st.scores[a] || 0));
+    const pod = rows.slice(0, 3);
+    body = `<div class="gend"><h2>Fim de jogo!</h2>
+      ${st.game === 'provavel' && st.titles.length ? `<div class="gtitles">${st.titles.map(t => `<div class="gtt"><span>Mais provável de ${esc(t.prompt)}</span><b>${t.uids.map(nm).join(' e ')}</b></div>`).join('')}</div>` : ''}
+      <div class="gpod">${[1, 0, 2].map(i => pod[i] ? `<div class="gpd p${i + 1}">${avatar(prof(pod[i]), i === 0 ? 'xl' : 'lg')}<b>${nm(pod[i])}</b><span>${st.scores[pod[i]] || 0} pts</span><div class="gstep">${i + 1}º</div></div>` : '').join('')}</div>
+      ${rows.length > 3 ? scoreList({ ...st, players: rows.slice(3) }) : ''}
+      <div class="gacts">${amHost() ? `<button class="btn ok" data-g="again">Jogar de novo</button>` : ''}<button class="btn sec" data-g="close">Fechar</button></div></div>`;
+    reportEnd();
+  }else if(st.game === 'rabisco'){
+    const drawer = st.drawer === S.me.id;
+    const top = st.phase === 'pick' ? (drawer ? `<b>Escolha o que você vai desenhar</b>` : `<b>${nm(st.drawer)} está escolhendo a palavra…</b>`)
+      : st.phase === 'reveal' ? `<b>A palavra era</b> <span class="gword">${maskWord(st)}</span>` : `<span class="gword">${maskWord(st)}</span>`;
+    body = `<div class="grab"><div class="gmain"><div class="ghint">${top}</div><div class="gcvwrap" id="gCv">
+        ${st.phase === 'pick' && drawer ? `<div class="gpick">${(st.opts || []).map((w, i) => `<button class="btn big" data-g="pick" data-i="${i}">${esc(w)}</button>`).join('')}</div>` : ''}
+        ${st.phase === 'reveal' ? `<div class="greveal">${(st.guessed || []).length ? `${st.guessed.length} acert${st.guessed.length > 1 ? 'aram' : 'ou'}!` : 'Ninguém acertou 😅'}</div>` : ''}</div>
+        ${drawer && st.phase === 'draw' ? `<div class="gtools">${['#111111', '#ffffff', '#ff2e9a', '#e53935', '#fb8c00', '#fdd835', '#b6ff2e', '#43a047', '#1e88e5', '#8e24aa', '#6d4c41', '#9e9e9e'].map(c => `<button class="gcol ${G.color === c ? 'on' : ''}" data-g="color" data-c="${c}" style="--c:${c}" title="${c === '#ffffff' ? 'Borracha' : ''}"></button>`).join('')}
+          <span class="gsep"></span>${[[3, 'fino'], [6, 'médio'], [14, 'grosso'], [32, 'balde']].map(([s, l]) => `<button class="gsize ${G.size === s ? 'on' : ''}" data-g="size" data-s="${s}" title="${l}"><i style="width:${Math.min(18, 4 + s / 2)}px;height:${Math.min(18, 4 + s / 2)}px"></i></button>`).join('')}
+          <span class="gsep"></span><button class="btn sec sm" data-g="undo">Desfazer</button><button class="btn sec sm" data-g="clear">Limpar</button></div>` : ''}
+      </div>
+      <div class="gside">${scoreList(st, u => u === st.drawer ? '<span class="gmk" title="Desenhando">✏️</span>' : (st.guessed || []).includes(u) ? '<span class="gmk ok">✓</span>' : '')}
+        <div class="gfeed" id="gFeed">${(st.feed || []).map(f => f.ok ? `<div class="gf ok"><b>${nm(f.uid)}</b> acertou! +${f.pts}</div>` : `<div class="gf"><b>${nm(f.uid)}:</b> ${esc(f.text)}</div>`).join('')}
+          ${now() - G.closeHint < 4000 ? '<div class="gf close">Quase! Você está perto 👀</div>' : ''}</div>
+        <div class="gguess" id="gGuess"></div></div></div>`;
+  }else if(st.game === 'quiz'){
+    const my = (st.answers || {})[S.me.id], show = st.phase === 'answer';
+    const counts = [0, 0, 0, 0]; Object.values(st.answers || {}).forEach(a => counts[a.i]++);
+    body = `<div class="gquiz"><div class="gqn">Pergunta ${st.qi + 1} de ${st.qs.length}</div><h2>${esc(st.q.text)}</h2>
+      <div class="gopts">${st.q.opts.map((o, i) => `<button class="gopt o${i} ${show && i === st.ci ? 'right' : ''} ${show && my && my.i === i && i !== st.ci ? 'wrong' : ''} ${my && my.i === i ? 'mine' : ''}" data-g="answer" data-i="${i}" ${my || show || !inGame ? 'disabled' : ''}><span class="gshape">${['▲', '◆', '●', '■'][i]}</span><span>${esc(o)}</span>${show ? `<small>${counts[i]}</small>` : ''}</button>`).join('')}</div>
+      <div class="gqfoot">${show ? (my ? (my.i === st.ci ? '<b class="okc">Acertou!</b>' : '<b class="nok">Errou</b>') : '<span class="mut">Você não respondeu</span>') : my ? '<span class="mut">Resposta enviada. Esperando a galera…</span>' : `<span class="mut">${Object.keys(st.answers || {}).length} de ${st.players.length} responderam</span>`}</div>
+      ${scoreList(st)}</div>`;
+  }else{
+    const my = (st.votes || {})[S.me.id], show = st.phase === 'result';
+    body = `<div class="gprov"><div class="gqn">Rodada ${st.pi + 1} de ${st.ps.length}</div><h2>Quem é mais provável de <em>${esc(st.prompt)}</em>?</h2>
+      <div class="gvotes">${st.players.map(u => { const n = (st.tally || {})[u] || 0; return `<button class="gvote ${my === u ? 'mine' : ''} ${show && (st.top || []).includes(u) ? 'win' : ''}" data-g="vote" data-u="${u}" ${show || !inGame ? 'disabled' : ''}>${avatar(prof(u), 'lg')}<b>${nm(u)}</b>${show ? `<span class="gvn">${n} voto${n === 1 ? '' : 's'}</span>` : ''}${show && (st.top || []).includes(u) ? '<span class="gcrown">👑</span>' : ''}</button>`; }).join('')}</div>
+      <div class="gqfoot">${show ? '' : my ? '<span class="mut">Voto enviado. Ninguém sabe em quem você votou.</span>' : `<span class="mut">${Object.keys(st.votes || {}).length} de ${st.players.length} votaram</span>`}</div></div>`;
+  }
+  G.el.innerHTML = `<div class="gtop"><span class="gtt2">${info.icon} ${info.name}${st.round && st.game === 'rabisco' && st.phase !== 'end' && st.phase !== 'lobby' ? ` · rodada ${st.round} de ${st.rounds}` : ''}</span>${timerHtml()}<span class="grow"></span>
+    ${inGame && st.phase !== 'lobby' && st.phase !== 'end' && !amHost() ? `<button class="btn sec sm" data-g="leave">Sair do jogo</button>` : ''}${amHost() && st.phase !== 'end' ? `<button class="btn sec sm" data-g="end">Encerrar</button>` : ''}
+    <button class="ibtn" data-g="close" data-tip="Esconder o jogo">${ic('x', 16)}</button></div><div class="gbody">${body}</div>`;
+  if(st.game === 'rabisco' && ['pick', 'draw', 'reveal'].includes(st.phase)){
+    ensureCanvas(); const w = G.el.querySelector('#gCv'); if(w) w.prepend(G.cv);
+    G.cv.classList.toggle('candraw', canDraw());
+    const gg = G.el.querySelector('#gGuess');
+    if(gg && st.phase === 'draw' && st.drawer !== S.me.id && inGame && !(st.guessed || []).includes(S.me.id)){
+      if(!G.inp){ G.inp = document.createElement('input'); G.inp.className = 'inp'; G.inp.maxLength = 60; G.inp.placeholder = 'Seu palpite (Enter)'; G.inp.onkeydown = e => { if(e.key === 'Enter' && G.inp.value.trim()){ act({ a: 'guess', text: G.inp.value.trim() }); G.inp.value = ''; } e.stopPropagation(); }; }
+      gg.appendChild(G.inp);
+    }else if(gg) gg.innerHTML = st.drawer === S.me.id && st.phase === 'draw' ? '<span class="mut small">Desenhe! Sem letras nem números 😉</span>' : (st.guessed || []).includes(S.me.id) ? '<span class="okc small">Você acertou! Espere a galera.</span>' : '';
+    const fd = G.el.querySelector('#gFeed'); if(fd) fd.scrollTop = fd.scrollHeight;
+  }
+  G.hidden = false;
+}
+async function onPanelClick(e){
+  const b = e.target.closest('[data-g]'); if(!b || b.disabled) return;
+  const k = b.dataset.g, st = G.st;
+  if(k === 'join') act({ a: 'join' });
+  else if(k === 'start' && amHost()) hostStart();
+  else if(k === 'invite'){ presentIds().forEach(u => { if(!st.players.includes(u)) st.players.push(u); }); pushState(); }
+  else if(k === 'pick') act({ a: 'pick', i: +b.dataset.i });
+  else if(k === 'answer') act({ a: 'answer', i: +b.dataset.i });
+  else if(k === 'vote') act({ a: 'vote', who: b.dataset.u });
+  else if(k === 'color'){ G.color = b.dataset.c; renderGame(); }
+  else if(k === 'size'){ G.size = +b.dataset.s; renderGame(); }
+  else if(k === 'clear'){ G.strokes = []; clearCanvas(); send('clear'); }
+  else if(k === 'undo'){ const s = G.strokes.pop(); if(s){ redraw(); send('undo', { id: s.id }); } }
+  else if(k === 'leave'){ act({ a: 'leave' }); }
+  else if(k === 'end' && amHost()){ if(await confirmBox('Encerrar o jogo', 'O jogo acaba para todo mundo agora.', 'Encerrar')) endGame(); }
+  else if(k === 'again' && amHost()){ const g = st.game, pl = st.players; G.st = null; gameNew(g); G.st.players = pl.filter(u => presentIds().includes(u)); pushState(); }
+  else if(k === 'close'){
+    if(st.phase === 'end' || st.phase === 'lobby' && amHost()){ if(amHost()) send('quit'); G.st = null; }
+    else G.hidden = true;
+    renderStage();
+  }
+}
+
+/* mostra o jogo dentro da área da chamada */
+const _renderStageG = renderStage;
+renderStage = function(){
+  _renderStageG.apply(this, arguments);
+  const st = G.st, wrap = $('#stageWrap');
+  if(!st || !wrap || !Voice.channel) return;
+  const { ch } = stageChannel(); if(!ch || ch.id !== Voice.channel.id) return;
+  const area = wrap.querySelector('.stage .area'); if(!area) return;
+  if(G.hidden){
+    area.insertAdjacentHTML('afterbegin', `<button class="gback" id="gBack">${GAMES[st.game].icon} ${GAMES[st.game].name} está rolando · <b>voltar para o jogo</b></button>`);
+    wrap.querySelector('#gBack').onclick = () => { G.hidden = false; renderStage(); };
+    return;
+  }
+  area.classList.add('withgame');
+  area.querySelectorAll('.focus').forEach(f => f.classList.add('hidden'));
+  const t = area.querySelector('.tiles'); if(t){ t.classList.remove('grid'); t.classList.add('strip'); }
+  if(!G.el) renderGame();
+  area.prepend(G.el);
+};
+setInterval(() => {
+  if(!G.st) return;
+  hostTick(); hostHints(); checkHost();
+  const t = document.getElementById('gTimer'); if(t && G.st.dl) t.textContent = Math.max(0, Math.ceil((G.st.dl - now()) / 1000));
+}, 250);
+const _joinVoiceG = joinVoice;
+joinVoice = async function(){ const r = await _joinVoiceG.apply(this, arguments); G.st = null; G.strokes = []; setTimeout(() => Voice.channel && send('hello'), 1500); return r; };
+const _leaveVoiceG = leaveVoice;
+leaveVoice = async function(){ if(G.st && G.st.players.includes(S.me.id) && !amHost()) send('act', { a: 'leave' }); G.st = null; if(G.el) G.el.remove(); return _leaveVoiceG.apply(this, arguments); };
+App.gameNew = gameNew;
+App.gameState = () => G.st;
 /* ---------------- PWA ---------------- */
 window.addEventListener('beforeinstallprompt', e => {
   e.preventDefault(); if(window.telaoDesktop) return; S.installEvt = e;

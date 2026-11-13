@@ -1002,6 +1002,9 @@ language plpgsql security definer set search_path = public as $$
 declare c channels; mod boolean; last_at timestamptz; recent int;
 begin
   select * into c from channels where id = new.channel_id;
+  if c.kind = 'dm' and new.author_id <> '7e1a0000-0000-4000-a000-000000000001'::uuid and '7e1a0000-0000-4000-a000-000000000001'::uuid in (c.dm_a, c.dm_b) then
+    raise exception 'A conta oficial do Telão não responde mensagens.';
+  end if;
   mod := c.server_id is not null and (public.has_perm(c.server_id, 1) or public.has_perm(c.server_id, 8));
   -- anti-spam para todo mundo: no máximo 8 mensagens em 10 segundos
   select count(*) into recent from messages where author_id = new.author_id and created_at > now() - interval '10 seconds';
@@ -1500,6 +1503,144 @@ begin
   return r;
 end $$;
 
+
+-- =====================================================================
+-- v6.9: BOAS-VINDAS DO TELÃO, MODO PALCO, JOGOS NA CHAMADA (e fim do filtro anti-nudez)
+-- =====================================================================
+-- conta oficial "Telão" (não faz login: não tem senha). Ela manda a DM de boas-vindas.
+create or replace function public.telao_bot() returns uuid language sql immutable as $$ select '7e1a0000-0000-4000-a000-000000000001'::uuid $$;
+do $$ begin
+  if not exists (select 1 from auth.users where id = public.telao_bot()) then
+    begin
+      insert into auth.users (id, instance_id, aud, role, email, encrypted_password, email_confirmed_at, raw_app_meta_data, raw_user_meta_data, created_at, updated_at,
+        confirmation_token, recovery_token, email_change_token_new, email_change, email_change_token_current, phone_change, phone_change_token, reauthentication_token)
+      values (public.telao_bot(), '00000000-0000-0000-0000-000000000000', 'authenticated', 'authenticated', 'oficial@telao.invalid', '', now(),
+        '{"provider":"email","providers":["email"]}', '{"username":"telao","display_name":"Telão"}', now(), now(), '', '', '', '', '', '', '', '');
+    exception when undefined_column then
+      insert into auth.users (id, email, raw_user_meta_data) values (public.telao_bot(), 'oficial@telao.invalid', '{"username":"telao","display_name":"Telão"}');
+    end;
+  end if;
+  perform set_config('telao.priv_ok', '1', true);
+  update public.profiles set display_name = 'Telão', avatar_url = '/icons/icon-512.png', avatar_color = '#ff2e9a' where id = public.telao_bot();
+  if not exists (select 1 from public.profiles where username = 'telao' and id <> public.telao_bot()) then
+    update public.profiles set username = 'telao' where id = public.telao_bot();
+  end if;
+  -- fim do filtro anti-nudez: ninguém fica mais bloqueado de transmitir
+  update public.profiles set share_block_until = null where share_block_until is not null;
+  perform set_config('telao.priv_ok', '', true);
+end $$;
+
+-- DM de boas-vindas (uma vez por conta)
+create or replace function public.send_welcome(p_user uuid) returns void
+language plpgsql security definer set search_path = public as $$
+declare bot uuid := public.telao_bot(); cid uuid; nm text;
+begin
+  if p_user = bot or not exists (select 1 from profiles where id = bot) then return; end if;
+  if exists (select 1 from channels where kind = 'dm' and dm_a = least(bot, p_user) and dm_b = greatest(bot, p_user)) then return; end if;
+  insert into channels (name, kind, dm_a, dm_b, dm_status) values ('dm', 'dm', least(bot, p_user), greatest(bot, p_user), 'ok') returning id into cid;
+  select display_name into nm from profiles where id = p_user;
+  insert into messages (channel_id, author_id, content, attachments)
+  values (cid, bot, 'Bem-vindo(a) ao Telão, ' || coalesce(nm, '') || '! 🎉', jsonb_build_array(jsonb_build_object('type', 'welcome', 'name', nm)));
+end $$;
+revoke execute on function public.send_welcome(uuid) from public, anon, authenticated;
+create or replace function public.welcome_new_profile() returns trigger
+language plpgsql security definer set search_path = public as $$
+begin
+  begin perform public.send_welcome(new.id); exception when others then null; end;  -- nunca atrapalha o cadastro
+  return new;
+end $$;
+drop trigger if exists welcome_new_profile on public.profiles;
+create trigger welcome_new_profile after insert on public.profiles for each row execute function public.welcome_new_profile();
+-- só o dono do Telão: manda as boas-vindas para todas as contas que ainda não receberam
+create or replace function public.send_welcome_all() returns int
+language plpgsql security definer set search_path = public as $$
+declare r record; n int := 0;
+begin
+  if not public.is_admin_user() and coalesce(current_setting('request.jwt.claims', true), '') <> '' then raise exception 'Só o dono do Telão'; end if;
+  for r in select id from profiles where id <> public.telao_bot() loop
+    if not exists (select 1 from channels where kind = 'dm' and dm_a = least(public.telao_bot(), r.id) and dm_b = greatest(public.telao_bot(), r.id)) then
+      perform public.send_welcome(r.id); n := n + 1;
+    end if;
+  end loop;
+  return n;
+end $$;
+-- o dono do Telão recebe a dele agora, para ver como ficou
+do $$ begin perform public.send_welcome(u.id) from auth.users u where u.email = 'brabont1@gmail.com'; exception when others then null; end $$;
+
+-- a conta oficial não recebe respostas nem pedidos de amizade
+create or replace function public.no_bot_friends() returns trigger language plpgsql as $$
+begin
+  if public.telao_bot() in (new.requester, new.addressee) then raise exception 'A conta oficial do Telão não aceita amizades.'; end if;
+  return new;
+end $$;
+drop trigger if exists no_bot_friends on public.friendships;
+create trigger no_bot_friends before insert on public.friendships for each row execute function public.no_bot_friends();
+
+-- ---------- modo palco (canal de voz em que só quem está no palco fala) ----------
+alter table public.channels add column if not exists stage boolean not null default false;
+alter table public.channels add column if not exists stage_topic text check (stage_topic is null or char_length(stage_topic) <= 120);
+create table if not exists public.stage_queue (
+  channel_id uuid not null references public.channels(id) on delete cascade,
+  user_id uuid not null references public.profiles(id) on delete cascade,
+  status text not null check (status in ('hand','speaker')),
+  created_at timestamptz not null default now(),
+  primary key (channel_id, user_id)
+);
+alter table public.stage_queue enable row level security;
+drop policy if exists "ver palco" on public.stage_queue;
+create policy "ver palco" on public.stage_queue for select to authenticated using (public.can_access_channel(channel_id));
+create or replace function public.stage_mod(p_channel uuid) returns boolean
+language sql stable security definer set search_path = public as $$
+  select exists (select 1 from channels c join servers s on s.id = c.server_id where c.id = p_channel
+    and (s.owner_id = auth.uid() or public.has_perm(c.server_id, 64) or public.has_perm(c.server_id, 1)));
+$$;
+-- p_status: 'hand' (levantar a mão, só para si), 'speaker' (subir no palco, só moderador), null (sair / tirar)
+create or replace function public.stage_set(p_channel uuid, p_user uuid, p_status text) returns void
+language plpgsql security definer set search_path = public as $$
+begin
+  if not public.can_access_channel(p_channel) or not exists (select 1 from channels where id = p_channel and stage) then raise exception 'Este canal não é um palco'; end if;
+  if p_status is null then
+    if p_user <> auth.uid() and not public.stage_mod(p_channel) then raise exception 'Só moderadores tiram pessoas do palco'; end if;
+    delete from stage_queue where channel_id = p_channel and user_id = p_user;
+  elsif p_status = 'hand' then
+    if p_user <> auth.uid() then raise exception 'Só dá para levantar a sua mão'; end if;
+    insert into stage_queue (channel_id, user_id, status) values (p_channel, p_user, 'hand') on conflict (channel_id, user_id) do nothing;
+  elsif p_status = 'speaker' then
+    if not public.stage_mod(p_channel) then raise exception 'Só moderadores chamam para o palco'; end if;
+    insert into stage_queue (channel_id, user_id, status) values (p_channel, p_user, 'speaker')
+      on conflict (channel_id, user_id) do update set status = 'speaker', created_at = now();
+  else raise exception 'status inválido'; end if;
+end $$;
+
+-- ---------- jogos na chamada: ranking por servidor ----------
+create table if not exists public.game_scores (
+  server_id uuid not null references public.servers(id) on delete cascade,
+  user_id uuid not null references public.profiles(id) on delete cascade,
+  game text not null check (game in ('rabisco','quiz','provavel')),
+  points bigint not null default 0,
+  wins int not null default 0,
+  played int not null default 0,
+  last_at timestamptz,
+  primary key (server_id, user_id, game)
+);
+alter table public.game_scores enable row level security;
+drop policy if exists "ver ranking" on public.game_scores;
+create policy "ver ranking" on public.game_scores for select to authenticated using (public.is_member(server_id));
+create or replace function public.game_report(p_channel uuid, p_game text, p_points int, p_won boolean) returns void
+language plpgsql security definer set search_path = public as $$
+declare sid uuid; last timestamptz;
+begin
+  select server_id into sid from channels where id = p_channel;
+  if sid is null then return; end if;                        -- chamada de DM/grupo não entra no ranking
+  if not public.is_member(sid) then raise exception 'Você não está nesse servidor'; end if;
+  select last_at into last from game_scores where server_id = sid and user_id = auth.uid() and game = p_game;
+  if last is not null and last > now() - interval '45 seconds' then return; end if;   -- uma partida por vez
+  insert into game_scores (server_id, user_id, game, points, wins, played, last_at)
+  values (sid, auth.uid(), p_game, least(greatest(coalesce(p_points, 0), 0), 6000), case when p_won then 1 else 0 end, 1, now())
+  on conflict (server_id, user_id, game) do update set points = game_scores.points + excluded.points, wins = game_scores.wins + excluded.wins,
+    played = game_scores.played + 1, last_at = now();
+end $$;
+
 -- impede trocar campos sensíveis via update
 create or replace function public.guard_updates() returns trigger
 language plpgsql as $$
@@ -1507,7 +1648,8 @@ begin
   if tg_table_name = 'messages' then
     new.channel_id := old.channel_id; new.author_id := old.author_id; new.created_at := old.created_at; new.reply_to := old.reply_to;
     if coalesce(current_setting('telao.pin_ok', true), '') <> '1' then new.pinned := old.pinned; end if;
-    if new.content is distinct from old.content or new.attachments is distinct from old.attachments then new.edited_at := now();
+    -- mudar só os anexos (ex.: a transcrição de um áudio) não marca como "editado"
+    if new.content is distinct from old.content then new.edited_at := now();
     else new.edited_at := old.edited_at; end if;
   elsif tg_table_name = 'servers' then
     new.owner_id := old.owner_id;
@@ -1575,6 +1717,7 @@ begin
   begin alter publication supabase_realtime add table public.server_emojis; exception when others then null; end;
   begin alter publication supabase_realtime add table public.voice_music; exception when others then null; end;
   begin alter publication supabase_realtime add table public.group_members; exception when others then null; end;
+  begin alter publication supabase_realtime add table public.stage_queue; exception when others then null; end;
 end $$;
 
 -- ---------- Arquivos (avatar, banner, GIF) ----------

@@ -302,6 +302,8 @@ function activitiesMenu(anchor){
   const el = $('#menu'); el.className = 'menu actpop';
   el.innerHTML = `<div class="pphead">${ic('gamepad',18)} Atividades</div>
     <button class="actbig" id="acWT"><span class="ai">${ic('tv',26)}</span><div><b>Assistir juntos</b><small>Vídeo do YouTube sincronizado para todo mundo na chamada</small></div></button>
+    <div class="actsec">${ic('dice',15)} Jogos <small>todo mundo da chamada</small></div>
+    <div class="gamegrid">${[['rabisco','🎨','Rabisco','desenhe e adivinhe'],['quiz','🧠','Quiz','10 perguntas'],['provavel','👀','Quem é mais provável','votação da galera']].map(([k,e,n,d]) => `<button data-newgame="${k}"><span>${e}</span><b>${n}</b><small>${d}</small></button>`).join('')}</div>
     <button class="actbig" id="acCap"><span class="ai">🗨️</span><div><b>Legendas ao vivo</b><small>Sua fala vira texto para todo mundo da chamada (acessibilidade)</small></div></button>
     <div class="actsec">${ic('music',15)} Soundboard <small>todos ouvem</small></div>
     <div class="sboard">${soundList().map(([id, e, n]) => `<button data-snd="${id}"><span>${e}</span>${n}</button>`).join('')}</div>
@@ -312,6 +314,7 @@ function activitiesMenu(anchor){
   el.style.top = Math.max(8, r.top - el.offsetHeight - 10) + 'px';
   el.querySelector('#acWT').onclick = () => { closeMenu(); wtPrompt(); };
   el.querySelector('#acCap').onclick = () => { closeMenu(); App.toggleCaptions(); };
+  el.querySelectorAll('[data-newgame]').forEach(b => b.onclick = () => { closeMenu(); App.gameNew && App.gameNew(b.dataset.newgame); });
   el.querySelectorAll('[data-snd]').forEach(b => b.onclick = () => {
     if(Date.now() - lastSound < 1500){ App.toast('Calma. Espere um pouquinho entre os sons'); return; }
     lastSound = Date.now(); Voice.sendFx({ t:'sound', id: b.dataset.snd });

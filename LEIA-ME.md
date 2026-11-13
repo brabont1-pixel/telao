@@ -295,3 +295,19 @@ O "Spotify direto" (com Ouvir junto) continua opcional e só aparece se você co
   - O atalho funciona com o Telão em foco (limite dos navegadores). No modo jogo a gravação usa menos qualidade para pesar menos.
 - **Estatísticas do servidor** (menu do servidor → Estatísticas, ou Configurações do servidor): mensagens, tempo total em call, membros novos, horário de pico, mensagens por dia, mapa de calor por dia da semana × hora (horário de Brasília), quem mais conversa, quem fica mais tempo em call, canais mais ativos e que horas a galera entra em call. Períodos de 7, 30 ou 90 dias. Todo membro vê. O tempo em call começa a contar a partir desta versão.
 - **Grupos de DM** (3 a 10 pessoas): botão de pessoas ao lado de "Mensagens diretas", ou "Criar grupo com essa pessoa" dentro de uma DM. Só dá para colocar amigos. Tem conversa, chamada de voz e vídeo, transmissão de tela e clipes, sem precisar de servidor. Quando alguém começa a chamada, todo mundo do grupo recebe o toque. Configurações do grupo: nome, foto, adicionar amigos (qualquer membro), tirar pessoas (só o dono) e sair. Se o dono sai, quem entrou primeiro vira o dono.
+
+# Versão 6.9: jogos na chamada, modo palco, transcrição de áudio e boas-vindas
+
+**Rode o `supabase.sql` de novo** (conta oficial, palco, ranking dos jogos e a regra nova de "editado").
+
+- **DM de boas-vindas:** toda conta nova recebe na hora uma mensagem da conta oficial **Telão** (com o selo OFICIAL): um cartão com os primeiros passos (chamar amigos, achar ou criar servidor, deixar o perfil com a sua cara, baixar o app para Windows) e os atalhos mais úteis. Ninguém consegue responder nem adicionar a conta oficial. Você já recebe a sua quando rodar o SQL.
+  - Para mandar também para quem já tinha conta: no SQL Editor rode `select public.send_welcome_all();` (manda só para quem ainda não recebeu).
+- **Jogos dentro da chamada** (botão Atividades na barra da chamada):
+  - **Rabisco:** um desenha, o resto adivinha digitando. Quanto mais rápido acertar, mais pontos; quem desenha ganha pontos por cada acerto. Dicas de letras aparecem com o tempo e o jogo avisa quando o palpite está "quase".
+  - **Quiz:** 10 perguntas de conhecimentos gerais, 15 segundos cada, acertar rápido vale mais.
+  - **Quem é mais provável:** todo mundo vota em segredo em quem combina com a frase; no fim sai a lista de "títulos".
+  - Quem abre o jogo é o anfitrião; se ele sair da chamada, outro assume sem perder a partida. Nos servidores os pontos vão para o **ranking do servidor**, que aparece na tela inicial de cada jogo.
+- **Modo palco** (editar canal de voz → Chamada → Modo palco): para lives, aulas e anúncios. Quem entra fica na **plateia**, ouvindo; levanta a mão ✋ para pedir para falar. Moderadores (e o dono) sobem no palco e chamam quem levantou a mão. A voz de quem está na plateia fica muda para todo mundo, mesmo que alguém tente burlar o app. Só quem está no palco pode transmitir a tela ou ligar a câmera. Dá para colocar um assunto ("Sexta do karaokê").
+- **Transcrição de mensagens de voz:** enquanto você grava, o texto vai aparecendo e é enviado junto com o áudio (no Chrome e no Edge, que usam o reconhecimento de voz do navegador). Quando não sai texto (app do Windows, Firefox ou áudios antigos), aparece **Transcrever**: o Telão baixa um transcritor (Whisper, cerca de 75 MB, só na primeira vez) e transcreve no próprio aparelho. Se o áudio for seu, o texto fica salvo para todo mundo.
+- **Filtro anti-nudez removido:** a tela e a câmera não são mais analisadas, e quem estava bloqueado de transmitir foi liberado.
+- Correções: o aviso de toque de chamada some quando você entra pelo botão; a barra de controles da chamada não quebra mais em duas linhas.

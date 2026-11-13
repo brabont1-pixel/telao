@@ -276,8 +276,8 @@ App.onReaction = p => {
 /* ---------- renderização ---------- */
 function attHtml(m){
   const at = m.attachments || []; if(!at.length) return '';
-  const imgs = at.filter(a => isImg(a) || isVid(a)), others = at.filter(a => !isImg(a) && !isVid(a) && a.type !== 'poll' && a.type !== 'gift');
-  let h = at.filter(a => a.type === 'poll').map(a => pollHtml(m, a)).join('') + at.filter(a => a.type === 'gift').map(a => App.giftCardHtml(a)).join('');
+  const imgs = at.filter(a => isImg(a) || isVid(a)), others = at.filter(a => !isImg(a) && !isVid(a) && a.type !== 'poll' && a.type !== 'gift' && a.type !== 'welcome');
+  let h = at.filter(a => a.type === 'welcome').map(a => App.welcomeCardHtml ? App.welcomeCardHtml(a) : '').join('') + at.filter(a => a.type === 'poll').map(a => pollHtml(m, a)).join('') + at.filter(a => a.type === 'gift').map(a => App.giftCardHtml(a)).join('');
   if(imgs.length){
     const n = Math.min(imgs.length, 4);
     h += `<div class="mgrid g${n}">` + imgs.map((a, i) => {
@@ -291,15 +291,18 @@ function attHtml(m){
     }).join('') + '</div>';
   }
   others.forEach(a => {
-    if(isAud(a) && a.voice) h += voicePlayerHtml(a);
+    if(isAud(a) && a.voice) h += voicePlayerHtml(a, m);
     else if(isAud(a)) h += `<div class="fcard">${ic('music',26)}<div class="t"><a href="${esc(a.url)}" target="_blank" rel="noopener">${esc(a.name || 'áudio')}</a><small>${fmtSize(a.size||0)}</small><audio src="${esc(a.url)}" controls preload="none"></audio></div></div>`;
     else h += `<div class="fcard">${ic('file',26)}<div class="t"><a href="${esc(a.url)}" target="_blank" rel="noopener" download>${esc(a.name || 'arquivo')}</a><small>${fmtSize(a.size||0)}</small></div><a class="dl" href="${esc(a.url)}" target="_blank" rel="noopener" download title="Baixar">${ic('download',20)}</a></div>`;
   });
   return h;
 }
-function voicePlayerHtml(a){
+function voicePlayerHtml(a, m){
   const wave = (a.wave || Array(40).fill(4)).map(v => `<i style="height:${Math.max(3, Math.min(28, v))}px"></i>`).join('');
-  return `<div class="vplayer" data-voice="${esc(a.url)}" data-dur="${a.dur||0}"><button class="vplay">${ic('play',16)}</button><div class="vwave">${wave}</div><span class="vtime">${fmtDur(a.dur||0)}</span></div>`;
+  const txt = a.text || (App.trCache && App.trCache(a.url));
+  const tr = txt ? `<div class="vtext"><span class="vtl">${ic('chat', 12)} Transcrição</span>${esc(txt)}</div>`
+    : m && !m._sending ? `<button class="vtr" data-trans="${m.id}" data-turl="${esc(a.url)}">${ic('pen', 13)} Transcrever</button>` : '';
+  return `<div class="vbox"><div class="vplayer" data-voice="${esc(a.url)}" data-dur="${a.dur||0}"><button class="vplay">${ic('play',16)}</button><div class="vwave">${wave}</div><span class="vtime">${fmtDur(a.dur||0)}</span></div>${tr}</div>`;
 }
 const fmtDur = s => { s = Math.round(s); return Math.floor(s/60) + ':' + String(s%60).padStart(2,'0'); };
 function embedsHtml(m){
@@ -330,8 +333,8 @@ function msgHtml(m, prev){
   const meta = `<span class="mtime" title="${new Date(m.created_at).toLocaleString('pt-BR')}">${m.edited_at ? '<span class="edited">editado</span> · ' : ''}${m._sending ? ic('clock',11) : time}${m.pinned ? ' ' + ic('pin',11) : ''}</span>`;
   const content = M.editing === m.id
     ? `<textarea class="editbox" id="edBox" rows="2" maxlength="4000">${esc(m.content)}</textarea><div class="edithint">Esc para <a data-edcancel>cancelar</a> · Enter para <a data-edsave>salvar</a></div>`
-    : (m.content ? `<div class="ct ${emo?'jumbo':''}">${richText(m.content)}</div>` : '');
-  const bub = `<div class="bub ${emo?'emo':''} ${onlyMedia?'media':''}">${content}${atts}${emb}${meta}</div>`;
+    : (m.content && !(m.attachments || []).some(a => a.type === 'welcome') ? `<div class="ct ${emo?'jumbo':''}">${richText(m.content)}</div>` : '');
+  const bub = `<div class="bub ${emo?'emo':''} ${onlyMedia || (m.attachments || []).some(a => a.type === 'welcome')?'media':''}">${content}${atts}${emb}${meta}</div>`;
   const tools = m._sending ? '' : `<div class="acts">
       ${EMOJI.QUICK.slice(0,3).map(e => `<button data-quick="${e}" data-mid="${m.id}" title="Reagir">${e}</button>`).join('')}
       <button data-addrx="${m.id}" title="Adicionar reação">${ic('smilePlus',17)}</button>
@@ -667,7 +670,7 @@ async function uploadOne(f){
   let blob = f.file, meta = { name: f.file.name, type: f.file.type || 'application/octet-stream', size: f.file.size };
   if(/^image\//.test(f.file.type)){ try{ const c = await compressImage(f.file); blob = c.blob; Object.assign(meta, { type: c.type, w: c.w, h: c.h, thumb: c.thumb, size: c.blob.size }); }catch(e){} }
   else if(/^video\//.test(f.file.type)){ Object.assign(meta, await vidDims(f.file)); }
-  if(f.voice) Object.assign(meta, { voice: true, dur: f.dur, wave: f.wave });
+  if(f.voice) Object.assign(meta, { voice: true, dur: f.dur, wave: f.wave }, f.text ? { text: f.text.slice(0, 4000) } : {});
   if(f.spoiler) meta.spoiler = true;
   const ext = (meta.type.split('/')[1] || 'bin').replace('jpeg','jpg').replace(/[^a-z0-9]/g,'').slice(0,5) || 'bin';
   const base = (f.file.name || 'arquivo').replace(/\.[^.]+$/, '').normalize('NFD').replace(/[^\w-]+/g, '_').slice(0, 40) || 'arquivo';
@@ -725,8 +728,25 @@ async function startRecording(){
   M.rec = { rec, stream, ctx, chunks, peaks, t0, cancel:false };
   rec.ondataavailable = e => e.data.size && chunks.push(e.data);
   rec.start(250);
+  // transcrição ao vivo (reconhecimento de voz do navegador, quando existe)
+  const R0 = M.rec, SRc = window.SpeechRecognition || window.webkitSpeechRecognition;
+  R0.fin = ''; R0.inter = '';
+  if(SRc && P.voiceText !== false){
+    try{
+      const sr = new SRc(); sr.continuous = true; sr.interimResults = true; sr.lang = ({ en:'en-US', es:'es-ES' })[P.lang] || 'pt-BR';
+      sr.onresult = e => {
+        let fin = '', inter = '';
+        for(let i = 0; i < e.results.length; i++){ const x = e.results[i]; if(x.isFinal) fin += x[0].transcript + ' '; else inter += x[0].transcript; }
+        R0.fin = (R0.base || '') + fin; R0.inter = inter;
+        const tx = $('#recTx'); if(tx && M.rec === R0) tx.textContent = (R0.fin + R0.inter).trim().slice(-90);
+      };
+      sr.onend = () => { if(M.rec === R0){ R0.base = R0.fin; try{ sr.start(); }catch(e){} } else if(R0.srDone) R0.srDone(); };
+      sr.onerror = () => {};
+      sr.start(); R0.sr = sr;
+    }catch(e){}
+  }
   const bar = $('#recBar'); bar.classList.remove('hidden'); $('#cmpF').classList.add('hidden');
-  bar.innerHTML = `<button class="cbtn2" id="recX" title="Descartar">${ic('trash',20)}</button><span class="recdot"></span><span id="recT">0:00</span><div class="recwave" id="recW"></div><button class="btn sm" id="recOk">${ic('send',16)} Enviar</button>`;
+  bar.innerHTML = `<button class="cbtn2" id="recX" title="Descartar">${ic('trash',20)}</button><span class="recdot"></span><span id="recT">0:00</span><div class="recwave" id="recW"></div><span class="rectx" id="recTx"></span><button class="btn sm" id="recOk">${ic('send',16)} Enviar</button>`;
   $('#recX').onclick = () => stopRecording(true);
   $('#recOk').onclick = () => stopRecording(false);
   M.rec.timer = setInterval(() => {
@@ -741,9 +761,12 @@ function stopRecording(cancel){
   const R = M.rec; if(!R) return; M.rec = null;
   clearInterval(R.timer);
   const bar = $('#recBar'); if(bar){ bar.classList.add('hidden'); bar.innerHTML = ''; } const f = $('#cmpF'); if(f) f.classList.remove('hidden');
-  R.rec.onstop = () => {
+  const srEnd = R.sr ? new Promise(res => { R.srDone = res; try{ R.sr.stop(); }catch(e){ res(); } setTimeout(res, 1500); }) : Promise.resolve();
+  R.rec.onstop = async () => {
     R.stream.getTracks().forEach(t => t.stop()); R.ctx.close().catch(()=>{});
-    if(cancel) return;
+    if(cancel){ try{ R.sr && R.sr.abort(); }catch(e){} return; }
+    await srEnd;
+    const text = ((R.fin || '') + ' ' + (R.inter || '')).replace(/\s+/g, ' ').trim();
     const dur = (Date.now() - R.t0) / 1000;
     if(dur < 0.7){ App.toast('Áudio muito curto.'); return; }
     const type = (R.rec.mimeType || 'audio/webm').split(';')[0];
@@ -751,7 +774,7 @@ function stopRecording(cancel){
     const n = 40, step = Math.max(1, Math.floor(R.peaks.length / n));
     const wave = Array.from({ length: n }, (_, i) => Math.round(Math.max(...R.peaks.slice(i*step, i*step+step).concat([2])) / 2.2));
     const file = new File([blob], 'mensagem-de-voz.' + (type.includes('mp4') ? 'm4a' : type.includes('ogg') ? 'ogg' : 'webm'), { type });
-    sendMessage([{ file, preview: null, voice: true, dur, wave }]);
+    sendMessage([{ file, preview: null, voice: true, dur, wave, text }]);
   };
   R.rec.stop();
 }

@@ -143,3 +143,6 @@ function renderGroupMain(g, head, body, back, keepMessages){
   mountMessages(g, $('#msgWrap'), `<div class="welcome"><div class="gwel">${avs}</div><h1>${esc(groupName(g))}</h1><p>Este é o começo do grupo. ${n} pessoas: ${(g.members || []).map(u => '<b>' + esc(prof(u).display_name) + '</b>').join(', ')}.</p><p class="mut">Dá para ligar, abrir a câmera e transmitir a tela aqui mesmo.</p></div>`);
 }
 App.newGroupModal = newGroupModal;
+/* entrou na chamada pelo botão (sem atender o toque): o aviso de toque some */
+const _joinVoiceGr = joinVoice;
+joinVoice = async function(ch){ if(ch && S.ringing && S.ringing.channel_id === ch.id) stopRing(); return _joinVoiceGr.apply(this, arguments); };

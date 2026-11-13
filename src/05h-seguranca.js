@@ -134,7 +134,10 @@ editChannelModal = function(c){
           <label class="field"><span>Qualidade das câmeras e telas</span>${sel('ecVq', [['auto','Automática'],['720p','Até 720p (economiza internet)'],['1080p','Até 1080p']], c.video_quality || 'auto')}</label>
           ${row('Só “pressionar para falar”', 'Todo mundo precisa segurar a tecla para falar. Bom para canais cheios.', toggle('ecPtt', c.ptt_only))}
           ${row('Bloquear câmera', 'Ninguém liga a câmera neste canal (moderadores sim).', toggle('ecNoCam', c.no_camera))}
-          ${row('Bloquear compartilhar tela', 'Ninguém compartilha a tela neste canal (moderadores sim).', toggle('ecNoScr', c.no_screen))}`
+          ${row('Bloquear compartilhar tela', 'Ninguém compartilha a tela neste canal (moderadores sim).', toggle('ecNoScr', c.no_screen))}
+          <hr class="sdiv">
+          ${row('Modo palco', 'Para lives, aulas e anúncios: só quem está no palco fala. Quem entra fica na plateia ouvindo e pode levantar a mão. Moderadores chamam para o palco.', toggle('ecStage', c.stage))}
+          <label class="field ${c.stage ? '' : 'hidden'}" id="ecStT"><span>Assunto do palco</span><input class="inp" id="ecStTopic" maxlength="120" value="${esc(c.stage_topic || '')}" placeholder="Ex.: Sexta do karaokê, aula de violão…"></label>`
         : `
           <label class="field"><span>Modo lento</span>${sel('ecSlow', [[0,'Desligado'],[5,'5 segundos'],[10,'10 segundos'],[30,'30 segundos'],[60,'1 minuto'],[300,'5 minutos'],[900,'15 minutos'],[3600,'1 hora'],[21600,'6 horas']], c.slowmode || 0)}</label>
           <small class="mut" style="display:block;margin:-6px 0 12px">Cada pessoa espera esse tempo entre uma mensagem e outra. Moderadores não têm limite.</small>
@@ -154,6 +157,7 @@ editChannelModal = function(c){
       m.querySelectorAll('[data-p]').forEach(p => p.classList.toggle('hidden', p.dataset.p !== b.dataset.t));
     });
     q('#ecPriv').onchange = e => q('#ecRoles').classList.toggle('hidden', !e.target.checked);
+    if(q('#ecStage')) q('#ecStage').onchange = e => q('#ecStT').classList.toggle('hidden', !e.target.checked);
     q('#ecDel').onclick = async () => {
       if(!(await confirmBox('Apagar canal', `Apagar <b>${esc(c.name)}</b>? ${voice ? '' : 'Todas as mensagens serão perdidas.'}`, 'Apagar canal'))) return;
       const { error } = await App.sb.from('channels').delete().eq('id', c.id);
@@ -165,7 +169,7 @@ editChannelModal = function(c){
       const roleIds = q('#ecPriv').checked ? [...m.querySelectorAll('#ecRoles input:checked')].map(x => x.value) : [];
       if(q('#ecPriv').checked && !roleIds.length){ App.toast('Escolha pelo menos um cargo para o canal privado.', true); return; }
       const up = { name, category: q('#ecC').value.trim() || null, nsfw: q('#ecNs').checked, allowed_roles: roleIds.length ? roleIds : null };
-      if(voice) Object.assign(up, { user_limit: +q('#ecLim').value, bitrate: +q('#ecBr').value, video_quality: q('#ecVq').value, ptt_only: q('#ecPtt').checked, no_camera: q('#ecNoCam').checked, no_screen: q('#ecNoScr').checked });
+      if(voice) Object.assign(up, { user_limit: +q('#ecLim').value, bitrate: +q('#ecBr').value, video_quality: q('#ecVq').value, ptt_only: q('#ecPtt').checked, no_camera: q('#ecNoCam').checked, no_screen: q('#ecNoScr').checked, stage: q('#ecStage').checked, stage_topic: q('#ecStTopic').value.trim() || null });
       else Object.assign(up, { topic: q('#ecT').value.trim() || null, slowmode: +q('#ecSlow').value, readonly: q('#ecRo').checked, no_links: q('#ecNoL').checked, no_media: q('#ecNoM').checked });
       const { error } = await App.sb.from('channels').update(up).eq('id', c.id);
       if(error){ App.toast(error.message, true); return; }
@@ -198,21 +202,16 @@ function applyCallRules(){
 const _leaveVoiceS = leaveVoice;
 leaveVoice = async function(){ if(S._modeBefore){ App.prefs.mode = S._modeBefore; S._modeBefore = null; } return _leaveVoiceS.apply(this, arguments); };
 const _startScreen = Voice.startScreen.bind(Voice), _startCamera = Voice.startCamera.bind(Voice);
-const blockedNow = () => S.me.share_block_until && new Date(S.me.share_block_until) > new Date();
 Voice.startScreen = async function(){
   const ch = this.channel;
-  if(blockedNow()){ App.toast(`Você não pode compartilhar a tela até ${new Date(S.me.share_block_until).toLocaleString('pt-BR',{day:'2-digit',month:'2-digit',hour:'2-digit',minute:'2-digit'})}, por causa de conteúdo impróprio detectado.`, true); return; }
   if(ch && ch.no_screen && ch.server_id && !isMod(ch.server_id)){ App.toast('Compartilhar a tela está bloqueado neste canal.', true); return; }
   const r = await _startScreen(...arguments);
-  if(this.screenStream) Guard.watch('screen');
   return r;
 };
 Voice.startCamera = async function(){
   const ch = this.channel;
-  if(blockedNow()){ App.toast('Sua câmera e sua tela estão bloqueadas por 24 h por conteúdo impróprio.', true); return; }
   if(ch && ch.no_camera && ch.server_id && !isMod(ch.server_id)){ App.toast('A câmera está bloqueada neste canal.', true); return; }
   const r = await _startCamera(...arguments);
-  if(this.camStream) Guard.watch('cam');
   return r;
 };
 /* qualidade de vídeo do canal */
@@ -224,73 +223,6 @@ clampScreen = function(st){
   return r;
 };
 
-/* ---------- filtro automático: nudez/pornografia na tela ou na câmera ----------
-   Roda no próprio aparelho de quem transmite (nada é enviado para fora). Modelo aberto NSFWJS (MobileNetV2). */
-const Guard = {
-  model: null, loading: null, timers: {}, hits: {},
-  async load(){
-    if(this.model) return this.model;
-    if(!this.loading) this.loading = (async () => {
-      if(!window.tf){
-        await new Promise((res, rej) => { const s = document.createElement('script'); s.src = 'https://cdn.jsdelivr.net/npm/@tensorflow/tfjs@4.22.0/dist/tf.min.js'; s.onload = res; s.onerror = rej; document.head.appendChild(s); });
-      }
-      try{ await tf.setBackend('webgl'); }catch(e){}
-      await tf.ready(); tf.enableProdMode();
-      this.model = await tf.loadLayersModel('/models/nsfw/model.json');
-      tf.tidy(() => this.model.predict(tf.zeros([1, 224, 224, 3])));
-      return this.model;
-    })().catch(e => { this.loading = null; throw e; });
-    return this.loading;
-  },
-  async score(video){
-    const m = await this.load();
-    if(!video.videoWidth) return null;
-    const c = this._c || (this._c = document.createElement('canvas')); c.width = 224; c.height = 224;
-    const g = c.getContext('2d', { willReadFrequently: true });
-    // olha a imagem inteira e também o centro (onde costuma estar o conteúdo)
-    const out = [];
-    for(const crop of [[0, 0, 1], [0.2, 0.15, 0.6]]){
-      const [x, y, s] = crop, w = video.videoWidth, h = video.videoHeight, side = Math.min(w, h) * (s === 1 ? 1 : s * 1.4);
-      if(s === 1) g.drawImage(video, 0, 0, 224, 224); else g.drawImage(video, (w - side) / 2, (h - side) / 2, side, side, 0, 0, 224, 224);
-      const p = tf.tidy(() => m.predict(tf.browser.fromPixels(c).toFloat().div(255).reshape([1, 224, 224, 3])).dataSync());
-      out.push(p);
-    }
-    // classes: 0 desenho · 1 hentai · 2 neutro · 3 pornô · 4 sensual
-    const worst = out.reduce((a, p) => Math.max(a, p[3] + p[1] * 0.9), 0);
-    return worst;
-  },
-  watch(kind){
-    clearInterval(this.timers[kind]); this.hits[kind] = 0;
-    const stream = kind === 'screen' ? Voice.screenStream : Voice.camStream;
-    if(!stream) return;
-    const v = document.createElement('video'); v.muted = true; v.playsInline = true; v.srcObject = stream; v.play().catch(() => {});
-    const check = async () => {
-      if(App.perf === 'game' && (this._skip = !this._skip)) return;   // modo jogo: confere a cada 5 s
-      const cur = kind === 'screen' ? Voice.screenStream : Voice.camStream;
-      if(!cur || cur !== stream){ clearInterval(this.timers[kind]); v.srcObject = null; return; }
-      let sc = null;
-      try{ sc = await this.score(v); }catch(e){ return; }
-      if(sc == null) return;
-      this.hits[kind] = sc > 0.82 ? this.hits[kind] + 1 : sc > 0.6 ? this.hits[kind] : 0;
-      if(sc > 0.95 || this.hits[kind] >= 2) this.trip(kind, sc);
-    };
-    this.load().then(() => { check(); this.timers[kind] = setInterval(check, 2500); }).catch(() => {});
-  },
-  async trip(kind, sc){
-    clearInterval(this.timers[kind]);
-    if(kind === 'screen') Voice.stopScreen(); else Voice.stopCamera();
-    renderStage && renderStage(); renderSidebar();
-    let until = null;
-    try{ const { data } = await App.sb.rpc('report_nsfw', { p_kind: kind === 'screen' ? 'screen_nsfw' : 'camera_nsfw', p_channel: Voice.channel ? Voice.channel.id : null, p_score: Math.round(sc * 100) / 100 }); until = data; }catch(e){}
-    if(until){ S.me.share_block_until = until; }
-    modal(`<div class="mh"><h2>${kind === 'screen' ? 'Compartilhamento de tela parado' : 'Câmera desligada'}</h2>
-      <p>O Telão detectou possível nudez ou pornografia na sua ${kind === 'screen' ? 'tela' : 'câmera'} e parou a transmissão automaticamente.</p></div>
-      <div class="mc"><div class="warnbox">${until ? `Como isso aconteceu de novo, você fica <b>sem compartilhar tela e câmera até ${new Date(until).toLocaleString('pt-BR',{day:'2-digit',month:'2-digit',hour:'2-digit',minute:'2-digit'})}</b>.` : 'Este é um aviso. Se acontecer de novo nas próximas 24 horas, você fica 24 horas sem poder compartilhar tela e câmera.'}</div>
-      <p class="mut small" style="margin-top:10px">A análise é automática e acontece só no seu aparelho. Se foi um engano, é só compartilhar de novo.</p></div>
-      <div class="mf"><button class="btn" data-close>Entendi</button></div>`);
-  },
-};
-App.Guard = Guard;
 
 /* ---------- segurança da conta: verificação em duas etapas, sair de tudo ---------- */
 async function secSecurity(box, back){
@@ -404,16 +336,9 @@ async function secSrvSafety(box, back){
   box.innerHTML = `${back}<h2>Segurança do servidor</h2>
     ${row('Servidor +18', 'Todos os canais exigem ter 18 anos ou mais. Quem não tem idade vê um aviso ao entrar.', toggle('ssNs', s.nsfw, !admin))}
     <h3>Nível de verificação</h3><p class="mut small">Quem não cumprir o nível consegue ler, mas não consegue mandar mensagem.</p>
-    <div class="vlevels">${[[0,'Nenhum','Qualquer membro pode falar.'],[1,'Baixo','A conta precisa existir há mais de 5 minutos.'],[2,'Médio','Também precisa estar no servidor há mais de 10 minutos.'],[3,'Alto','Também precisa ter a verificação em duas etapas ligada.']].map(([v, l, d]) => `<button class="vl ${(s.verify_level || 0) === v ? 'on' : ''}" data-vl="${v}" ${admin ? '' : 'disabled'}><b>${l}</b><small>${d}</small></button>`).join('')}</div>
-    <h3>Filtro automático de conteúdo</h3>
-    <p class="mut small">Telas e câmeras com nudez ou pornografia são paradas automaticamente, em qualquer canal. Quem for pego duas vezes em 24 horas fica 24 horas sem transmitir.</p>
-    <div id="ssEv" class="mut small">Carregando ocorrências…</div>`;
+    <div class="vlevels">${[[0,'Nenhum','Qualquer membro pode falar.'],[1,'Baixo','A conta precisa existir há mais de 5 minutos.'],[2,'Médio','Também precisa estar no servidor há mais de 10 minutos.'],[3,'Alto','Também precisa ter a verificação em duas etapas ligada.']].map(([v, l, d]) => `<button class="vl ${(s.verify_level || 0) === v ? 'on' : ''}" data-vl="${v}" ${admin ? '' : 'disabled'}><b>${l}</b><small>${d}</small></button>`).join('')}</div>`;
   const $b = q => box.querySelector(q);
   const upd = async v => { const { error } = await App.sb.from('servers').update(v).eq('id', s.id); if(error){ App.toast(error.message, true); return; } await loadServers(); SET.server = S.servers.find(x => x.id === s.id) || s; renderSettings(); renderSidebar(); };
   $b('#ssNs').onchange = e => upd({ nsfw: e.target.checked });
   box.querySelectorAll('[data-vl]').forEach(b => b.onclick = () => upd({ verify_level: +b.dataset.vl }));
-  const { data } = await App.sb.from('safety_events').select('*').eq('server_id', s.id).order('created_at', { ascending: false }).limit(20);
-  await ensureProfiles((data || []).map(x => x.user_id));
-  const el = $b('#ssEv'); if(!el) return;
-  el.innerHTML = (data || []).length ? `<div class="evlog">${data.map(x => `<div>${avatar(prof(x.user_id), 'xs')} <b>${esc(prof(x.user_id).display_name)}</b> · ${x.kind === 'screen_nsfw' ? 'tela parada' : 'câmera desligada'} · ${new Date(x.created_at).toLocaleString('pt-BR',{day:'2-digit',month:'2-digit',hour:'2-digit',minute:'2-digit'})}</div>`).join('')}</div>` : 'Nenhuma ocorrência.';
 }
