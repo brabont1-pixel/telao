@@ -52,8 +52,9 @@ function setupPermissions(){
       const choice = await pickSource(sources);
       if(!choice) return cb({});
       const src = sources.find(s => s.id === choice.id);
-      // no Windows dá para mandar o som do PC junto (loopback)
-      cb(choice.audio && process.platform === 'win32' ? { video: src, audio: 'loopback' } : { video: src });
+      // no Windows dá para mandar o som do PC junto. 'loopbackWithoutChrome' = todo o som do PC MENOS o do próprio Telão
+      // (senão a voz da chamada ia junto com a tela e todo mundo se ouvia de novo, com eco)
+      cb(choice.audio && process.platform === 'win32' ? { video: src, audio: 'loopbackWithoutChrome' } : { video: src });
     }catch(e){ cb({}); }
   }, { useSystemPicker: false });
 }

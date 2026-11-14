@@ -430,7 +430,7 @@ async function cameraSetup(){
   if(!Voice.channel){ App.toast('Entre numa chamada primeiro', true); return; }
   let fx;
   try{ fx = await Voice.openCamFx(); }
-  catch(e){ App.toast('Não consegui abrir a câmera: ' + (e.name === 'NotAllowedError' ? 'permissão negada' : e.message), true); return; }
+  catch(e){ App.toast(Voice.camErrorText(e), true); return; }
   let started = false;
   modal(`<div class="mh"><h2>${ic('video',22)} Sua câmera</h2><p>Escolha um efeito antes de aparecer. Dá para trocar durante a chamada também.</p></div>
     <div class="mc"><div class="campv"><video id="camPv" autoplay playsinline muted></video><span class="camst" id="camSt"></span></div>

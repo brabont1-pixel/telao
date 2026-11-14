@@ -387,3 +387,8 @@ O "Spotify direto" (com Ouvir junto) continua opcional e só aparece se você co
 - O código do app do Windows agora fica na pasta `desktop/` deste repositório, e o instalador é gerado pelo GitHub Actions (**Actions → Instalador Windows → Run workflow**) e publicado em **Releases**.
 - Link fixo do instalador (sempre a versão mais nova): `https://github.com/brabont1-pixel/telao/releases/latest/download/Telao-Setup.exe`
 - Para lançar uma versão nova do app: mude `"version"` em `desktop/package.json` e rode o workflow. Quem instalou a partir da 1.1 recebe a atualização sozinho.
+
+# Versão 6.17 e Telão para Windows 1.2
+
+- **Câmera:** se a câmera recusa abrir ("Could not start video source"), o Telão tenta de novo com uma qualidade menor, depois do jeito mais simples e depois com outra câmera do computador. Se mesmo assim não der, explica o motivo de verdade (câmera ocupada por outro programa, bloqueada ou não encontrada).
+- **Som da tela sem o som da chamada (app do Windows 1.2):** ao compartilhar a tela com o som do PC, o app agora manda todo o som do computador **menos o do próprio Telão**. Antes, a voz da galera ia junto com a tela e todo mundo se ouvia de novo (eco). O app passou para o Electron 45. No navegador (Chrome/Edge novos) isso já era feito pelo próprio navegador.

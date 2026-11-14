@@ -516,7 +516,27 @@
     camFx: null,
     async openCamFx(){
       const cid = this.prefs().camId;
-      const raw = await navigator.mediaDevices.getUserMedia({ video: { width:{ideal:1280}, height:{ideal:720}, frameRate:{ideal:30}, facingMode:'user', ...(cid ? { deviceId:{ exact:cid } } : {}) } });
+      // tenta do jeito ideal e vai simplificando: algumas câmeras (e drivers no Windows) recusam 720p/30fps ou um aparelho salvo que mudou
+      const tries = [
+        { video: { width:{ideal:1280}, height:{ideal:720}, frameRate:{ideal:30}, facingMode:'user', ...(cid ? { deviceId:{ exact:cid } } : {}) } },
+        { video: { width:{ideal:640}, height:{ideal:480}, ...(cid ? { deviceId:{ ideal:cid } } : {}) } },
+        { video: true },
+      ];
+      let raw = null, err = null;
+      for(const c of tries){
+        try{ raw = await navigator.mediaDevices.getUserMedia(c); break; }
+        catch(e){ err = e; if(e.name === 'NotAllowedError' || e.name === 'SecurityError') break; await new Promise(r => setTimeout(r, 250)); }
+      }
+      if(!raw){
+        // outra câmera do computador pode estar livre
+        if(err && (err.name === 'NotReadableError' || err.name === 'TrackStartError' || err.name === 'AbortError')){
+          try{
+            const cams = (await navigator.mediaDevices.enumerateDevices()).filter(d => d.kind === 'videoinput' && d.deviceId && d.deviceId !== cid);
+            for(const d of cams){ try{ raw = await navigator.mediaDevices.getUserMedia({ video: { deviceId: { exact: d.deviceId } } }); break; }catch(e){} }
+          }catch(e){}
+        }
+        if(!raw) throw err || new Error('sem câmera');
+      }
       const fx = window.CamFX ? CamFX.create(raw) : { stream: raw, source: raw, setEffect(){}, stop(){ raw.getTracks().forEach(t => t.stop()); }, onStatus(){} };
       await fx.setEffect(this.prefs().camFx || 'none');
       return fx;
@@ -526,13 +546,21 @@
       let fx = pre;
       if(!fx){
         try{ fx = await this.openCamFx(); }
-        catch(e){ App.toast('Não consegui abrir a câmera: ' + (e.name === 'NotAllowedError' ? 'permissão negada' : e.message), true); return; }
+        catch(e){ App.toast(Voice.camErrorText(e), true); return; }
       }
       if(this.camStream) this.stopCamera(true);
       this.camFx = fx; this.camStream = fx.stream;
       fx.source.getVideoTracks()[0].addEventListener('ended', () => this.stopCamera());
       this.peers.forEach(p => { p.camSenders = fx.stream.getVideoTracks().map(t => p.pc.addTrack(t, fx.stream)); });
       App.sfx('cam'); this.track(); this.onChange();
+    },
+    camErrorText(e){
+      const n = e && e.name;
+      if(n === 'NotAllowedError' || n === 'SecurityError') return 'A câmera está bloqueada. Clique no cadeado ao lado do endereço e permita a câmera (no app do Windows: Configurações do Windows → Privacidade → Câmera).';
+      if(n === 'NotReadableError' || n === 'TrackStartError' || n === 'AbortError' || /could not start video source/i.test((e && e.message) || ''))
+        return 'A câmera está sendo usada por outro programa (Discord, Zoom, Teams, OBS, WhatsApp, outra aba do navegador…) ou travou. Feche o outro programa e tente de novo. Se continuar, tire e coloque a câmera no USB.';
+      if(n === 'NotFoundError' || n === 'OverconstrainedError' || n === 'DevicesNotFoundError') return 'Nenhuma câmera encontrada. Veja se ela está conectada (e escolha outra em Configurações → Voz e vídeo).';
+      return 'Não consegui abrir a câmera: ' + ((e && e.message) || e);
     },
     setCamEffect(id){ if(this.camFx) this.camFx.setEffect(id); },
     stopCamera(silent){
