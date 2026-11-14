@@ -9,7 +9,7 @@ const esc = s => String(s ?? '').replace(/[&<>"']/g, c => ({'&':'&amp;','<':'&lt
 const COLORS = ['#5865f2','#eb459e','#3ba55c','#faa61a','#ed4245','#f47b67','#1abc9c','#9b59b6','#e67e22','#607d8b'];
 const ls = { get(k,d){ try{ const v=localStorage.getItem(k); return v==null?d:JSON.parse(v); }catch(e){ return d; } }, set(k,v){ try{ localStorage.setItem(k, JSON.stringify(v)); }catch(e){} } };
 
-const APP_VERSION = '6.17';
+const APP_VERSION = '6.18';
 const S = {
   me: null, profiles: new Map(), servers: [], channels: new Map(), members: new Map(),
   friends: [], dms: [], dmActivity: ls.get('telao-dmact', {}), online: new Set(),
@@ -436,6 +436,7 @@ function subscribeRealtime(){
     .on('broadcast', { event:'ring' }, ({payload}) => onRing(payload))
     .on('broadcast', { event:'ring-cancel' }, ({payload}) => { if(S.ringing && S.ringing.channel_id === payload.channel_id) stopRing(); })
     .on('broadcast', { event:'mod-disconnect' }, ({payload}) => App.onModDisconnect && App.onModDisconnect(payload))
+    .on('broadcast', { event:'mod-move' }, ({payload}) => App.onModMove && App.onModMove(payload))
     .on('broadcast', { event:'ring-decline' }, ({payload}) => { App.toast(prof(payload.from).display_name + ' recusou a chamada.'); })
     .subscribe();
 }
@@ -769,7 +770,7 @@ function renderSidebar(){
 }
 function vuRow(u){
   const p = prof(u.user_id);
-  return `<div class="vu" data-vuser="${u.user_id}">${avatar(p,'sm').replace('class="av ', `data-sess="${u.session}" class="av `)}<span class="nm" style="${App.roleColorOf(u.user_id) ? 'color:' + App.roleColorOf(u.user_id) : ''}">${esc(p.display_name)}</span>
+  return `<div class="vu" data-vuser="${u.user_id}" data-vch="${u.voice || ''}">${avatar(p,'sm').replace('class="av ', `data-sess="${u.session}" class="av `)}<span class="nm" style="${App.roleColorOf(u.user_id) ? 'color:' + App.roleColorOf(u.user_id) : ''}">${esc(p.display_name)}</span>
     <span class="icons">${u.camera ? `<span class="vi">${ic('video',14)}</span>` : ''}${u.sharing ? `<button class="live" data-watch="${u.voice}" data-wsess="${u.session}" data-tip="Clique para assistir">AO VIVO</button>` : ''}${u.smod || (App.srvVoiceMuted && App.srvVoiceMuted(u.user_id)) ? `<span class="vi off smod" data-tip="Silenciado por moderador">${ic('micOff',14)}</span>` : u.deafened ? `<span class="vi off">${ic('headphonesOff',14)}</span>` : u.muted ? `<span class="vi off">${ic('micOff',14)}</span>` : ''}</span></div>`;
 }
 
@@ -7242,6 +7243,8 @@ function maskWord(st){
 function renderGame(){
   const st = G.st;
   if(!st){ if(G.el) G.el.remove(); return; }
+  // quem está digitando o palpite não pode perder o teclado quando chega o palpite de outra pessoa
+  const typing = G.inp && document.activeElement === G.inp ? [G.inp.selectionStart, G.inp.selectionEnd] : null;
   if(!G.el){ G.el = document.createElement('div'); G.el.className = 'gpanel'; G.el.addEventListener('click', onPanelClick); }
   const info = GAMES[st.game], here = presentIds(), inGame = st.players.includes(S.me.id);
   let body = '';
@@ -7300,6 +7303,7 @@ function renderGame(){
     if(gg && st.phase === 'draw' && st.drawer !== S.me.id && inGame && !(st.guessed || []).includes(S.me.id)){
       if(!G.inp){ G.inp = document.createElement('input'); G.inp.className = 'inp'; G.inp.maxLength = 60; G.inp.placeholder = 'Seu palpite (Enter)'; G.inp.onkeydown = e => { if(e.key === 'Enter' && G.inp.value.trim()){ act({ a: 'guess', text: G.inp.value.trim() }); G.inp.value = ''; } e.stopPropagation(); }; }
       gg.appendChild(G.inp);
+      if(typing){ G.inp.focus({ preventScroll: true }); try{ G.inp.setSelectionRange(typing[0], typing[1]); }catch(e){} }
     }else if(gg) gg.innerHTML = st.drawer === S.me.id && st.phase === 'draw' ? '<span class="mut small">Desenhe! Sem letras nem números 😉</span>' : (st.guessed || []).includes(S.me.id) ? '<span class="okc small">Você acertou! Espere a galera.</span>' : '';
     const fd = G.el.querySelector('#gFeed'); if(fd) fd.scrollTop = fd.scrollHeight;
   }
@@ -7358,6 +7362,7 @@ const _leaveVoiceG = leaveVoice;
 leaveVoice = async function(){ if(G.st && G.st.players.includes(S.me.id) && !amHost()) send('act', { a: 'leave' }); G.st = null; if(G.el) G.el.remove(); return _leaveVoiceG.apply(this, arguments); };
 App.gameNew = gameNew;
 App.gameState = () => G.st;
+App.gameRender = () => renderGame();
 /* =====================================================================
    v6.10: FECHAR CONVERSA — tira a DM/grupo da lista sem apagar nada.
    Volta sozinha quando chega mensagem nova (o banco reabre) ou quando você abre de novo.
@@ -9262,6 +9267,111 @@ start = async function(){
   const now = new Date(), key = 'telao-wr-' + now.getFullYear() + '-' + now.toLocaleDateString('en-CA');
   if(now.getMonth() === 11 && !ls.get(key, false)){ ls.set(key, true); setTimeout(() => App.toast(`Sua retrospectiva ${now.getFullYear()} chegou 🎬`, false, { label: 'Ver agora', fn: () => wrappedOpen() }), 4000); }
   return r;
+};
+/* =====================================================================
+   v6.18: MOVER MEMBROS ENTRE CANAIS DE VOZ (igual ao Discord)
+   - Arraste a pessoa (na lista da call, na barra de canais) para outro canal de voz.
+   - Você sempre pode se arrastar. Para mover os outros: dono, Administrador ou Moderar membros.
+   - No celular (ou clique com o botão direito): menu da pessoa → "Mover para…".
+   ===================================================================== */
+const canMoveOthers = s => !!s && (s.owner_id === S.me.id || App.hasPerm(s.id, 32) || App.hasPerm(s.id, 64));
+function canMoveUser(s, uid){ return uid === S.me.id || (canMoveOthers(s) && canModUser(s, uid)); }
+function voiceList(s){ return (S.channels.get(s.id) || []).filter(c => c.kind === 'voice'); }
+async function moveUserTo(s, uid, ch){
+  if(!ch || ch.kind !== 'voice') return;
+  if(uid === S.me.id){ if(!(Voice.channel && Voice.channel.id === ch.id)) await joinVoice(ch); return; }
+  const n = voiceUsers(ch).length;
+  if(ch.user_limit && n >= ch.user_limit && !canMoveOthers(s)){ App.toast(`#${ch.name} está cheio.`, true); return; }
+  sendToUser(uid, 'mod-move', { server_id: s.id, by: S.me.id, to: ch.id });
+  App.toast(`${prof(uid).display_name} foi movido para 🔊 ${ch.name}.`);
+}
+// quem recebe confere se quem moveu pode mesmo fazer isso e se o canal existe para ele
+App.onModMove = pl => {
+  if(!pl || !Voice.channel || Voice.channel.server_id !== pl.server_id) return;
+  const s = S.servers.find(x => x.id === pl.server_id); if(!s) return;
+  const roles = S.roles.get(s.id) || [], mine = S.memberRoles.get(s.id)?.get(pl.by) || new Set();
+  const ok = s.owner_id === pl.by || roles.some(r => (r.perms & (64 | 32)) && mine.has(r.id));
+  if(!ok) return;
+  const ch = findChannel(pl.to);
+  if(!ch || ch.kind !== 'voice' || ch.server_id !== s.id || Voice.channel.id === ch.id) return;
+  joinVoice(ch).then(() => App.toast(`${prof(pl.by).display_name} moveu você para 🔊 ${ch.name}.`));
+};
+
+/* menu da pessoa: "Mover para…" */
+function moveModal(s, uid){
+  const from = [...S.vp.values()].flat().find(v => v.user_id === uid && v.voice);
+  const list = voiceList(s).filter(c => !from || c.id !== from.voice);
+  modal(`<div class="mh"><h2>Mover ${esc(prof(uid).display_name)}</h2><p>Escolha o canal de voz.</p></div>
+    <div class="mc"><div class="mvlist">${list.map(c => { const n = voiceUsers(c).length; return `<button class="mvch" data-mvto="${c.id}">${ic('volume', 18)}<b>${esc(c.name)}</b><span class="grow"></span><small>${n}${c.user_limit ? '/' + c.user_limit : ''} na call</small></button>`; }).join('') || '<p class="mut">Não tem outro canal de voz neste servidor.</p>'}</div></div>
+    <div class="mf"><button class="btn sec" data-close>Cancelar</button></div>`, m => {
+    m.querySelectorAll('[data-mvto]').forEach(b => b.onclick = () => { closeModal(); moveUserTo(s, uid, findChannel(b.dataset.mvto)); });
+  });
+}
+const _modItemsMv = App.modItems;
+App.modItems = (s, uid, x, y) => {
+  const out = _modItemsMv(s, uid, x, y);
+  const inCall = [...S.vp.values()].flat().some(v => v.user_id === uid && v.voice && (findChannel(v.voice) || {}).server_id === s.id);
+  if(inCall && canMoveUser(s, uid) && uid !== S.me.id){
+    const i = out.findIndex(o => o && o.label === 'Desconectar da call');
+    out.splice(i >= 0 ? i : out.length, 0, { label: 'Mover para…', icon: ic('volume', 18), cls: 'moditem', onClick: () => moveModal(s, uid) });
+  }
+  return out;
+};
+
+/* arrastar na barra de canais (mouse) */
+const MV = { on: false };
+function mvClean(){
+  document.getElementById('mvGhost')?.remove();
+  document.querySelectorAll('.vdrop,.vdragging').forEach(x => x.classList.remove('vdrop', 'vdragging'));
+  MV.on = false; MV.to = null;
+}
+function mvTargetAt(x, y){
+  const el = document.elementFromPoint(x, y); if(!el) return null;
+  const vu = el.closest('#sbBody .vu[data-vch]');
+  const id = vu ? vu.dataset.vch : (el.closest('#sbBody .ch[data-cid]') || {}).dataset?.cid;
+  const ch = id && findChannel(id);
+  return ch && ch.kind === 'voice' ? ch : null;
+}
+function bindMoveDrag(el, s){
+  const uid = el.dataset.vuser;
+  if(!canMoveUser(s, uid)) return;
+  el.addEventListener('pointerdown', e => {
+    if(e.button !== 0 || e.pointerType !== 'mouse' || e.target.closest('[data-watch]')) return;
+    const sx = e.clientX, sy = e.clientY; let started = false;
+    const mv = ev => {
+      if(!started){
+        if(Math.hypot(ev.clientX - sx, ev.clientY - sy) < 6) return;
+        started = true; MV.on = true; MV.uid = uid; MV.from = el.dataset.vch;
+        el.classList.add('vdragging');
+        const g = el.cloneNode(true); g.id = 'mvGhost'; g.classList.remove('vdragging'); document.body.appendChild(g);
+      }
+      ev.preventDefault();
+      const g = document.getElementById('mvGhost'); if(g){ g.style.left = (ev.clientX + 10) + 'px'; g.style.top = (ev.clientY - 14) + 'px'; }
+      document.querySelectorAll('.vdrop').forEach(z => z.classList.remove('vdrop'));
+      const ch = mvTargetAt(ev.clientX, ev.clientY);
+      MV.to = ch && ch.id !== MV.from ? ch : null;
+      if(MV.to){ const row = document.querySelector(`#sbBody .ch[data-cid="${MV.to.id}"]`); if(row) row.classList.add('vdrop'); }
+    };
+    const up = () => {
+      window.removeEventListener('pointermove', mv); window.removeEventListener('pointerup', up);
+      if(!started) return;
+      const to = MV.to; mvClean();
+      const stop = ev => { ev.stopPropagation(); ev.preventDefault(); };
+      el.addEventListener('click', stop, { capture: true, once: true }); setTimeout(() => el.removeEventListener('click', stop, { capture: true }), 60);
+      if(to) moveUserTo(s, uid, to);
+    };
+    window.addEventListener('pointermove', mv, { passive: false }); window.addEventListener('pointerup', up);
+  });
+}
+document.addEventListener('keydown', e => { if(e.key === 'Escape' && MV.on) mvClean(); });
+const _renderSidebarMv = renderSidebar;
+renderSidebar = function(){
+  _renderSidebarMv.apply(this, arguments);
+  const s = S.route.kind === 'server' && curServer(); if(!s) return;
+  document.querySelectorAll('#sbBody .vu[data-vuser]').forEach(el => {
+    bindMoveDrag(el, s);
+    if(canMoveUser(s, el.dataset.vuser)) el.classList.add('canmove');
+  });
 };
 /* ---------------- PWA ---------------- */
 window.addEventListener('beforeinstallprompt', e => {

@@ -312,6 +312,8 @@ function maskWord(st){
 function renderGame(){
   const st = G.st;
   if(!st){ if(G.el) G.el.remove(); return; }
+  // quem está digitando o palpite não pode perder o teclado quando chega o palpite de outra pessoa
+  const typing = G.inp && document.activeElement === G.inp ? [G.inp.selectionStart, G.inp.selectionEnd] : null;
   if(!G.el){ G.el = document.createElement('div'); G.el.className = 'gpanel'; G.el.addEventListener('click', onPanelClick); }
   const info = GAMES[st.game], here = presentIds(), inGame = st.players.includes(S.me.id);
   let body = '';
@@ -370,6 +372,7 @@ function renderGame(){
     if(gg && st.phase === 'draw' && st.drawer !== S.me.id && inGame && !(st.guessed || []).includes(S.me.id)){
       if(!G.inp){ G.inp = document.createElement('input'); G.inp.className = 'inp'; G.inp.maxLength = 60; G.inp.placeholder = 'Seu palpite (Enter)'; G.inp.onkeydown = e => { if(e.key === 'Enter' && G.inp.value.trim()){ act({ a: 'guess', text: G.inp.value.trim() }); G.inp.value = ''; } e.stopPropagation(); }; }
       gg.appendChild(G.inp);
+      if(typing){ G.inp.focus({ preventScroll: true }); try{ G.inp.setSelectionRange(typing[0], typing[1]); }catch(e){} }
     }else if(gg) gg.innerHTML = st.drawer === S.me.id && st.phase === 'draw' ? '<span class="mut small">Desenhe! Sem letras nem números 😉</span>' : (st.guessed || []).includes(S.me.id) ? '<span class="okc small">Você acertou! Espere a galera.</span>' : '';
     const fd = G.el.querySelector('#gFeed'); if(fd) fd.scrollTop = fd.scrollHeight;
   }
@@ -428,3 +431,4 @@ const _leaveVoiceG = leaveVoice;
 leaveVoice = async function(){ if(G.st && G.st.players.includes(S.me.id) && !amHost()) send('act', { a: 'leave' }); G.st = null; if(G.el) G.el.remove(); return _leaveVoiceG.apply(this, arguments); };
 App.gameNew = gameNew;
 App.gameState = () => G.st;
+App.gameRender = () => renderGame();

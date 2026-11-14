@@ -392,3 +392,8 @@ O "Spotify direto" (com Ouvir junto) continua opcional e só aparece se você co
 
 - **Câmera:** se a câmera recusa abrir ("Could not start video source"), o Telão tenta de novo com uma qualidade menor, depois do jeito mais simples e depois com outra câmera do computador. Se mesmo assim não der, explica o motivo de verdade (câmera ocupada por outro programa, bloqueada ou não encontrada).
 - **Som da tela sem o som da chamada (app do Windows 1.2):** ao compartilhar a tela com o som do PC, o app agora manda todo o som do computador **menos o do próprio Telão**. Antes, a voz da galera ia junto com a tela e todo mundo se ouvia de novo (eco). O app passou para o Electron 45. No navegador (Chrome/Edge novos) isso já era feito pelo próprio navegador.
+
+# Versão 6.18: mover membros da call e correção no Rabisco
+
+- **Mover membros entre canais de voz** (igual ao Discord): arraste a pessoa da lista da call (na barra de canais) para outro canal de voz. Você sempre pode se arrastar; para mover os outros precisa ser dono, Administrador ou ter "Moderar membros" (e não dá para mover quem tem cargo de admin, a não ser que você seja o dono). No celular: segure na pessoa → **Mover para…**. Quem é movido vê um aviso com o nome de quem moveu.
+- **Rabisco:** quando alguém mandava um palpite, quem estava digitando perdia o campo (parava de digitar do nada). Agora o campo continua com o texto e o cursor no lugar.
