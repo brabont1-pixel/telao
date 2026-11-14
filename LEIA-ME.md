@@ -381,3 +381,9 @@ O "Spotify direto" (com Ouvir junto) continua opcional e só aparece se você co
 - **Abertura animada** quando o Telão abre (site, app do celular e app do Windows): o logo da TV se desenha, a onda verde liga a tela, o nome "telão" entra letra por letra e a abertura dá um zoom para dentro do app quando tudo carregou. Toque/clique (ou Esc/Enter) para pular.
 - Aparece completa na primeira vez que você abre o Telão e rápida quando só recarrega a página. Em **Configurações → Aparência → Abertura do Telão** dá para escolher: completa na primeira vez, completa sempre, rápida ou desligada, e tem o botão **Ver a abertura**. No Modo jogo ela é sempre rápida.
 - Não precisa rodar SQL nem gerar instalador novo.
+
+# Telão para Windows 1.1 (publicado)
+
+- O código do app do Windows agora fica na pasta `desktop/` deste repositório, e o instalador é gerado pelo GitHub Actions (**Actions → Instalador Windows → Run workflow**) e publicado em **Releases**.
+- Link fixo do instalador (sempre a versão mais nova): `https://github.com/brabont1-pixel/telao/releases/latest/download/Telao-Setup.exe`
+- Para lançar uma versão nova do app: mude `"version"` em `desktop/package.json` e rode o workflow. Quem instalou a partir da 1.1 recebe a atualização sozinho.
