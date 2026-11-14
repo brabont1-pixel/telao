@@ -1,0 +1,24 @@
+# Gera o instalador do Telão para Windows (pasta desktop/) e publica em Releases.
+# Para lançar uma versão: mude "version" em desktop/package.json e crie a tag v<versão> (ex.: v1.1.0), ou rode manualmente em Actions.
+# Quem já tem o Telão instalado recebe a atualização sozinho.
+name: Instalador Windows
+on:
+  push:
+    tags: ['v*']
+  workflow_dispatch:
+permissions:
+  contents: write
+jobs:
+  build:
+    runs-on: windows-latest
+    defaults:
+      run:
+        working-directory: desktop
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with: { node-version: 22 }
+      - run: npm install
+      - run: npx electron-builder --win nsis --x64 --publish always
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}

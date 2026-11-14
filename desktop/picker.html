@@ -1,0 +1,50 @@
+<!DOCTYPE html>
+<html lang="pt-BR"><head><meta charset="utf-8"><title>Compartilhar tela</title>
+<meta http-equiv="Content-Security-Policy" content="default-src 'self'; img-src data:; style-src 'unsafe-inline'; script-src 'unsafe-inline'">
+<style>
+  *{box-sizing:border-box;margin:0;padding:0}
+  body{background:#15151d;color:#f3f2f7;font:14px "Segoe UI",Inter,system-ui,sans-serif;display:flex;flex-direction:column;height:100vh;user-select:none}
+  header{padding:16px 18px 8px}h1{font-size:17px;font-weight:700}
+  .tabs{display:flex;gap:4px;padding:0 18px 10px}
+  .tabs button{background:none;border:0;color:#b9b8c6;padding:7px 12px;border-radius:6px;font:inherit;cursor:pointer}
+  .tabs button.on{background:#2c2c38;color:#fff}
+  .grid{flex:1;overflow:auto;padding:4px 18px 12px;display:grid;grid-template-columns:repeat(3,1fr);gap:10px;align-content:start}
+  .src{background:#1b1b24;border:2px solid transparent;border-radius:8px;padding:6px;cursor:pointer;text-align:left;color:inherit;font:inherit}
+  .src:hover{background:#22222c}.src.on{border-color:#ff2e9a}
+  .src img.t{width:100%;aspect-ratio:16/9;object-fit:contain;background:#000;border-radius:4px;display:block}
+  .src .n{display:flex;align-items:center;gap:6px;margin-top:6px;font-size:12.5px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+  .src .n img{width:16px;height:16px}
+  footer{display:flex;align-items:center;gap:12px;padding:12px 18px;border-top:1px solid #26262f}
+  label{display:flex;align-items:center;gap:8px;color:#b9b8c6;cursor:pointer}
+  .grow{flex:1}
+  .b{border:0;border-radius:6px;padding:9px 16px;font-family:inherit;font-size:14px;font-weight:600;cursor:pointer}
+  .b.sec{background:#2c2c38;color:#fff}.b.go{background:#ff2e9a;color:#fff}.b.go:disabled{opacity:.4;cursor:default}
+  small{color:#82819a;font-size:12px}
+</style></head>
+<body>
+  <header><h1>O que você quer compartilhar?</h1></header>
+  <div class="tabs"><button data-k="screen" class="on">Telas</button><button data-k="window">Janelas</button></div>
+  <div class="grid" id="g"></div>
+  <footer>
+    <label><input type="checkbox" id="aud" checked> Compartilhar o som do PC</label>
+    <small id="hint">Dica: use fone de ouvido.</small>
+    <span class="grow"></span>
+    <button class="b sec" id="cancel">Cancelar</button><button class="b go" id="go" disabled>Compartilhar</button>
+  </footer>
+<script>
+  let list = [], kind = 'screen', sel = null;
+  const g = document.getElementById('g'), go = document.getElementById('go');
+  const esc = s => String(s).replace(/[&<>"]/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;'}[c]));
+  function draw(){
+    const items = list.filter(s => kind === 'screen' ? s.screen : !s.screen);
+    g.innerHTML = items.map((s, i) => `<button class="src ${sel === s.id ? 'on' : ''}" data-id="${esc(s.id)}"><img class="t" src="${s.thumb}"><div class="n">${s.icon ? `<img src="${s.icon}">` : ''}${esc(s.screen ? (items.length > 1 ? 'Tela ' + (i + 1) : 'Tela inteira') : s.name)}</div></button>`).join('');
+    g.querySelectorAll('.src').forEach(b => { b.onclick = () => { sel = b.dataset.id; go.disabled = false; draw(); }; b.ondblclick = () => send(); });
+  }
+  function send(){ if(sel) picker.choose({ id: sel, audio: document.getElementById('aud').checked }); }
+  document.querySelectorAll('.tabs button').forEach(b => b.onclick = () => { kind = b.dataset.k; document.querySelectorAll('.tabs button').forEach(x => x.classList.toggle('on', x === b)); draw(); });
+  go.onclick = send;
+  document.getElementById('cancel').onclick = () => picker.choose(null);
+  addEventListener('keydown', e => { if(e.key === 'Escape') picker.choose(null); if(e.key === 'Enter') send(); });
+  picker.onSources(l => { list = l; const first = list.find(s => s.screen); if(first) { sel = first.id; go.disabled = false; } draw(); });
+</script>
+</body></html>
