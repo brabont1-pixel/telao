@@ -1819,3 +1819,34 @@ html.touch .wkeys{display:none}
 .mvlist{display:flex;flex-direction:column;gap:6px}
 .mvch{display:flex;align-items:center;gap:10px;padding:12px;border-radius:10px;background:var(--bg1);border:1px solid var(--line);text-align:left;color:var(--txt)}
 .mvch:hover{border-color:var(--acc)}.mvch small{color:var(--txt3)}.mvch .grow{flex:1}
+/* v6.19: cartão de convite */
+.invc{--ia:#ff2e9a;width:min(380px,100%);margin-top:8px;border-radius:18px;overflow:hidden;background:var(--bg2);border:1px solid var(--line);box-shadow:0 10px 30px rgba(0,0,0,.25);position:relative}
+.invtop{display:flex;align-items:center;gap:6px;padding:8px 12px;font-size:11px;font-weight:800;letter-spacing:.14em;color:var(--lime,#b6ff2e);background:linear-gradient(90deg,rgba(255,46,154,.18),transparent)}
+.invtop .ico{color:var(--pink,#ff2e9a)}
+.invlive{margin-left:auto;display:inline-flex;align-items:center;gap:5px;background:#ff3b3b;color:#fff;border-radius:6px;padding:2px 7px;font-size:10px;letter-spacing:.08em}
+.invlive i{width:6px;height:6px;border-radius:50%;background:#fff;animation:invPulse 1.2s infinite}
+@keyframes invPulse{50%{opacity:.25}}
+.invban{position:relative;height:96px;background:linear-gradient(135deg,var(--ia),#5b2bff 70%,#16121c);background-size:cover;background-position:center}
+.invban::after{content:"";position:absolute;inset:0;background:repeating-linear-gradient(0deg,rgba(0,0,0,.18) 0 1px,transparent 1px 3px),linear-gradient(180deg,transparent 40%,var(--bg2));pointer-events:none}
+.invtv{position:absolute;left:16px;bottom:-34px;z-index:2;width:76px;height:64px;border-radius:14px;padding:5px;background:var(--bg2);transform:rotate(-3deg);box-shadow:0 0 0 3px var(--pink,#ff2e9a),4px 4px 0 3px var(--lime,#b6ff2e)}
+.invscr{width:100%;height:100%;border-radius:10px;overflow:hidden;background:var(--sc);display:flex;align-items:center;justify-content:center;color:#fff;font-weight:800;font-size:20px}
+.invscr img{width:100%;height:100%;object-fit:cover}
+.invtv i{position:absolute;bottom:-12px;width:4px;height:10px;border-radius:3px;background:var(--pink,#ff2e9a)}.invtv .l1{left:16px}.invtv .l2{right:18px;height:13px;bottom:-15px}
+.invbody{padding:52px 16px 16px;display:flex;flex-direction:column;gap:6px}
+.invname{display:flex;align-items:center;gap:6px;font-family:var(--hf);font-size:19px;font-weight:800;line-height:1.2;min-width:0}.invname>span:first-child{overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.invbadge{flex:none;display:inline-flex;align-items:center;justify-content:center;border-radius:8px;font-size:11px;font-weight:800;padding:2px 6px}
+.invbadge.pub{background:rgba(182,255,46,.15);color:var(--lime,#b6ff2e)}.invbadge.lvl{background:rgba(255,46,154,.18);color:var(--pink,#ff2e9a)}
+.invstats{display:flex;flex-wrap:wrap;gap:4px 12px;font-size:13px;color:var(--txt2)}.invstats span{display:inline-flex;align-items:center;gap:5px}
+.invstats .dot{width:8px;height:8px;border-radius:50%;background:var(--txt3)}.invstats .dot.on{background:#3ddc84;box-shadow:0 0 6px #3ddc84}
+.invstats .incall{color:var(--lime,#b6ff2e);font-weight:700}
+.invsince{font-size:12px;color:var(--txt3)}
+.invdesc{margin:2px 0 0;font-size:13px;line-height:1.45;color:var(--txt2);display:-webkit-box;-webkit-line-clamp:3;-webkit-box-orient:vertical;overflow:hidden}
+.invbtn{margin-top:8px;display:flex;align-items:center;justify-content:center;gap:8px;width:100%;padding:11px;border-radius:12px;font-weight:800;font-size:15px;background:var(--lime,#b6ff2e);color:#16121c;box-shadow:3px 3px 0 var(--pink,#ff2e9a);transition:transform .12s,box-shadow .12s}
+.invbtn:hover:not(:disabled){transform:translate(-1px,-1px);box-shadow:4px 4px 0 var(--pink,#ff2e9a)}.invbtn:active:not(:disabled){transform:translate(2px,2px);box-shadow:1px 1px 0 var(--pink,#ff2e9a)}
+.invbtn.open{background:transparent;color:var(--lime,#b6ff2e);box-shadow:inset 0 0 0 2px var(--lime,#b6ff2e)}
+.invbtn:disabled{background:var(--bg3);color:var(--txt3);box-shadow:none}
+.invc.loading .invban{background:var(--bg3)}
+.invsk{height:12px;border-radius:6px;background:var(--bg3);animation:invPulse 1.4s infinite}.invsk.w60{width:60%;height:18px}.invsk.w40{width:40%}.invsk.btn{height:40px;margin-top:8px;border-radius:12px}
+.invc.dead .invban{background:#202024}
+.invtv.dead{box-shadow:0 0 0 3px #555,4px 4px 0 3px #333}.invtv.dead i{background:#555}
+.invstatic{display:block;width:100%;height:100%;border-radius:10px;background:repeating-radial-gradient(circle at 30% 40%,#888 0 1px,#333 1px 3px);opacity:.6}

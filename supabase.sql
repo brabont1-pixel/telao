@@ -2195,6 +2195,21 @@ select 'update', 'Chegou a versão 6.15 do Telão',
 - Servidores da comunidade podem pedir para quem entra **aceitar as regras**.', '6.15'
 where not exists (select 1 from public.app_notices where version = '6.15');
 
+-- v6.19: cartão de convite no chat (qualquer pessoa logada com o código vê o básico do servidor)
+create or replace function public.invite_preview(p_code text) returns jsonb
+language sql stable security definer set search_path = public as $$
+  select jsonb_build_object('id', s.id, 'name', s.name, 'description', left(s.description, 300), 'icon_url', s.icon_url, 'icon_color', s.icon_color,
+    'banner_url', s.banner_url, 'accent', s.accent, 'created_at', s.created_at, 'is_public', s.is_public, 'rules_on', coalesce(s.rules_on, false),
+    'level', public.server_level(s.id),
+    'members', (select count(*) from server_members m where m.server_id = s.id),
+    'member_ids', (select coalesce(jsonb_agg(m.user_id), '[]'::jsonb) from (select user_id from server_members where server_id = s.id limit 3000) m),
+    'in_call', (select count(distinct v.user_id) from voice_sessions v where v.server_id = s.id and v.last_seen > now() - interval '2 minutes'),
+    'is_member', exists (select 1 from server_members m where m.server_id = s.id and m.user_id = auth.uid()),
+    'banned', exists (select 1 from server_bans b where b.server_id = s.id and b.user_id = auth.uid()))
+  from servers s where auth.uid() is not null and s.invite_code = lower(trim(p_code)) limit 1;
+$$;
+grant execute on function public.invite_preview(text) to authenticated;
+
 -- impede trocar campos sensíveis via update
 create or replace function public.guard_updates() returns trigger
 language plpgsql as $$

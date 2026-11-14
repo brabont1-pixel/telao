@@ -397,3 +397,9 @@ O "Spotify direto" (com Ouvir junto) continua opcional e só aparece se você co
 
 - **Mover membros entre canais de voz** (igual ao Discord): arraste a pessoa da lista da call (na barra de canais) para outro canal de voz. Você sempre pode se arrastar; para mover os outros precisa ser dono, Administrador ou ter "Moderar membros" (e não dá para mover quem tem cargo de admin, a não ser que você seja o dono). No celular: segure na pessoa → **Mover para…**. Quem é movido vê um aviso com o nome de quem moveu.
 - **Rabisco:** quando alguém mandava um palpite, quem estava digitando perdia o campo (parava de digitar do nada). Agora o campo continua com o texto e o cursor no lugar.
+
+# Versão 6.19: cartão de convite no chat
+
+- **Precisa rodar o `supabase.sql` novo** (função `invite_preview`).
+- Quando alguém manda um link de convite de servidor (…/#convite=código) numa conversa ou canal, aparece um cartão com a cara do Telão: faixa "CONVITE PRO TELÃO", banner do servidor com linhas de TV, o ícone dentro de uma "telinha" com perninhas (rosa e verde), selo de comunidade e nível de impulso, quantos estão online, quantos membros, quantos estão **em call agora** (com selo AO VIVO), desde quando o servidor existe e a descrição.
+- Botão **Entrar no servidor** para quem ainda não está (pede para aceitar as regras, se o servidor tiver) e **Abrir servidor** para quem já está. Convite que não existe mais mostra um cartão de "Convite inválido" com uma TV fora do ar.
