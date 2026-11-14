@@ -1,6 +1,6 @@
 # Gera o instalador do Telão para Windows (pasta desktop/) e publica em Releases.
-# Para lançar uma versão: mude "version" em desktop/package.json e crie a tag v<versão> (ex.: v1.1.0), ou rode manualmente em Actions.
-# Quem já tem o Telão instalado recebe a atualização sozinho.
+# Para lançar uma versão: mude "version" em desktop/package.json e rode manualmente em Actions (ou crie a tag v<versão>).
+# Quem já tem o Telão instalado (1.1 ou mais novo) recebe a atualização sozinho.
 name: Instalador Windows
 on:
   push:
@@ -14,11 +14,18 @@ jobs:
     defaults:
       run:
         working-directory: desktop
+        shell: bash
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-node@v4
         with: { node-version: 22 }
       - run: npm install
-      - run: npx electron-builder --win nsis --x64 --publish always
+      - run: npx electron-builder --win nsis --x64 --publish never
+      - name: Publicar em Releases
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          V="v$(node -p "require('./package.json').version")"
+          ls -la dist
+          gh release delete "$V" --yes --cleanup-tag || true
+          gh release create "$V" dist/Telao-Setup.exe dist/Telao-Setup.exe.blockmap dist/latest.yml --title "Telão para Windows ${V#v}" --notes "Instalador do Telão para Windows ${V#v}." --latest --target "$GITHUB_SHA"
