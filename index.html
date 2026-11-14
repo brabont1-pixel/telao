@@ -16,8 +16,88 @@
 <link rel="preconnect" href="https://fonts.googleapis.com">
 <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700;800&family=Archivo:wght@500;600;700;800&family=Sedgwick+Ave+Display&display=swap" rel="stylesheet">
 <link rel="stylesheet" href="/style.css">
+<style id="splashCss">
+#splash{position:fixed;inset:0;z-index:99999;background:#0b0b10;display:flex;align-items:center;justify-content:center;overflow:hidden;color:#f4f4f6;font-family:Inter,system-ui,sans-serif;cursor:pointer;-webkit-tap-highlight-color:transparent}
+#splash .sp-blob{position:absolute;width:62vmax;height:62vmax;border-radius:50%;filter:blur(90px);opacity:.38;animation:spDrift 6s ease-in-out infinite alternate}
+#splash .sp-b1{background:#ff2e9a;left:-22vmax;top:-26vmax}
+#splash .sp-b2{background:#b6ff2e;right:-26vmax;bottom:-30vmax;opacity:.22;animation-delay:-3s}
+#splash .sp-scan{position:absolute;inset:0;background:repeating-linear-gradient(0deg,rgba(255,255,255,.025) 0 1px,transparent 1px 4px);pointer-events:none}
+#splash .sp-in{position:relative;display:flex;flex-direction:column;align-items:center;gap:6px;transform:translateY(-3vh)}
+#splash svg{width:min(170px,38vw);height:auto;overflow:visible}
+#splash .sp-draw{stroke-dasharray:1;stroke-dashoffset:1;animation:spDraw .9s cubic-bezier(.6,0,.2,1) forwards}
+#splash .sp-pink{animation-delay:.08s;opacity:.95}
+#splash .sp-leg{animation-delay:.55s;animation-duration:.35s}
+#splash .sp-wave{animation:spDraw .7s cubic-bezier(.5,0,.2,1) .75s forwards;filter:drop-shadow(0 0 6px #b6ff2e)}
+#splash .sp-dot{transform-box:fill-box;transform-origin:center;transform:scale(0);animation:spPop .35s cubic-bezier(.3,1.6,.5,1) forwards}
+#splash .sp-d1{animation-delay:.85s}#splash .sp-d2{animation-delay:.95s}
+#splash .sp-glow{opacity:0;animation:spFlash .7s ease-out 1.15s forwards}
+#splash .sp-word{display:flex;font-family:"Sedgwick Ave Display",Archivo,system-ui,sans-serif;font-size:min(76px,19vw);line-height:1;color:#b6ff2e;text-shadow:3px 3px 0 #ff2e9a;margin-top:6px}
+#splash .sp-word span{display:inline-block;opacity:0;transform:translateY(40%) rotate(-8deg) scale(.6);animation:spLetter .5s cubic-bezier(.3,1.5,.5,1) forwards}
+#splash .sp-tag{font-size:14px;letter-spacing:.18em;text-transform:uppercase;font-weight:700;color:rgba(255,255,255,.7);opacity:0;animation:spFade .6s ease 1.75s forwards}
+#splash .sp-bar{position:absolute;left:50%;bottom:calc(12vh + env(safe-area-inset-bottom));width:min(180px,40vw);height:3px;margin-left:calc(min(180px,40vw) / -2);border-radius:3px;background:rgba(255,255,255,.1);overflow:hidden}
+#splash .sp-bar i{display:block;height:100%;width:0;background:linear-gradient(90deg,#ff2e9a,#b6ff2e);animation:spLoad 2.3s cubic-bezier(.4,0,.2,1) forwards}
+#splash .sp-skip{position:absolute;bottom:calc(5vh + env(safe-area-inset-bottom));font-size:12px;color:rgba(255,255,255,.35);opacity:0;animation:spFade .4s ease 1s forwards}
+#splash.sp-short .sp-draw,#splash.sp-short .sp-wave{animation-duration:.01s;animation-delay:0s}
+#splash.sp-short .sp-dot,#splash.sp-short .sp-word span,#splash.sp-short .sp-tag,#splash.sp-short .sp-glow{animation-delay:0s!important;animation-duration:.01s}
+#splash.sp-short .sp-bar i{animation-duration:.5s}#splash.sp-short .sp-skip{display:none}
+#splash.sp-out{animation:spOut .55s cubic-bezier(.6,0,.4,1) forwards;pointer-events:none}
+#splash.sp-out .sp-in{animation:spZoom .55s cubic-bezier(.6,0,.4,1) forwards}
+@keyframes spDraw{to{stroke-dashoffset:0}}
+@keyframes spPop{to{transform:scale(1)}}
+@keyframes spFlash{0%{opacity:0}35%{opacity:.9}100%{opacity:.18}}
+@keyframes spLetter{to{opacity:1;transform:none}}
+@keyframes spFade{to{opacity:1}}
+@keyframes spLoad{to{width:100%}}
+@keyframes spDrift{to{transform:translate(6vmax,4vmax) scale(1.08)}}
+@keyframes spOut{to{opacity:0;visibility:hidden}}
+@keyframes spZoom{to{transform:translateY(-3vh) scale(1.35);filter:blur(4px)}}
+@media (prefers-reduced-motion:reduce){#splash .sp-blob{animation:none}}
+</style>
 </head>
 <body>
+
+<!-- v6.16: abertura (aparece antes de tudo carregar e some quando o Telão está pronto) -->
+<div id="splash" role="img" aria-label="Telão">
+  <div class="sp-blob sp-b1"></div><div class="sp-blob sp-b2"></div><div class="sp-scan"></div>
+  <div class="sp-in">
+    <svg viewBox="0 0 125 135" aria-hidden="true">
+      <path class="sp-glow" d="M14 22 L106 18 L102 88 L18 92 Z" fill="#ff2e9a"/>
+      <g transform="translate(5 5)" stroke="#FF2E9A" fill="none" stroke-width="9" stroke-linecap="round" stroke-linejoin="round"><path class="sp-draw sp-pink" pathLength="1" d="M14 22 L106 18 L102 88 L18 92 Z"/><path class="sp-draw sp-pink sp-leg" pathLength="1" d="M30 92 V108"/><path class="sp-draw sp-pink sp-leg" pathLength="1" d="M72 90 V116"/></g>
+      <g stroke="#f4f4f6" fill="none" stroke-width="9" stroke-linecap="round" stroke-linejoin="round"><path class="sp-draw" pathLength="1" d="M14 22 L106 18 L102 88 L18 92 Z"/><path class="sp-draw sp-leg" pathLength="1" d="M30 92 V108"/><path class="sp-draw sp-leg" pathLength="1" d="M72 90 V116"/></g>
+      <circle class="sp-dot sp-d1" cx="30" cy="112" r="6" fill="#f4f4f6"/><circle class="sp-dot sp-d2" cx="72" cy="120" r="6" fill="#f4f4f6"/>
+      <path class="sp-wave sp-draw" pathLength="1" d="M30 60 C38 44, 50 44, 58 56 S78 70, 90 50" fill="none" stroke="#B6FF2E" stroke-width="11" stroke-linecap="round"/>
+    </svg>
+    <div class="sp-word"><span style="animation-delay:1.2s">t</span><span style="animation-delay:1.28s">e</span><span style="animation-delay:1.36s">l</span><span style="animation-delay:1.44s">ã</span><span style="animation-delay:1.52s">o</span></div>
+    <div class="sp-tag">a galera toda numa tela só</div>
+  </div>
+  <div class="sp-bar"><i></i></div>
+  <div class="sp-skip">toque para pular</div>
+</div>
+<script>
+(function(){
+  var sp = document.getElementById('splash'), P = {};
+  try{ P = JSON.parse(localStorage.getItem('telao-prefs') || '{}') || {}; }catch(e){}
+  var mode = P.intro || 'full';   // full: completa na 1ª vez de cada sessão · always: sempre completa · short: rápida · off: desligada
+  var seen = false, pv = false; try{ seen = sessionStorage.getItem('telao-intro') === '1'; sessionStorage.setItem('telao-intro', '1'); pv = sessionStorage.getItem('telao-intro-pv') === '1'; sessionStorage.removeItem('telao-intro-pv'); }catch(e){}
+  if(pv){ mode = 'always'; P.perf = null; }
+  if(mode === 'off'){ sp.remove(); return; }
+  var short = !pv && (mode === 'short' || (mode === 'full' && seen) || P.perf === 'game' || (window.matchMedia && matchMedia('(prefers-reduced-motion: reduce)').matches));
+  if(short) sp.classList.add('sp-short');
+  var t0 = Date.now(), minMs = short ? 450 : 2400, ready = false, gone = false;
+  function out(){ if(gone) return; gone = true; sp.classList.add('sp-out'); setTimeout(function(){ sp.remove(); var c = document.getElementById('splashCss'); if(c) c.remove(); }, 600); }
+  function check(){ if(ready && Date.now() - t0 >= minMs) out(); else if(ready) setTimeout(check, minMs - (Date.now() - t0)); }
+  window.telaoSplashReady = function(){ ready = true; check(); };
+  sp.addEventListener('click', function(){ ready = true; minMs = 0; out(); });
+  document.addEventListener('keydown', function k(e){ if(e.key === 'Escape' || e.key === 'Enter' || e.key === ' '){ document.removeEventListener('keydown', k); if(!gone){ ready = true; minMs = 0; out(); } } });
+  // pronto quando aparecer o app, o login ou a tela de configuração
+  var obs = new MutationObserver(function(){
+    var on = ['app', 'auth', 'setup'].some(function(id){ var el = document.getElementById(id); return el && !el.classList.contains('hidden'); });
+    if(on){ obs.disconnect(); window.telaoSplashReady(); }
+  });
+  document.addEventListener('DOMContentLoaded', function(){ ['app', 'auth', 'setup'].forEach(function(id){ var el = document.getElementById(id); if(el) obs.observe(el, { attributes: true, attributeFilter: ['class'] }); }); });
+  setTimeout(function(){ ready = true; check(); }, 9000);   // nunca prende a pessoa
+})();
+</script>
 
 <!-- Configuração faltando -->
 <div id="setup" class="center hidden">

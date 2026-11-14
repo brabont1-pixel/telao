@@ -375,3 +375,9 @@ O "Spotify direto" (com Ouvir junto) continua opcional e só aparece se você co
 - **🎮 Jogo aberto no PC:** o app do Windows (versão 1.1) detecta jogos conhecidos e mostra "Jogando …" no perfil sozinho (dá para desligar em Conexões). O tempo de jogo entra nas conquistas e na retrospectiva. **Precisa gerar o instalador novo** com a pasta `telao-desktop` atualizada.
 - **Regras para entrar** (Configurações do servidor → Comunidade): quem for entrar lê as regras e precisa aceitar; se cancelar, não entra. Membros veem as regras no menu do servidor.
 - Esc agora fecha os menus abertos.
+
+# Versão 6.16: abertura do Telão
+
+- **Abertura animada** quando o Telão abre (site, app do celular e app do Windows): o logo da TV se desenha, a onda verde liga a tela, o nome "telão" entra letra por letra e a abertura dá um zoom para dentro do app quando tudo carregou. Toque/clique (ou Esc/Enter) para pular.
+- Aparece completa na primeira vez que você abre o Telão e rápida quando só recarrega a página. Em **Configurações → Aparência → Abertura do Telão** dá para escolher: completa na primeira vez, completa sempre, rápida ou desligada, e tem o botão **Ver a abertura**. No Modo jogo ela é sempre rápida.
+- Não precisa rodar SQL nem gerar instalador novo.

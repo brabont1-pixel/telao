@@ -9,7 +9,7 @@ const esc = s => String(s ?? '').replace(/[&<>"']/g, c => ({'&':'&amp;','<':'&lt
 const COLORS = ['#5865f2','#eb459e','#3ba55c','#faa61a','#ed4245','#f47b67','#1abc9c','#9b59b6','#e67e22','#607d8b'];
 const ls = { get(k,d){ try{ const v=localStorage.getItem(k); return v==null?d:JSON.parse(v); }catch(e){ return d; } }, set(k,v){ try{ localStorage.setItem(k, JSON.stringify(v)); }catch(e){} } };
 
-const APP_VERSION = '6.15';
+const APP_VERSION = '6.16';
 const S = {
   me: null, profiles: new Map(), servers: [], channels: new Map(), members: new Map(),
   friends: [], dms: [], dmActivity: ls.get('telao-dmact', {}), online: new Set(),
@@ -3346,6 +3346,8 @@ function secAppearance(box, back){
     <input type="range" class="range" id="apR" min="12" max="20" step="1" value="${P.fontSize}">
     <hr class="sdiv">
     ${row('Modo compacto', 'Mostra mais mensagens na tela, com avatares menores.', toggle('apC', P.compact))}
+    ${row('Abertura do Telão', 'A animação que aparece quando o Telão abre.', `<select class="inp" id="apIntro" style="width:auto">${[['full','Completa na primeira vez'],['always','Completa sempre'],['short','Rápida'],['off','Desligada']].map(([v, l]) => `<option value="${v}" ${(P.intro || 'full') === v ? 'selected' : ''}>${l}</option>`).join('')}</select>`)}
+    <button class="btn sec sm" id="apIntroPv" style="margin:-4px 0 12px">Ver a abertura</button>
     <h3>Prévia</h3>
     <div style="background:var(--bg2);border:1px solid var(--line);border-radius:8px;padding:6px 0">
       <div class="msg first">${avatar(S.me,'lg')}<div class="bd"><div class="hd"><b style="color:${esc(S.me.avatar_color)}">${esc(S.me.display_name)}</b><time>Hoje às 21:00</time></div><div class="ct">bora jogar? vou compartilhar a tela 🎮</div></div></div>
@@ -3356,6 +3358,8 @@ function secAppearance(box, back){
   box.querySelector('#apAcc').oninput = e => { P.accent = e.target.value; savePrefs(); };
   box.querySelector('#apR').oninput = e => { P.fontSize = +e.target.value; box.querySelector('#apFs').textContent = P.fontSize + 'px'; savePrefs(); };
   box.querySelector('#apC').onchange = e => { P.compact = e.target.checked; savePrefs(); };
+  box.querySelector('#apIntro').onchange = e => { P.intro = e.target.value; savePrefs(); };
+  box.querySelector('#apIntroPv').onclick = () => { try{ sessionStorage.setItem('telao-intro-pv', '1'); }catch(e){} location.reload(); };
 }
 
 /* ---------- Voz e vídeo ---------- */
