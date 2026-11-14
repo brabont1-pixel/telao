@@ -1850,3 +1850,19 @@ html.touch .wkeys{display:none}
 .invc.dead .invban{background:#202024}
 .invtv.dead{box-shadow:0 0 0 3px #555,4px 4px 0 3px #333}.invtv.dead i{background:#555}
 .invstatic{display:block;width:100%;height:100%;border-radius:10px;background:repeating-radial-gradient(circle at 30% 40%,#888 0 1px,#333 1px 3px);opacity:.6}
+/* v6.20: quem está em call ao passar o mouse no servidor */
+.tip.rich{max-width:280px;min-width:190px;padding:10px 12px;display:flex;flex-direction:column;gap:4px;text-align:left}
+.tip.rich .rtn{font-size:14px;font-weight:800}
+.tip.rich small{margin-top:-2px}
+.tip.rich .rtlive{display:flex;align-items:center;gap:6px;flex-wrap:wrap;font-size:12px;font-weight:600;color:#ffd6d6;margin:2px 0}
+.tip.rich .rtch{display:flex;align-items:center;gap:6px;margin-top:6px;font-size:11px;font-weight:800;text-transform:uppercase;letter-spacing:.04em;color:#9a99ab}
+.tip.rich .rtch span{flex:1;min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}.tip.rich .rtch em{font-style:normal;color:var(--lime,#b6ff2e)}
+.tip.rich .rtu{display:flex;align-items:center;gap:7px;font-size:13px;font-weight:600;padding-left:4px}
+.tip.rich .rtu>span:not(.livepill):not(.rti){flex:1;min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.tip.rich .rtu .av.xs{width:20px;height:20px;font-size:9px}
+.tip.rich .rti{color:#9a99ab;display:inline-flex}.tip.rich .rti.off{color:#ff6b6b}
+.tip.rich .rtmore{font-size:11px;color:#9a99ab;padding-left:4px}
+.tip.rich .rtsep{height:1px;background:rgba(255,255,255,.08);margin:6px 0 2px}
+.livepill{background:#ff3b3b;color:#fff;border-radius:5px;padding:1px 6px;font-size:10px;font-weight:800;letter-spacing:.06em}.livepill.sm{font-size:9px;padding:0 5px}
+.ricon .rcall{position:absolute;bottom:-4px;right:-4px;background:var(--ok);color:#062b14;min-width:18px;height:18px;border-radius:10px;display:flex;align-items:center;justify-content:center;border:3px solid var(--bg0);padding:0 2px;pointer-events:none}
+.ricon .rcall.live{background:#ff3b3b;color:#fff;font-size:8px;font-weight:900;letter-spacing:.04em;padding:0 4px;right:-8px}

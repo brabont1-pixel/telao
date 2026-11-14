@@ -403,3 +403,8 @@ O "Spotify direto" (com Ouvir junto) continua opcional e só aparece se você co
 - **Precisa rodar o `supabase.sql` novo** (função `invite_preview`).
 - Quando alguém manda um link de convite de servidor (…/#convite=código) numa conversa ou canal, aparece um cartão com a cara do Telão: faixa "CONVITE PRO TELÃO", banner do servidor com linhas de TV, o ícone dentro de uma "telinha" com perninhas (rosa e verde), selo de comunidade e nível de impulso, quantos estão online, quantos membros, quantos estão **em call agora** (com selo AO VIVO), desde quando o servidor existe e a descrição.
 - Botão **Entrar no servidor** para quem ainda não está (pede para aceitar as regras, se o servidor tiver) e **Abrir servidor** para quem já está. Convite que não existe mais mostra um cartão de "Convite inválido" com uma TV fora do ar.
+
+# Versão 6.20: quem está em call na barra de servidores
+
+- Passar o mouse num servidor da barra da esquerda mostra quem está em call em cada canal de voz (com câmera, mudo e ensurdecido), e quem está **transmitindo a tela** (selo AO VIVO). Atualiza sozinho enquanto o mouse está em cima. Nas pastas, mostra os servidores da pasta que têm gente em call.
+- O ícone do servidor ganha uma bolinha verde quando tem alguém em call, e o selo vermelho **AO VIVO** quando alguém está transmitindo.
