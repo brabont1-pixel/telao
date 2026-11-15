@@ -145,27 +145,119 @@ function speak(text){
   }catch(e){}
 }
 
-/* legendas ao vivo nas chamadas (reconhecimento de voz do navegador) */
-const CAP = { rec: null, on: false, lines: new Map() };
+/* legendas ao vivo nas chamadas
+   v6.22: dois motores. No Chrome/Edge usa o reconhecimento de voz do navegador; se ele não funcionar
+   (app do Windows, Brave, Opera, Firefox, erro de rede…), troca sozinho para o Whisper rodando no próprio
+   computador (o mesmo da transcrição de áudios, baixado uma vez). */
+const CAP = { rec: null, on: false, lines: new Map(), engine: null, ac: null, proc: null, src: null, srcStream: null, queue: [], busy: false, watch: null };
 const SR = window.SpeechRecognition || window.webkitSpeechRecognition;
-function startCaptions(){
-  if(!SR){ App.toast('Seu navegador não tem reconhecimento de voz. Use o Chrome ou o Edge para legendas.', true); return false; }
-  if(CAP.on) return true;
-  const r = new SR(); r.continuous = true; r.interimResults = true; r.lang = ({ en:'en-US', es:'es-ES' })[P.lang] || 'pt-BR';
-  let last = 0;
-  r.onresult = e => {
-    const res = e.results[e.results.length - 1], text = res[0].transcript.trim();
-    if(!text || Voice.muted || Voice.deafened || !Voice.micEnabled()) return;
-    if(!res.isFinal && Date.now() - last < 700) return;
-    last = Date.now();
-    Voice.sendFx({ t:'cap', uid: S.me.id, text: text.slice(-160), fin: res.isFinal });
-  };
-  r.onend = () => { if(CAP.on && Voice.channel) try{ r.start(); }catch(e){} };
-  r.onerror = ev => { if(ev.error === 'not-allowed'){ CAP.on = false; App.toast('Permita o microfone para as legendas funcionarem.', true); } };
-  try{ r.start(); }catch(e){}
-  CAP.rec = r; CAP.on = true; return true;
+const CAP_DESKTOP = /Electron/i.test(navigator.userAgent) || !!window.telaoDesktop;
+const capLang = () => ({ en:'en-US', es:'es-ES' })[P.lang] || 'pt-BR';
+const CAP_JUNK = /amara\.org|legendas pela comunidade|inscreva-se|obrigad[oa] por assistir|^\W*$|^\[.*\]$|^\(.*\)$/i;
+function capSend(text, fin){
+  text = String(text || '').replace(/\s+/g, ' ').trim();
+  if(!text || CAP_JUNK.test(text) || !Voice.channel || !Voice.micEnabled()) return;
+  Voice.sendFx({ t:'cap', uid: S.me.id, text: text.slice(-160), fin });
 }
-function stopCaptions(){ CAP.on = false; try{ CAP.rec && CAP.rec.stop(); }catch(e){} CAP.rec = null; }
+function capBadge(msg){
+  let b = document.getElementById('capPill');
+  if(!CAP.on){ if(b) b.remove(); return; }
+  if(!b){ b = document.createElement('button'); b.id = 'capPill'; b.className = 'cappill'; b.onclick = () => App.toggleCaptions(); document.body.appendChild(b); }
+  b.innerHTML = `<span class="cc">CC</span><span>${esc(msg || (CAP.engine === 'whisper' ? 'Legendas ligadas (no computador)' : 'Legendas ligadas'))}</span><small>desligar</small>`;
+}
+function startCaptions(){
+  if(CAP.on) return true;
+  CAP.on = true;
+  if(SR && !CAP_DESKTOP && P.capEngine !== 'whisper') capStartSR(); else capStartWhisper();
+  capBadge();
+  return true;
+}
+function capStartSR(){
+  CAP.engine = 'sr';
+  const r = new SR(); r.continuous = true; r.interimResults = true; r.lang = capLang();
+  let last = 0, heard = false;
+  r.onresult = e => {
+    heard = true;
+    const res = e.results[e.results.length - 1], text = res[0].transcript.trim();
+    if(!res.isFinal && Date.now() - last < 600) return;
+    last = Date.now(); capSend(text, res.isFinal);
+  };
+  r.onaudiostart = () => { heard = true; };
+  r.onerror = ev => {
+    if(ev.error === 'not-allowed'){ stopCaptions(); App.toast('Permita o microfone para as legendas funcionarem.', true); return; }
+    if(['network', 'service-not-allowed', 'language-not-supported', 'audio-capture', 'bad-grammar'].includes(ev.error)){
+      r._dead = true; try{ r.abort(); }catch(e){}
+      if(CAP.on && CAP.rec === r){ CAP.rec = null; App.toast('O reconhecimento de voz deste navegador não funcionou. Trocando para o reconhecimento no próprio computador…'); capStartWhisper(); }
+    }
+  };
+  r.onend = () => { if(r._dead || !CAP.on || CAP.rec !== r) return; setTimeout(() => { if(CAP.on && CAP.rec === r) try{ r.start(); }catch(e){} }, 300); };
+  try{ r.start(); }catch(e){ capStartWhisper(); return; }
+  CAP.rec = r;
+  // se em 10 s o navegador nem começou a ouvir, ele está quebrado aqui: troca de motor
+  clearTimeout(CAP.watch);
+  CAP.watch = setTimeout(() => { if(CAP.on && CAP.rec === r && !heard){ r._dead = true; try{ r.abort(); }catch(e){} CAP.rec = null; capStartWhisper(); } }, 10000);
+}
+async function capStartWhisper(){
+  CAP.engine = 'whisper'; capBadge('Preparando as legendas…');
+  try{
+    if(!TRX.pipe) App.toast('Baixando o reconhecimento de voz (~75 MB, só na primeira vez)…');
+    await whisperPipe(pct => capBadge(`Baixando reconhecimento de voz ${pct}% (só na primeira vez)`));
+  }catch(e){ App.toast('Não deu para carregar o reconhecimento de voz: ' + (e.message || e), true); stopCaptions(); return; }
+  if(!CAP.on || CAP.engine !== 'whisper') return;
+  capBadge(); capHook();
+  clearInterval(CAP.rehook); CAP.rehook = setInterval(() => { if(CAP.on && CAP.engine === 'whisper' && Voice.micStream && CAP.srcStream !== Voice.micStream) capHook(); }, 3000);
+}
+function capHook(){
+  capUnhook();
+  const ms = Voice.micStream; if(!ms || !ms.getAudioTracks().length) return;
+  const ac = new (window.AudioContext || window.webkitAudioContext)();
+  const src = ac.createMediaStreamSource(new MediaStream(ms.getAudioTracks()));
+  const proc = ac.createScriptProcessor(4096, 1, 1);
+  const rate = ac.sampleRate, TH = 0.012;
+  let seg = [], segLen = 0, silent = 0, inSeg = false, pre = null;
+  proc.onaudioprocess = e => {
+    const d = e.inputBuffer.getChannelData(0);
+    if(!Voice.micEnabled()){ seg = []; segLen = 0; inSeg = false; return; }
+    let sum = 0; for(let i = 0; i < d.length; i += 4) sum += d[i] * d[i];
+    const rms = Math.sqrt(sum / (d.length / 4)), dur = d.length / rate;
+    if(rms > TH){ if(!inSeg){ inSeg = true; if(pre){ seg.push(pre); segLen += pre.length; } } silent = 0; }
+    else if(inSeg) silent += dur;
+    if(inSeg){ seg.push(new Float32Array(d)); segLen += d.length; }
+    else pre = new Float32Array(d);
+    if(inSeg && (silent > 0.7 || segLen / rate > 8)){
+      if(segLen / rate > 0.5){ const all = new Float32Array(segLen); let o = 0; seg.forEach(x => { all.set(x, o); o += x.length; }); capQueue(all, rate); }
+      seg = []; segLen = 0; silent = 0; inSeg = false;
+    }
+  };
+  src.connect(proc); proc.connect(ac.destination);
+  Object.assign(CAP, { ac, src, proc, srcStream: ms });
+}
+function capUnhook(){ try{ CAP.proc && (CAP.proc.onaudioprocess = null, CAP.proc.disconnect()); CAP.src && CAP.src.disconnect(); CAP.ac && CAP.ac.close(); }catch(e){} Object.assign(CAP, { ac: null, proc: null, src: null, srcStream: null }); }
+function capQueue(pcm, rate){
+  // 16 kHz para o Whisper
+  const ratio = rate / 16000, n = Math.floor(pcm.length / ratio), out = new Float32Array(n);
+  for(let i = 0; i < n; i++) out[i] = pcm[Math.floor(i * ratio)];
+  CAP.queue.push(out); if(CAP.queue.length > 3) CAP.queue.shift();
+  showCaption({ uid: S.me.id, text: '🎙️ …', fin: false, local: true });
+  capRun();
+}
+async function capRun(){
+  if(CAP.busy || !CAP.queue.length || !TRX.pipe) return;
+  CAP.busy = true;
+  const pcm = CAP.queue.shift();
+  try{
+    const lang = ({ en: 'english', es: 'spanish' })[P.lang] || 'portuguese';
+    const out = await TRX.pipe(pcm, { language: lang, task: 'transcribe' });
+    if(CAP.on) capSend(out && out.text, true);
+  }catch(e){}
+  CAP.busy = false;
+  if(CAP.queue.length) capRun();
+}
+function stopCaptions(){
+  CAP.on = false; clearTimeout(CAP.watch); clearInterval(CAP.rehook);
+  if(CAP.rec){ CAP.rec._dead = true; try{ CAP.rec.abort(); }catch(e){} }
+  CAP.rec = null; capUnhook(); CAP.queue = []; CAP.engine = null; capBadge();
+}
 const _onFx = Voice.onFx;
 Voice.onFx = (pl, mine) => {
   if(pl && pl.t === 'cap'){ showCaption(pl); return; }
@@ -183,6 +275,8 @@ function showCaption(pl){
   const prev = CAP.lines.get(pl.uid); if(prev) clearTimeout(prev.t);
   let line = box.querySelector(`[data-cu="${pl.uid}"]`);
   if(!line){ line = document.createElement('div'); line.dataset.cu = pl.uid; box.appendChild(line); }
+  if(pl.local && line.dataset.real && Date.now() - +line.dataset.real < 2500) return;
+  if(!pl.local) line.dataset.real = Date.now();
   line.innerHTML = `<b>${esc(prof(pl.uid).display_name)}</b> ${esc(pl.text)}`;
   CAP.lines.set(pl.uid, { t: setTimeout(() => { line.remove(); CAP.lines.delete(pl.uid); if(!box.children.length) box.remove(); }, pl.fin ? 5000 : 7000) });
 }
@@ -191,7 +285,12 @@ const _joinVoice = joinVoice;
 joinVoice = async function(){ const r = await _joinVoice.apply(this, arguments); if(P.a11yCaps && Voice.channel) startCaptions(); return r; };
 const _leaveVoice = leaveVoice;
 leaveVoice = async function(){ stopCaptions(); const b = document.getElementById('capBox'); if(b) b.remove(); return _leaveVoice.apply(this, arguments); };
-App.toggleCaptions = () => { if(CAP.on){ stopCaptions(); App.toast('Legendas desligadas'); } else if(startCaptions()) App.toast('Legendas ligadas — o que você fala aparece para todos na chamada'); };
+App.toggleCaptions = () => {
+  if(!Voice.channel){ App.toast('Entre numa chamada para usar legendas.', true); return; }
+  if(CAP.on){ stopCaptions(); App.toast('Legendas desligadas'); }
+  else if(startCaptions()) App.toast('Legendas ligadas: o que você fala aparece para todos na chamada');
+};
+App.capState = () => ({ on: CAP.on, engine: CAP.engine });
 
 function secA11y(box, back){
   box.innerHTML = `${back}<h2>Acessibilidade</h2>
@@ -209,8 +308,9 @@ function secA11y(box, back){
     ${row('Ler mensagens novas em voz alta', 'Lê as mensagens que chegam na conversa aberta.', toggle('aTTS', P.a11yTTS))}
     <div class="srow"><div class="t"><b>Velocidade da leitura · <span id="aRateL">${(P.ttsRate || 1).toFixed(1)}×</span></b></div><button class="btn sec sm" id="aTest">Testar</button></div>
     <input type="range" class="range" id="aRate" min="0.6" max="1.8" step="0.1" value="${P.ttsRate || 1}">
-    ${row('Legendas ao vivo nas chamadas', SR ? 'Transforma sua fala em texto e mostra para todo mundo da chamada. Liga sozinho quando você entra.' : 'Seu navegador não suporta. Use Chrome ou Edge.', toggle('aCaps', P.a11yCaps))}
+    ${row('Legendas ao vivo nas chamadas', 'Transforma sua fala em texto e mostra para todo mundo da chamada. Liga sozinho quando você entra.', toggle('aCaps', P.a11yCaps))}
     ${row('Mostrar legendas dos outros', 'Exibe o que as pessoas com legenda ligada estão falando.', toggle('aCapsS', P.a11yCapsShow !== false))}
+    ${row('Reconhecer a fala no próprio computador', SR && !CAP_DESKTOP ? 'Usa o Whisper em vez do reconhecimento do navegador. Mais privado e funciona sem a internet do Google, mas usa mais o processador e baixa ~75 MB na primeira vez.' : 'Neste app/navegador as legendas já usam o reconhecimento no próprio computador (Whisper).', toggle('aCapW', P.capEngine === 'whisper' || !SR || CAP_DESKTOP))}
     <hr class="sdiv"><h3>Leitor de tela</h3>
     <p class="mut small">Todos os botões com ícone têm nome para leitores de tela (NVDA, VoiceOver, TalkBack), e as legendas são anunciadas automaticamente.</p>`;
   const $b = q => box.querySelector(q);
@@ -219,6 +319,8 @@ function secA11y(box, back){
   bind('#aTTS', 'a11yTTS', on => on && speak('Leitura de mensagens ligada'));
   bind('#aCaps', 'a11yCaps', on => { if(Voice.channel) on ? startCaptions() : stopCaptions(); });
   bind('#aCapsS', 'a11yCapsShow');
+  if(!SR || CAP_DESKTOP) $b('#aCapW').disabled = true;
+  $b('#aCapW').onchange = e => { P.capEngine = e.target.checked ? 'whisper' : ''; savePrefs(); if(CAP.on){ stopCaptions(); startCaptions(); } };
   $b('#aSat').oninput = e => { P.a11ySat = +e.target.value; $b('#aSatL').textContent = P.a11ySat + '%'; savePrefs(); };
   $b('#aRate').oninput = e => { P.ttsRate = +e.target.value; $b('#aRateL').textContent = P.ttsRate.toFixed(1) + '×'; savePrefs(); };
   $b('#aTest').onclick = () => speak('Oi! Assim eu leio as mensagens do Telão.');
