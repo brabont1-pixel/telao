@@ -289,7 +289,7 @@ begin
   if not (public.is_admin_user() or public.is_privileged()) then raise exception 'Só o admin pode fazer isso'; end if;
   perform set_config('telao.priv_ok', '1', true);
   update profiles set badges = (select coalesce(array_agg(distinct b), '{}') from unnest(p_badges) b
-                                where b in ('staff','dev','mod','bug1','bug2','evento','apoiador'))
+                                where b in ('staff','dev','mod','bug1','bug2','evento','apoiador','verificado'))
   where id = p_user;
   perform set_config('telao.priv_ok', '', true);
   return (select badges from profiles where id = p_user);
@@ -2359,6 +2359,117 @@ grant execute on function public.feed_view(uuid), public.feed_list(text, uuid, t
 -- v6.21: jogos novos no ranking
 alter table public.game_scores drop constraint if exists game_scores_game_check;
 alter table public.game_scores add constraint game_scores_game_check check (game in ('rabisco','quiz','provavel','stop','quemsou','truco'));
+
+-- =====================================================================
+-- v6.23: FEED COM ATÉ 5 CLIPES POR POST e SELO DE VERIFICADO (100 seguidores)
+-- =====================================================================
+alter table public.feed_posts add column if not exists media jsonb not null default '[]'::jsonb;
+alter table public.feed_posts add column if not exists pinned boolean not null default false;
+alter table public.feed_posts add column if not exists pinned_comment uuid;
+alter table public.feed_posts drop constraint if exists feed_posts_media_check;
+alter table public.feed_posts add constraint feed_posts_media_check check (jsonb_typeof(media) = 'array' and jsonb_array_length(media) <= 5);
+create or replace function public.is_verified(u uuid) returns boolean
+language sql stable security definer set search_path = public as $$
+  select coalesce((select 'verificado' = any(badges) or is_admin from profiles where id = u), false);
+$$;
+-- ganhou 100 seguidores: selo de verificado (fica para sempre)
+create or replace function public.follows_verify() returns trigger
+language plpgsql security definer set search_path = public as $$
+begin
+  if (select count(*) from follows where followee = new.followee) >= 100
+     and not exists (select 1 from profiles where id = new.followee and 'verificado' = any(badges)) then
+    perform set_config('telao.priv_ok', '1', true);
+    update profiles set badges = array_append(badges, 'verificado') where id = new.followee;
+    perform set_config('telao.priv_ok', '', true);
+  end if;
+  return new;
+end $$;
+drop trigger if exists follows_verify on public.follows;
+create trigger follows_verify after insert on public.follows for each row execute function public.follows_verify();
+-- regras extras do feed: verificado posta até 60 por dia, fixa até 3 clipes e fixa comentário
+create or replace function public.feed_rate() returns trigger language plpgsql security definer set search_path = public as $$
+declare lim int := case when public.is_verified(new.user_id) then 60 else 30 end;
+begin
+  if (select count(*) from feed_posts where user_id = new.user_id and created_at > now() - interval '1 day') >= lim then
+    raise exception 'Você já postou % clipes hoje. Volte amanhã!', lim;
+  end if;
+  return new;
+end $$;
+create or replace function public.feed_guard() returns trigger language plpgsql as $$
+begin
+  if tg_op = 'UPDATE' and (new.views is distinct from old.views or new.user_id is distinct from old.user_id or new.video_url is distinct from old.video_url
+       or new.created_at is distinct from old.created_at or new.media is distinct from old.media)
+     and current_setting('telao.feed_ok', true) is distinct from '1' then
+    raise exception 'Só dá para mudar título, jogo e quem vê.';
+  end if;
+  if (tg_op = 'INSERT' and new.pinned) or (tg_op = 'UPDATE' and new.pinned and not old.pinned) then
+    if not public.is_verified(new.user_id) then raise exception 'Fixar clipes no perfil é para criadores verificados (100 seguidores).'; end if;
+    if (select count(*) from feed_posts where user_id = new.user_id and pinned and id <> new.id) >= 3 then raise exception 'Você já tem 3 clipes fixados. Desafixe um antes.'; end if;
+  end if;
+  if new.pinned_comment is distinct from (case when tg_op = 'UPDATE' then old.pinned_comment end) and new.pinned_comment is not null then
+    if not public.is_verified(new.user_id) then raise exception 'Fixar comentário é para criadores verificados (100 seguidores).'; end if;
+    if not exists (select 1 from feed_comments c where c.id = new.pinned_comment and c.post_id = new.id) then raise exception 'Comentário não encontrado.'; end if;
+  end if;
+  if tg_op = 'INSERT' then
+    new.views := 0; new.created_at := now();
+    if jsonb_array_length(new.media) = 0 then new.media := jsonb_build_array(jsonb_build_object('url', new.video_url, 'thumb', new.thumb_url, 'start', new.start_at, 'dur', new.duration, 'w', new.w, 'h', new.h)); end if;
+    if exists (select 1 from jsonb_array_elements(new.media) m where coalesce(m->>'url', '') !~ '^https://') then raise exception 'Link de vídeo inválido.'; end if;
+    new.video_url := new.media->0->>'url';
+  end if;
+  return new;
+end $$;
+
+drop function if exists public.feed_list(text, uuid, text, int);
+create or replace function public.feed_list(p_tab text default 'top', p_user uuid default null, p_game text default null, p_offset int default 0)
+returns table (id uuid, user_id uuid, video_url text, thumb_url text, title text, game text, duration real, start_at real, w int, h int, visibility text, views int, created_at timestamptz,
+  likes int, comments int, liked boolean, following boolean, media jsonb, pinned boolean, pinned_comment uuid, verified boolean)
+language sql stable security definer set search_path = public as $$
+  select p.id, p.user_id, p.video_url, p.thumb_url, p.title, p.game, p.duration, p.start_at, p.w, p.h, p.visibility, p.views, p.created_at,
+    (select count(*)::int from feed_likes l where l.post_id = p.id),
+    (select count(*)::int from feed_comments c where c.post_id = p.id),
+    exists (select 1 from feed_likes l where l.post_id = p.id and l.user_id = auth.uid()),
+    exists (select 1 from follows f where f.follower = auth.uid() and f.followee = p.user_id),
+    p.media, p.pinned, p.pinned_comment, public.is_verified(p.user_id)
+  from feed_posts p
+  where public.can_see_post(p)
+    and (p_tab <> 'following' or exists (select 1 from follows f where f.follower = auth.uid() and f.followee = p.user_id))
+    and (p_tab <> 'user' or p.user_id = p_user)
+    and (p_game is null or p.game ilike p_game)
+  order by case when p_tab = 'user' then p.pinned end desc nulls last,
+    case when p_tab = 'top' then
+      ((select count(*) from feed_likes l where l.post_id = p.id) * 3 + (select count(*) from feed_comments c where c.post_id = p.id) * 2 + p.views * 0.2 + 1)
+      * (case when public.is_verified(p.user_id) then 1.3 else 1 end)
+      / power(extract(epoch from (now() - p.created_at)) / 3600 + 2, 1.3) end desc nulls last,
+    p.created_at desc
+  limit 24 offset greatest(0, p_offset);
+$$;
+create or replace function public.feed_profile(p_user uuid) returns jsonb
+language sql stable security definer set search_path = public as $$
+  select jsonb_build_object(
+    'clips', (select count(*) from feed_posts p where p.user_id = p_user and public.can_see_post(p)),
+    'followers', (select count(*) from follows where followee = p_user),
+    'following', (select count(*) from follows where follower = p_user),
+    'likes', (select count(*) from feed_likes l join feed_posts p on p.id = l.post_id where p.user_id = p_user),
+    'i_follow', exists (select 1 from follows where follower = auth.uid() and followee = p_user),
+    'verified', public.is_verified(p_user));
+$$;
+-- painel de criador (só verificado vê o próprio)
+create or replace function public.feed_creator_stats() returns jsonb
+language plpgsql stable security definer set search_path = public as $$
+declare me uuid := auth.uid();
+begin
+  if not public.is_verified(me) then raise exception 'O painel de criador é para quem é verificado (100 seguidores).'; end if;
+  return jsonb_build_object(
+    'views', coalesce((select sum(views) from feed_posts where user_id = me), 0),
+    'likes', (select count(*) from feed_likes l join feed_posts p on p.id = l.post_id where p.user_id = me),
+    'comments', (select count(*) from feed_comments c join feed_posts p on p.id = c.post_id where p.user_id = me),
+    'followers', (select count(*) from follows where followee = me),
+    'new_followers_7d', (select count(*) from follows where followee = me and created_at > now() - interval '7 days'),
+    'views_7d', (select count(*) from feed_views v join feed_posts p on p.id = v.post_id where p.user_id = me and p.created_at > now() - interval '7 days'),
+    'top', (select coalesce(jsonb_agg(x), '[]'::jsonb) from (select p.id, p.title, p.views, (select count(*) from feed_likes l where l.post_id = p.id) likes
+              from feed_posts p where p.user_id = me order by p.views desc, p.created_at desc limit 5) x));
+end $$;
+grant execute on function public.is_verified(uuid), public.feed_creator_stats() to authenticated;
 
 -- impede trocar campos sensíveis via update
 create or replace function public.guard_updates() returns trigger

@@ -44,6 +44,7 @@ function clampScreen(st){
 /* ---------- insígnias (desenhos originais) ---------- */
 const BADGES = [
   { id:'fundador', nome:'Fundador do Telão', desc:'Criou o Telão' },
+  { id:'verificado', nome:'Criador verificado', desc:'Chegou a 100 seguidores no Feed' },
   { id:'staff', nome:'Equipe Telão', desc:'Faz parte da equipe' },
   { id:'plus', nome:'Assinante Telão+', desc:'' },
   { id:'mod', nome:'Moderador certificado', desc:'Ajuda a manter a paz' },
@@ -57,12 +58,13 @@ const BADGES = [
   { id:'raio', nome:'Casa Raio', desc:'Rápido e brilhante' },
   { id:'onda', nome:'Casa Onda', desc:'Calma e equilíbrio' },
 ];
-const GRANTABLE = ['staff','mod','dev','bug2','bug1','evento','apoiador'];
+const GRANTABLE = ['verificado','staff','mod','dev','bug2','bug1','evento','apoiador'];
 function badgeSvg(id, tier){
   const t = TIERS[tier || 'bronze'];
   const S2 = (body, bg) => `<svg viewBox="0 0 24 24"><rect x="1" y="1" width="22" height="22" rx="6" fill="${bg}"/>${body}</svg>`;
   switch(id){
     case 'fundador': return S2('<path d="M5 16l1.5-8 3.5 3.5L12 6l2 5.5L17.5 8 19 16z" fill="#ffd54a" stroke="#b8860b" stroke-width=".8"/><rect x="5" y="16.5" width="14" height="2.2" rx="1" fill="#ffd54a"/>', '#3a2a00');
+    case 'verificado': return S2('<path d="M12 3.2l2.2 1.6 2.7-.2.9 2.6 2.2 1.6-.8 2.6.8 2.6-2.2 1.6-.9 2.6-2.7-.2L12 20.8l-2.2-1.6-2.7.2-.9-2.6-2.2-1.6.8-2.6-.8-2.6 2.2-1.6.9-2.6 2.7.2z" fill="#3ea6ff"/><path d="M8.4 12.2l2.4 2.4 4.8-5" stroke="#fff" stroke-width="2" fill="none" stroke-linecap="round" stroke-linejoin="round"/>', '#0b2a4a');
     case 'staff': return S2('<path d="M12 4l7 3v5c0 4-3 6.5-7 8-4-1.5-7-4-7-8V7z" fill="#7c6cff"/><path d="M12 8.2l1.2 2.5 2.7.3-2 1.9.5 2.7L12 14.3l-2.4 1.3.5-2.7-2-1.9 2.7-.3z" fill="#fff"/>', '#211a5c');
     case 'plus': return `<svg viewBox="0 0 24 24"><defs><linearGradient id="pg${tier}" x1="0" y1="0" x2="1" y2="1"><stop offset="0" stop-color="${t[1]}"/><stop offset="1" stop-color="${t[0]}"/></linearGradient></defs><rect x="1" y="1" width="22" height="22" rx="6" fill="#2b1650"/><path d="M12 3.8l6.5 6.2L12 20.2 5.5 10z" fill="url(#pg${tier})"/><path d="M5.5 10h13M12 3.8L9.4 10 12 20.2 14.6 10z" stroke="#fff" stroke-opacity=".55" stroke-width=".8" fill="none"/></svg>`;
     case 'mod': return S2('<path d="M12 4l7 3v5c0 4-3 6.5-7 8-4-1.5-7-4-7-8V7z" fill="#ff8a3d"/><path d="M8.5 12.2l2.4 2.4 4.6-4.8" stroke="#fff" stroke-width="2" fill="none" stroke-linecap="round" stroke-linejoin="round"/>', '#4a2200');

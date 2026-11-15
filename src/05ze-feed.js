@@ -34,60 +34,82 @@ function videoThumb(src, at){
 
 /* ---------- postar ---------- */
 App.feedPostModal = function(src){
-  // src: { blob, start, len, fname } (clipe gravado) | { url, start, dur, w, h } (já enviado) | {} (escolher arquivo)
-  let file = src.blob ? new File([src.blob], src.fname || 'clipe.webm', { type: src.blob.type || 'video/webm' }) : null;
-  let localUrl = file ? URL.createObjectURL(file) : src.url || null;
-  modal(`<form id="fpF"><div class="mh"><h2>${ic('film', 20)} Postar no Feed</h2><p>Todo mundo do Telão pode ver (ou só seus amigos, se preferir).</p></div>
+  // src: { blob, start, len, fname } (clipe gravado) | { url, start, dur, w, h } (já enviado) | {} (escolher)
+  // v6.23: até 5 vídeos por post
+  const MAX = 5, items = [];
+  if(src && src.blob) items.push({ file: new File([src.blob], src.fname || 'clipe.webm', { type: src.blob.type || 'video/webm' }), start: src.start || 0, dur: src.len, local: URL.createObjectURL(src.blob) });
+  else if(src && src.url) items.push({ url: src.url, start: src.start || 0, dur: src.dur, w: src.w, h: src.h, local: src.url });
+  modal(`<form id="fpF"><div class="mh"><h2>${ic('film', 20)} Postar no Feed</h2><p>Até ${MAX} clipes no mesmo post. Todo mundo do Telão pode ver (ou só seus amigos).</p></div>
     <div class="mc">
-      <div class="fpvid" id="fpV">${localUrl ? `<video src="${esc(localUrl)}${src.start ? '#t=' + src.start : ''}" controls playsinline muted></video>` : `<label class="fpdrop"><input type="file" accept="video/*" id="fpFile" hidden>${ic('upload', 28)}<b>Escolher vídeo</b><small>MP4 ou WEBM, até 25 MB</small></label>`}</div>
-      ${!localUrl ? `<button type="button" class="btn sec sm" id="fpMine" style="margin-top:8px">${ic('clip', 15)} Usar um clipe que já mandei no chat</button>` : ''}
+      <div class="fpitems" id="fpItems"></div>
+      <div class="fpadd" id="fpAdd"><label class="btn sec sm"><input type="file" accept="video/*" id="fpFile" multiple hidden>${ic('upload', 15)} Do computador</label>
+        <button type="button" class="btn sec sm" id="fpMine">${ic('clip', 15)} Clipes que já mandei</button><span class="mut small" id="fpCount"></span></div>
+      <div class="fpmine hidden" id="fpMineBox"></div>
       <label class="field" style="margin-top:12px"><span>Título</span><input class="inp" id="fpT" maxlength="100" required placeholder="ace no último round 😱"></label>
       <div class="frow2"><label class="field"><span>Jogo</span><input class="inp" id="fpG" maxlength="60" list="fpGL" placeholder="Valorant" value="${esc((S.me.activity && S.me.activity.type === 'playing' && S.me.activity.name) || '')}"><datalist id="fpGL">${GAME_SUGG.map(g => `<option value="${esc(g)}">`).join('')}</datalist></label>
         <label class="field"><span>Quem vê</span><select class="inp" id="fpVis"><option value="public">Todo mundo</option><option value="friends">Só amigos</option></select></label></div>
       <div class="err" id="fpE"></div></div>
     <div class="mf"><button type="button" class="btn sec" data-close>Cancelar</button><button class="btn" id="fpGo">${ic('film', 16)} Postar</button></div></form>`, m => {
     const err = t => m.querySelector('#fpE').textContent = t || '';
-    const setVideo = (u, start) => { localUrl = u; m.querySelector('#fpV').innerHTML = `<video src="${esc(u)}${start ? '#t=' + start : ''}" controls playsinline muted></video>`; const b = m.querySelector('#fpMine'); if(b) b.remove(); };
-    const fi = m.querySelector('#fpFile');
-    if(fi) fi.onchange = () => {
-      const f = fi.files[0]; if(!f) return;
-      if(!/^video\//.test(f.type)){ err('Escolha um arquivo de vídeo.'); return; }
-      if(f.size > 25 * 1048576){ err('O vídeo passou de 25 MB. Corte ou diminua a qualidade antes.'); return; }
-      file = f; src = {}; setVideo(URL.createObjectURL(f)); err();
+    const draw = () => {
+      m.querySelector('#fpItems').innerHTML = items.map((it, i) => `<div class="fpit"><video src="${esc(it.local)}#t=${(it.start || 0) + 0.5}" preload="metadata" muted playsinline></video><span class="fpn">${i + 1}</span>
+        <button type="button" class="fpx" data-fpx="${i}" aria-label="Tirar">${ic('x', 13)}</button>${i > 0 ? `<button type="button" class="fpl" data-fpl="${i}" aria-label="Mover para a esquerda">${ic('chevLeft', 13)}</button>` : ''}</div>`).join('')
+        || `<div class="fpempty">${ic('film', 26)}<span>Adicione até ${MAX} clipes</span></div>`;
+      m.querySelector('#fpCount').textContent = `${items.length} de ${MAX}`;
+      m.querySelector('#fpAdd').classList.toggle('full', items.length >= MAX);
+      m.querySelectorAll('[data-fpx]').forEach(b => b.onclick = () => { items.splice(+b.dataset.fpx, 1); draw(); });
+      m.querySelectorAll('[data-fpl]').forEach(b => b.onclick = () => { const i = +b.dataset.fpl; [items[i - 1], items[i]] = [items[i], items[i - 1]]; draw(); });
+      const big = m.querySelector('.fpit:first-child video'); if(big) big.controls = true;
     };
-    const mb = m.querySelector('#fpMine');
-    if(mb) mb.onclick = async () => {
-      mb.disabled = true;
+    draw();
+    m.querySelector('#fpFile').onchange = e => {
+      for(const f of [...e.target.files]){
+        if(items.length >= MAX){ App.toast(`No máximo ${MAX} clipes por post.`, true); break; }
+        if(!/^video\//.test(f.type)){ err('Escolha só arquivos de vídeo.'); continue; }
+        if(f.size > 25 * 1048576){ err(`“${f.name}” passou de 25 MB.`); continue; }
+        items.push({ file: f, start: 0, local: URL.createObjectURL(f) });
+      }
+      e.target.value = ''; draw();
+    };
+    m.querySelector('#fpMine').onclick = async () => {
+      const box = m.querySelector('#fpMineBox');
+      if(!box.classList.contains('hidden')){ box.classList.add('hidden'); return; }
       const { data } = await App.sb.from('messages').select('attachments,created_at').eq('author_id', S.me.id).order('created_at', { ascending: false }).limit(200);
-      const vids = []; (data || []).forEach(r => (r.attachments || []).forEach(a => { if(a && a.url && (a.clip || /^video\//.test(a.type || ''))) vids.push(a); }));
-      mb.disabled = false;
+      const vids = []; (data || []).forEach(r => (r.attachments || []).forEach(a => { if(a && a.url && (a.clip || /^video\//.test(a.type || '')) && !vids.some(v => v.url === a.url)) vids.push(a); }));
       if(!vids.length){ App.toast('Você ainda não mandou clipes nem vídeos no chat.', true); return; }
-      const box = document.createElement('div'); box.className = 'fpmine';
-      box.innerHTML = vids.slice(0, 24).map((a, i) => `<button type="button" data-fpi="${i}"><video src="${esc(a.url)}#t=${(+a.start || 0) + 0.5}" preload="metadata" muted playsinline></video>${a.dur ? `<small>${fdDur(a.dur)}</small>` : ''}</button>`).join('');
-      mb.replaceWith(box);
-      box.querySelectorAll('[data-fpi]').forEach(b => b.onclick = () => { const a = vids[+b.dataset.fpi]; src = { url: a.url, start: +a.start || 0, dur: a.dur, w: a.w, h: a.h }; file = null; setVideo(a.url, src.start); box.remove(); });
+      box.classList.remove('hidden');
+      box.innerHTML = vids.slice(0, 30).map((a, i) => `<button type="button" data-fpi="${i}"><video src="${esc(a.url)}#t=${(+a.start || 0) + 0.5}" preload="metadata" muted playsinline></video>${a.dur ? `<small>${fdDur(a.dur)}</small>` : ''}</button>`).join('');
+      box.querySelectorAll('[data-fpi]').forEach(b => b.onclick = () => {
+        const a = vids[+b.dataset.fpi];
+        if(items.some(x => x.url === a.url)){ items.splice(items.findIndex(x => x.url === a.url), 1); b.classList.remove('on'); draw(); return; }
+        if(items.length >= MAX){ App.toast(`No máximo ${MAX} clipes por post.`, true); return; }
+        items.push({ url: a.url, start: +a.start || 0, dur: a.dur, w: a.w, h: a.h, local: a.url }); b.classList.add('on'); draw();
+      });
     };
     m.querySelector('#fpF').onsubmit = async e => {
       e.preventDefault(); err();
       const title = m.querySelector('#fpT').value.trim(), game = m.querySelector('#fpG').value.trim(), vis = m.querySelector('#fpVis').value;
-      if(!localUrl){ err('Escolha um vídeo.'); return; }
+      if(!items.length){ err('Adicione pelo menos um clipe.'); return; }
       if(!title){ err('Dê um título.'); return; }
-      const b = m.querySelector('#fpGo'); b.disabled = true; b.textContent = 'Postando…';
+      const b = m.querySelector('#fpGo'); b.disabled = true;
       try{
-        let video_url = src.url || null, meta = {};
-        if(file){
-          if(file.size > 25 * 1048576) throw new Error('O vídeo passou de 25 MB.');
-          meta = await uploadOne({ file }); video_url = meta.url;
+        const media = [];
+        for(let i = 0; i < items.length; i++){
+          const it = items[i];
+          b.textContent = items.length > 1 ? `Enviando ${i + 1} de ${items.length}…` : 'Postando…';
+          let url = it.url, w = it.w, h = it.h;
+          if(it.file){ const meta = await uploadOne({ file: it.file }); url = meta.url; w = meta.w; h = meta.h; }
+          const th = await videoThumb(it.local, it.start || 0);
+          let thumb = null;
+          if(th && th.blob){ try{ thumb = (await uploadOne({ file: new File([th.blob], 'thumb.jpg', { type: 'image/jpeg' }) })).url; }catch(x){} }
+          media.push({ url, thumb, start: +(it.start || 0), dur: it.dur || (th && th.dur) || null, w: w || (th && th.w) || null, h: h || (th && th.h) || null });
         }
-        const th = await videoThumb(localUrl, src.start || 0);
-        let thumb_url = null;
-        if(th && th.blob){ try{ const tm = await uploadOne({ file: new File([th.blob], 'thumb.jpg', { type: 'image/jpeg' }) }); thumb_url = tm.url; }catch(x){} }
-        const row = { video_url, thumb_url, title, game: game && game !== 'Outro' ? game : null, visibility: vis, start_at: +(src.start || 0),
-          duration: src.len || src.dur || (th && th.dur) || null, w: meta.w || src.w || (th && th.w) || null, h: meta.h || src.h || (th && th.h) || null };
-        const { data, error } = await App.sb.from('feed_posts').insert(row).select().single();
+        const f = media[0];
+        const row = { video_url: f.url, thumb_url: f.thumb, title, game: game && game !== 'Outro' ? game : null, visibility: vis, start_at: f.start, duration: f.dur, w: f.w, h: f.h, media };
+        const { error } = await App.sb.from('feed_posts').insert(row);
         if(error) throw error;
-        closeModal(); App.toast('Clipe postado no Feed! 🎬');
-        if(document.getElementById('feedBox')){ FD.tab = 'new'; FD.user = null; feedLoad(true); }
+        closeModal(); App.toast(media.length > 1 ? `Post com ${media.length} clipes no Feed! 🎬` : 'Clipe postado no Feed! 🎬');
+        if(document.getElementById('feedBox')){ FD.tab = 'new'; FD.user = null; feedHeader(); feedLoad(true); }
         else feedOpen({ tab: 'new' });
       }catch(x){ b.disabled = false; b.innerHTML = `${ic('film', 16)} Postar`; err(fdMiss(x) ? FD_SQL : (x.message || String(x))); }
     };
@@ -102,13 +124,16 @@ App.msgMenuExtra = m => {
   return out;
 };
 
+const vBadge = (on, cls = '') => on ? `<span class="fdver ${cls}" data-tip="Criador verificado" data-tipsub="100 seguidores ou mais">${ic('check', 10)}</span>` : '';
+const mediaOf = p => Array.isArray(p.media) && p.media.length ? p.media : [{ url: p.video_url, thumb: p.thumb_url, start: p.start_at, dur: p.duration }];
 /* ---------- lista ---------- */
 function cardHtml(p){
   const pr = prof(p.user_id);
   return `<div class="fdc" data-fp="${p.id}">
     <div class="fdth">${p.thumb_url ? `<img src="${esc(p.thumb_url)}" alt="" loading="lazy">` : `<video src="${esc(p.video_url)}#t=${(p.start_at || 0) + 1}" preload="metadata" muted playsinline></video>`}
-      <span class="fdur">${p.duration ? fdDur(p.duration) : ''}</span>${p.game ? `<span class="fgame">${esc(p.game)}</span>` : ''}<span class="fplay">${ic('play', 26)}</span></div>
-    <div class="fdinf">${avatar(pr, 'sm')}<div class="ftx"><b>${esc(p.title)}</b><small><span class="fuser" data-fu="${p.user_id}">${esc(pr.display_name)}</span> · ${fdK(p.views)} views · ${fdAgo(p.created_at)}</small></div>
+      <span class="fdur">${p.duration ? fdDur(p.duration) : ''}</span>${p.game ? `<span class="fgame">${esc(p.game)}</span>` : ''}<span class="fplay">${ic('play', 26)}</span>
+      ${mediaOf(p).length > 1 ? `<span class="fdmulti">${ic('film', 12)} ${mediaOf(p).length}</span>` : ''}${p.pinned && FD.user ? '<span class="fdpin">📌 Fixado</span>' : ''}</div>
+    <div class="fdinf">${avatar(pr, 'sm')}<div class="ftx"><b>${esc(p.title)}</b><small><span class="fuser" data-fu="${p.user_id}">${esc(pr.display_name)}</span>${vBadge(p.verified)} · ${fdK(p.views)} views · ${fdAgo(p.created_at)}</small></div>
       <span class="flk ${p.liked ? 'on' : ''}">${ic('heart', 14)} ${fdK(p.likes)}</span></div></div>`;
 }
 async function feedLoad(reset){
@@ -139,10 +164,16 @@ async function feedHeader(){
   await ensureProfiles([FD.user]);
   const p = prof(FD.user);
   h.classList.remove('hidden');
-  h.innerHTML = `<button class="ibtn" id="fdBack" data-tip="Voltar">${ic('arrowLeft', 18)}</button>${avatar(p, 'lg')}<div><b>${esc(p.display_name)}</b><small>@${esc(p.username)}</small><div class="fdstats" id="fdSt"></div></div><span class="grow"></span>${FD.user !== S.me.id ? `<button class="btn" id="fdFollow">Seguir</button>` : ''}`;
+  h.innerHTML = `<button class="ibtn" id="fdBack" data-tip="Voltar">${ic('arrowLeft', 18)}</button>${avatar(p, 'lg')}<div><b>${esc(p.display_name)}<span id="fdVer"></span></b><small>@${esc(p.username)}</small><div class="fdstats" id="fdSt"></div><div id="fdVerInfo"></div></div><span class="grow"></span>${FD.user !== S.me.id ? `<button class="btn" id="fdFollow">Seguir</button>` : `<button class="btn sec hidden" id="fdPanel">${ic('poll', 16)} Painel de criador</button>`}`;
   h.querySelector('#fdBack').onclick = () => { FD.user = null; feedHeader(); feedLoad(true); };
   const { data } = await App.sb.rpc('feed_profile', { p_user: FD.user });
   if(data){
+    h.querySelector('#fdVer').innerHTML = vBadge(data.verified, 'big');
+    if(FD.user === S.me.id){
+      const vi = h.querySelector('#fdVerInfo');
+      if(data.verified){ const pb = h.querySelector('#fdPanel'); pb.classList.remove('hidden'); pb.onclick = creatorPanel; vi.innerHTML = '<span class="fdperk">✓ Você é verificado: posta até 60 clipes por dia, fixa até 3 clipes no perfil, fixa comentários e aparece mais em Em alta.</span>'; }
+      else { const f = data.followers || 0; vi.innerHTML = `<div class="fdprog"><span>Faltam <b>${Math.max(0, 100 - f)}</b> seguidores para o selo de verificado ✓</span><i><b style="width:${Math.min(100, f)}%"></b></i><small>Verificado ganha: 60 clipes por dia, fixar clipes e comentários, painel de criador e mais destaque em Em alta.</small></div>`; }
+    }
     h.querySelector('#fdSt').innerHTML = `<span><b>${fdK(data.clips)}</b> clipes</span><span><b>${fdK(data.followers)}</b> seguidores</span><span><b>${fdK(data.following)}</b> seguindo</span><span><b>${fdK(data.likes)}</b> curtidas</span>`;
     const fb = h.querySelector('#fdFollow');
     if(fb){ const set = on => { fb.textContent = on ? 'Seguindo' : 'Seguir'; fb.classList.toggle('sec', on); }; set(data.i_follow);
@@ -205,19 +236,44 @@ async function feedView(p){
   const pr = prof(p.user_id), mine = p.user_id === S.me.id, admin = S.me.is_admin;
   const el = document.createElement('div'); el.id = 'fdView'; el.className = 'fdview';
   el.innerHTML = `<div class="fvbox"><button class="ibtn fvx" id="fvX">${ic('x', 22)}</button>
-    <div class="fvvid"><video id="fvV" src="${esc(p.video_url)}${p.start_at ? '#t=' + p.start_at : ''}" controls autoplay playsinline></video></div>
-    <div class="fvside"><div class="fvhead">${avatar(pr, 'lg')}<div class="fvwho"><b class="fuser" data-fu="${p.user_id}">${esc(pr.display_name)}</b><small>${fdAgo(p.created_at)}${p.visibility === 'friends' ? ' · só amigos' : ''}</small></div>
+    <div class="fvvid"><video id="fvV" controls autoplay playsinline></video>
+      ${mediaOf(p).length > 1 ? `<button class="fvnav l" id="fvPrev" aria-label="Clipe anterior">${ic('chevLeft', 26)}</button><button class="fvnav r" id="fvNext" aria-label="Próximo clipe">${ic('chevRight', 26)}</button><div class="fvdots" id="fvDots"></div><span class="fvcount" id="fvCount"></span>` : ''}</div>
+    <div class="fvside"><div class="fvhead">${avatar(pr, 'lg')}<div class="fvwho"><b class="fuser" data-fu="${p.user_id}">${esc(pr.display_name)}</b>${vBadge(p.verified)}<small>${fdAgo(p.created_at)}${p.visibility === 'friends' ? ' · só amigos' : ''}</small></div>
         ${mine ? '' : `<button class="btn sm ${p.following ? 'sec' : ''}" id="fvFol">${p.following ? 'Seguindo' : 'Seguir'}</button>`}</div>
       <h2 class="fvt">${esc(p.title)}</h2>${p.game ? `<span class="fgame inl" data-fg="${esc(p.game)}">${ic('gamepad', 13)} ${esc(p.game)}</span>` : ''}
       <div class="fvacts"><button class="fvbtn ${p.liked ? 'on' : ''}" id="fvLike">${ic('heart', 18)} <span>${fdK(p.likes)}</span></button><span class="fvbtn st">${ic('eye', 18)} ${fdK(p.views)}</span>
         <button class="fvbtn" id="fvShare">${ic('link', 18)} Copiar link</button><button class="fvbtn" id="fvSend">${ic('send', 18)} Mandar</button>
+        ${mine && p.verified ? `<button class="fvbtn ${p.pinned ? 'on' : ''}" id="fvPin">${ic('pin', 18)} ${p.pinned ? 'Fixado' : 'Fixar no perfil'}</button>` : ''}
         ${mine || admin ? `<button class="fvbtn danger" id="fvDel" data-tip="Apagar">${ic('trash', 18)}</button>` : ''}</div>
       <div class="fvcom" id="fvC"><div class="spin" style="margin:20px auto"></div></div>
       <form class="fvform" id="fvF"><input class="inp" id="fvI" maxlength="500" placeholder="Comentar…" autocomplete="off"><button class="btn sm">${ic('send', 16)}</button></form></div></div>`;
   document.body.appendChild(el);
   history.replaceState(null, '', '#clipe=' + p.id);
+  const med = mediaOf(p); let cur = 0;
+  const showMedia = i => {
+    cur = (i + med.length) % med.length; const m = med[cur], v = el.querySelector('#fvV');
+    v.src = m.url + (m.start ? '#t=' + m.start : ''); v.play().catch(() => {});
+    const d = el.querySelector('#fvDots'); if(d) d.innerHTML = med.map((x, k) => `<i class="${k === cur ? 'on' : ''}" data-fvd="${k}"></i>`).join('');
+    const c = el.querySelector('#fvCount'); if(c) c.textContent = `${cur + 1}/${med.length}`;
+    el.querySelectorAll('[data-fvd]').forEach(b => b.onclick = () => showMedia(+b.dataset.fvd));
+  };
+  showMedia(0);
+  if(med.length > 1){
+    el.querySelector('#fvPrev').onclick = () => showMedia(cur - 1); el.querySelector('#fvNext').onclick = () => showMedia(cur + 1);
+    el.querySelector('#fvV').addEventListener('ended', () => { if(cur < med.length - 1) showMedia(cur + 1); });
+  }
+  const pinB = el.querySelector('#fvPin');
+  if(pinB) pinB.onclick = async () => {
+    const { error } = await App.sb.from('feed_posts').update({ pinned: !p.pinned }).eq('id', p.id);
+    if(error){ App.toast(error.message, true); return; }
+    p.pinned = !p.pinned; pinB.classList.toggle('on', p.pinned); pinB.innerHTML = `${ic('pin', 18)} ${p.pinned ? 'Fixado' : 'Fixar no perfil'}`;
+    App.toast(p.pinned ? 'Clipe fixado no topo do seu perfil.' : 'Clipe desafixado.');
+  };
   const close = () => { el.remove(); document.removeEventListener('keydown', kd); if(location.hash.startsWith('#clipe=')) history.replaceState(null, '', location.pathname + location.search); };
-  const kd = e => { if(e.key === 'Escape' && $('#modal').classList.contains('hidden')){ e.stopImmediatePropagation(); close(); } };
+  const kd = e => {
+    if(e.key === 'Escape' && $('#modal').classList.contains('hidden')){ e.stopImmediatePropagation(); close(); }
+    else if((e.key === 'ArrowRight' || e.key === 'ArrowLeft') && mediaOf(p).length > 1 && !e.target.closest('input,textarea')){ e.preventDefault(); showMedia(cur + (e.key === 'ArrowRight' ? 1 : -1)); }
+  };
   document.addEventListener('keydown', kd, true);
   el.querySelector('#fvX').onclick = close; el.onclick = e => { if(e.target === el) close(); };
   App.sb.rpc('feed_view', { p_post: p.id }).then(() => {}, () => {});
@@ -254,8 +310,16 @@ async function feedView(p){
     const box = el.querySelector('#fvC'); if(!box) return;
     if(error){ box.innerHTML = `<p class="mut small">${esc(error.message)}</p>`; return; }
     await ensureProfiles((data || []).map(c => c.user_id));
-    box.innerHTML = (data || []).length ? data.map(c => `<div class="fvc">${avatar(prof(c.user_id), 'xs')}<div><b>${esc(prof(c.user_id).display_name)}</b> <small>${fdAgo(c.created_at)}</small><p>${esc(c.content)}</p></div>${c.user_id === S.me.id || mine || admin ? `<button class="ibtn sm" data-fcd="${c.id}" data-tip="Apagar">${ic('trash', 13)}</button>` : ''}</div>`).join('')
+    const list = (data || []).slice().sort((a, b) => (b.id === p.pinned_comment) - (a.id === p.pinned_comment));
+    box.innerHTML = list.length ? list.map(c => `<div class="fvc ${c.id === p.pinned_comment ? 'pin' : ''}">${avatar(prof(c.user_id), 'xs')}<div>${c.id === p.pinned_comment ? `<span class="fvpinlbl">📌 Fixado por ${esc(pr.display_name)}</span>` : ''}<b>${esc(prof(c.user_id).display_name)}</b> <small>${fdAgo(c.created_at)}</small><p>${esc(c.content)}</p></div>
+        ${mine && p.verified ? `<button class="ibtn sm" data-fcp="${c.id}" data-tip="${c.id === p.pinned_comment ? 'Desafixar' : 'Fixar comentário'}">${ic('pin', 13)}</button>` : ''}${c.user_id === S.me.id || mine || admin ? `<button class="ibtn sm" data-fcd="${c.id}" data-tip="Apagar">${ic('trash', 13)}</button>` : ''}</div>`).join('')
       : '<p class="mut small fvnone">Nenhum comentário ainda. Seja o primeiro!</p>';
+    box.querySelectorAll('[data-fcp]').forEach(b => b.onclick = async () => {
+      const to = b.dataset.fcp === p.pinned_comment ? null : b.dataset.fcp;
+      const { error } = await App.sb.from('feed_posts').update({ pinned_comment: to }).eq('id', p.id);
+      if(error){ App.toast(error.message, true); return; }
+      p.pinned_comment = to; loadCom();
+    });
     box.querySelectorAll('[data-fcd]').forEach(b => b.onclick = async () => { await App.sb.from('feed_comments').delete().eq('id', b.dataset.fcd); p.comments = Math.max(0, p.comments - 1); loadCom(); });
     box.scrollTop = box.scrollHeight;
   };
@@ -267,6 +331,14 @@ async function feedView(p){
     if(error){ App.toast(error.message, true); i.value = t; return; }
     p.comments++; loadCom();
   };
+}
+async function creatorPanel(){
+  const { data: d, error } = await App.sb.rpc('feed_creator_stats');
+  if(error){ App.toast(fdMiss(error) ? FD_SQL : error.message, true); return; }
+  modal(`<div class="mh"><h2>${ic('poll', 20)} Painel de criador ${vBadge(true, 'big')}</h2><p>Como seus clipes estão indo no Feed.</p></div>
+    <div class="mc"><div class="crgrid">${[['Visualizações', d.views, '👀'], ['Curtidas', d.likes, '❤️'], ['Comentários', d.comments, '💬'], ['Seguidores', d.followers, '👥'], ['Seguidores novos (7 dias)', d.new_followers_7d, '📈'], ['Views nos clipes da semana', d.views_7d, '🔥']].map(([l, v, e]) => `<div class="crc"><span>${e}</span><b>${fdK(v)}</b><small>${l}</small></div>`).join('')}</div>
+      <h3 style="margin-top:16px">Seus clipes mais vistos</h3><div class="crtop">${(d.top || []).map((t, i) => `<div><span>${i + 1}</span><b>${esc(t.title)}</b><small>${fdK(t.views)} views · ${fdK(t.likes)} curtidas</small></div>`).join('') || '<p class="mut">Ainda sem clipes.</p>'}</div></div>
+    <div class="mf"><button class="btn" data-close>Fechar</button></div>`);
 }
 async function feedSend(cid, p, link){
   const { error } = await App.sb.from('messages').insert({ channel_id: cid, content: `🎬 ${p.title}\n${link}` });

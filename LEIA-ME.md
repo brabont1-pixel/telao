@@ -419,3 +419,15 @@ O "Spotify direto" (com Ouvir junto) continua opcional e só aparece se você co
 - **🤔 Quem sou eu?:** cada um recebe um personagem que todo mundo vê, menos você. Na sua vez, pergunte em voz alta (sim ou não), a galera responde nos botões, e você chuta quando souber. Quanto menos vezes, mais pontos.
 - **🃏 Truco paulista:** 2 jogadores ou 4 (duplas, o parceiro fica na sua frente). Vira e manilha (zap, copas, espadas, ouros), TRUCO / SEIS / NOVE / DOZE com aceitar, correr ou aumentar, mão de onze sem truco, 12 tentos. Cada um recebe as próprias cartas em particular.
 - **🌳 Praça do servidor:** ao criar um canal, escolha **Praça** (ou ligue em Configurar canal). Vira um mapa 2D com fonte, árvores, coreto e mesas. Cada pessoa é um bonequinho; ande com **WASD**/setas ou clicando no chão. Só se ouve quem está perto (o volume cai com a distância). Nas **mesas** e no **cantinho do banco**, só quem está ali dentro se ouve. No **coreto**, a praça toda ouve você. Teclas 1 a 5 mandam emojis por cima do bonequinho. "Ver telas" volta para as câmeras e telas compartilhadas.
+
+# Versão 6.22: legendas consertadas, Praça removida
+- **Legendas ao vivo** agora funcionam em qualquer lugar: no Chrome/Edge usam o reconhecimento do navegador e, se ele falhar (app do Windows, Brave, Opera, Firefox, erro de rede), trocam sozinhas para o Whisper no próprio computador (baixa ~75 MB uma vez). Aparece um selo **CC** embaixo enquanto estão ligadas (clique para desligar). Em Configurações → Acessibilidade dá para forçar o reconhecimento no computador.
+- A **Praça 2D** foi retirada.
+
+# Versão 6.23: Feed com até 5 clipes e selo de verificado
+
+**Precisa rodar o `supabase.sql` novo no Supabase.**
+
+- **Até 5 clipes por post:** no "Postar no Feed", adicione vários vídeos do computador e/ou clipes que você já mandou, reordene e tire. No Feed o cartão mostra quantos clipes tem, e no player dá para passar com as setas (ou ← →); quando um acaba, o próximo começa.
+- **Selo de verificado ✓ (100 seguidores):** é dado automaticamente quando a pessoa chega a 100 seguidores no Feed e fica para sempre (o admin também pode dar em Insígnias). No seu perfil do Feed aparece uma barra de quanto falta.
+- **O que o verificado ganha:** 60 clipes por dia (em vez de 30), fixar até 3 clipes no topo do perfil, fixar um comentário em cada clipe, **Painel de criador** (views, curtidas, comentários, seguidores novos da semana e clipes mais vistos) e um empurrãozinho em **Em alta**.
