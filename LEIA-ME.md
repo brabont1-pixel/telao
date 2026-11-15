@@ -431,3 +431,8 @@ O "Spotify direto" (com Ouvir junto) continua opcional e só aparece se você co
 - **Até 5 clipes por post:** no "Postar no Feed", adicione vários vídeos do computador e/ou clipes que você já mandou, reordene e tire. No Feed o cartão mostra quantos clipes tem, e no player dá para passar com as setas (ou ← →); quando um acaba, o próximo começa.
 - **Selo de verificado ✓ (100 seguidores):** é dado automaticamente quando a pessoa chega a 100 seguidores no Feed e fica para sempre (o admin também pode dar em Insígnias). No seu perfil do Feed aparece uma barra de quanto falta.
 - **O que o verificado ganha:** 60 clipes por dia (em vez de 30), fixar até 3 clipes no topo do perfil, fixar um comentário em cada clipe, **Painel de criador** (views, curtidas, comentários, seguidores novos da semana e clipes mais vistos) e um empurrãozinho em **Em alta**.
+
+# Versão 6.24: consertos no celular
+- **Configurações do servidor no celular** abrem na lista de opções (Visão geral, Cargos, Canais, Emojis…). Antes ficava preso na Visão geral. O "Voltar" de qualquer seção volta para a lista; o X fecha.
+- **O Telão começa sempre em português.** Antes, celular configurado em inglês deixava algumas palavras em inglês ("Server name", "Remove"). Para trocar de idioma, use Configurações → Idioma.
+- **Foto de quem mandou DM na barra da esquerda** agora fica redonda e certinha, com a moldura animada em volta (quando a pessoa tem) e uma bolinha rosa de mensagem nova.

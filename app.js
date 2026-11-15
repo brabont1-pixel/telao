@@ -9,7 +9,7 @@ const esc = s => String(s ?? '').replace(/[&<>"']/g, c => ({'&':'&amp;','<':'&lt
 const COLORS = ['#5865f2','#eb459e','#3ba55c','#faa61a','#ed4245','#f47b67','#1abc9c','#9b59b6','#e67e22','#607d8b'];
 const ls = { get(k,d){ try{ const v=localStorage.getItem(k); return v==null?d:JSON.parse(v); }catch(e){ return d; } }, set(k,v){ try{ localStorage.setItem(k, JSON.stringify(v)); }catch(e){} } };
 
-const APP_VERSION = '6.23';
+const APP_VERSION = '6.24';
 const S = {
   me: null, profiles: new Map(), servers: [], channels: new Map(), members: new Map(),
   friends: [], dms: [], dmActivity: ls.get('telao-dmact', {}), online: new Set(),
@@ -657,7 +657,7 @@ function renderRail(){
   // DMs com mensagem nova aparecem na barra, como no Discord
   S.dms.filter(d => S.unread.has(d.id)).slice(0, 4).forEach(d => {
     const p = prof(dmOther(d));
-    h += `<button class="ricon dmr" data-dmr="${d.id}" data-tip="${esc(p.display_name)}" data-tipside="r">${avatar(p)}<span class="badge">●</span></button>`;
+    h += `<button class="ricon dmr" data-dmr="${d.id}" data-tip="${esc(p.display_name)}" data-tipside="r">${avatar(p)}<span class="badge"></span></button>`;
   });
   S.groups.filter(g => S.unread.has(g.id)).slice(0, 3).forEach(g => {
     h += `<button class="ricon dmr" data-dmr="${g.id}" data-tip="${esc(groupName(g))}" data-tipside="r">${groupIcon(g)}<span class="badge">●</span></button>`;
@@ -2959,7 +2959,10 @@ function openSettings(kind, sec, server){
   closeMenu(); closeModal();
   if(SET) closeSettings();
   const el = document.createElement('div'); el.className = 'settings'; document.body.appendChild(el);
-  SET = { kind, sec: sec || (kind === 'user' ? 'account' : 'overview'), server, el, cleanups: [], mobileOpen: !!sec, direct: !!sec };
+  const def = kind === 'user' ? 'account' : 'overview';
+  // no celular, abrir na seção inicial mostra a lista de opções (antes ficava preso na Visão geral)
+  if(sec === def && isMobile()) sec = null;
+  SET = { kind, sec: sec || def, server, el, cleanups: [], mobileOpen: !!sec, direct: !!sec };
   renderSettings();
   App.onSettingsOpen && App.onSettingsOpen();
 }
@@ -2974,7 +2977,8 @@ function closeSettings(){
 /* "voltar" nas configurações (celular): se abriu direto numa seção, fecha; se veio da lista, volta para a lista */
 function settingsBack(){
   if(!SET) return;
-  if(SET.mobileOpen && !SET.direct){ SET.mobileOpen = false; renderSettings(); }
+  // "Voltar" sempre leva para a lista de opções; o X fecha tudo
+  if(SET.mobileOpen){ if(SET.dirty && !confirm('Você tem alterações não salvas. Descartar?')) return; SET.mobileOpen = false; SET.direct = false; SET.dirty = false; renderSettings(); }
   else closeSettings();
 }
 App.settingsBack = settingsBack;
@@ -4574,7 +4578,9 @@ function secA11y(box, back){
    Traduz a interface (nunca o que as pessoas escrevem).
    ===================================================================== */
 const LANGS = [['pt','Português (Brasil)','🇧🇷'],['en','English','🇺🇸'],['es','Español','🇪🇸']];
-if(!P.lang){ const n = (navigator.language || 'pt').slice(0, 2); P.lang = ['en','es'].includes(n) ? n : 'pt'; }
+// v6.24: o Telão começa sempre em português; só muda se a pessoa escolher em Configurações → Idioma
+// (antes pegava o idioma do celular e deixava a tela meio em inglês)
+if(!P.langSet) P.lang = 'pt';
 // [português, inglês, espanhol]
 const DICT_RAW = [
   ['Início · amigos e conversas','Home · friends and chats','Inicio · amigos y chats'],['Adicionar um servidor','Add a server','Añadir un servidor'],
@@ -4712,7 +4718,7 @@ function secLang(box, back){
     <div class="langs">${LANGS.map(([v, l, f]) => `<button data-lang="${v}" class="${P.lang === v ? 'on' : ''}"><span class="fl">${f}</span><b>${l}</b>${P.lang === v ? '<span class="ok">✔</span>' : ''}</button>`).join('')}</div>
     <p class="mut small" style="margin-top:14px">Algumas partes novas podem aparecer em português até a próxima atualização.</p>`;
   box.querySelectorAll('[data-lang]').forEach(b => b.onclick = () => {
-    const was = P.lang; P.lang = b.dataset.lang; savePrefs();
+    const was = P.lang; P.lang = b.dataset.lang; P.langSet = true; savePrefs();
     if(was !== 'pt' && P.lang !== was){ location.reload(); return; }   // volta os textos originais
     applyLang(); renderAll(); renderSettings();
   });

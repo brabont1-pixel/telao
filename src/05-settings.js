@@ -209,7 +209,10 @@ function openSettings(kind, sec, server){
   closeMenu(); closeModal();
   if(SET) closeSettings();
   const el = document.createElement('div'); el.className = 'settings'; document.body.appendChild(el);
-  SET = { kind, sec: sec || (kind === 'user' ? 'account' : 'overview'), server, el, cleanups: [], mobileOpen: !!sec, direct: !!sec };
+  const def = kind === 'user' ? 'account' : 'overview';
+  // no celular, abrir na seção inicial mostra a lista de opções (antes ficava preso na Visão geral)
+  if(sec === def && isMobile()) sec = null;
+  SET = { kind, sec: sec || def, server, el, cleanups: [], mobileOpen: !!sec, direct: !!sec };
   renderSettings();
   App.onSettingsOpen && App.onSettingsOpen();
 }
@@ -224,7 +227,8 @@ function closeSettings(){
 /* "voltar" nas configurações (celular): se abriu direto numa seção, fecha; se veio da lista, volta para a lista */
 function settingsBack(){
   if(!SET) return;
-  if(SET.mobileOpen && !SET.direct){ SET.mobileOpen = false; renderSettings(); }
+  // "Voltar" sempre leva para a lista de opções; o X fecha tudo
+  if(SET.mobileOpen){ if(SET.dirty && !confirm('Você tem alterações não salvas. Descartar?')) return; SET.mobileOpen = false; SET.direct = false; SET.dirty = false; renderSettings(); }
   else closeSettings();
 }
 App.settingsBack = settingsBack;

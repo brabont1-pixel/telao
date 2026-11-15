@@ -3,7 +3,9 @@
    Traduz a interface (nunca o que as pessoas escrevem).
    ===================================================================== */
 const LANGS = [['pt','Português (Brasil)','🇧🇷'],['en','English','🇺🇸'],['es','Español','🇪🇸']];
-if(!P.lang){ const n = (navigator.language || 'pt').slice(0, 2); P.lang = ['en','es'].includes(n) ? n : 'pt'; }
+// v6.24: o Telão começa sempre em português; só muda se a pessoa escolher em Configurações → Idioma
+// (antes pegava o idioma do celular e deixava a tela meio em inglês)
+if(!P.langSet) P.lang = 'pt';
 // [português, inglês, espanhol]
 const DICT_RAW = [
   ['Início · amigos e conversas','Home · friends and chats','Inicio · amigos y chats'],['Adicionar um servidor','Add a server','Añadir un servidor'],
@@ -141,7 +143,7 @@ function secLang(box, back){
     <div class="langs">${LANGS.map(([v, l, f]) => `<button data-lang="${v}" class="${P.lang === v ? 'on' : ''}"><span class="fl">${f}</span><b>${l}</b>${P.lang === v ? '<span class="ok">✔</span>' : ''}</button>`).join('')}</div>
     <p class="mut small" style="margin-top:14px">Algumas partes novas podem aparecer em português até a próxima atualização.</p>`;
   box.querySelectorAll('[data-lang]').forEach(b => b.onclick = () => {
-    const was = P.lang; P.lang = b.dataset.lang; savePrefs();
+    const was = P.lang; P.lang = b.dataset.lang; P.langSet = true; savePrefs();
     if(was !== 'pt' && P.lang !== was){ location.reload(); return; }   // volta os textos originais
     applyLang(); renderAll(); renderSettings();
   });
