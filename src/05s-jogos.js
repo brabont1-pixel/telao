@@ -8,6 +8,10 @@ const GAMES = {
   quiz: { name: 'Quiz', icon: '🧠', desc: '10 perguntas de conhecimentos gerais. Acertar rápido vale mais.', min: 1 },
   provavel: { name: 'Quem é mais provável', icon: '👀', desc: 'Todo mundo vota em quem combina mais com a frase. Sem certo nem errado.', min: 3 },
 };
+// v6.21: outros arquivos registram jogos novos aqui (Stop, Quem sou eu, Truco…)
+const GAME_EXT = {};
+App.registerGame = (id, info, ext) => { GAMES[id] = info; GAME_EXT[id] = ext; };
+App.hasGame = id => !!GAMES[id];
 const T_PICK = 15000, T_DRAW = 80000, T_REVEAL = 5000, T_Q = 15000, T_ANS = 4500, T_VOTE = 20000, T_RES = 6000;
 const WORDS = ('casa,sol,gato,cachorro,árvore,carro,bicicleta,avião,foguete,peixe,pizza,hambúrguer,sorvete,banana,maçã,abacaxi,melancia,uva,bolo,café,xícara,garrafa,celular,computador,teclado,mouse,fone de ouvido,televisão,controle,cadeira,mesa,cama,sofá,janela,porta,chave,cadeado,relógio,óculos,chapéu,sapato,camiseta,guarda-chuva,nuvem,chuva,raio,arco-íris,lua,estrela,montanha,praia,ilha,vulcão,rio,ponte,castelo,coroa,espada,escudo,dragão,fantasma,robô,alienígena,astronauta,pirata,mago,sereia,palhaço,bola,gol,troféu,medalha,violão,bateria,microfone,piano,livro,lápis,tesoura,mochila,presente,balão,vela,fogo,flor,cacto,cogumelo,folha,borboleta,abelha,aranha,cobra,tartaruga,coelho,leão,girafa,elefante,macaco,pinguim,coruja,pato,galinha,vaca,porco,cavalo,polvo,tubarão,baleia,caranguejo,dinossauro,unicórnio,boneco de neve,pipoca,cachorro-quente,ovo,queijo,pão,coxinha,brigadeiro,sanduíche,escova de dente,chuveiro,lâmpada,barco,trem,ônibus,moto,semáforo,roda-gigante,barraca,mapa,bússola,âncora,cometa,planeta,igreja,farol,trator,helicóptero,submarino,skate,patins,pipa,ioiô,dado,baralho,tênis,meia,luva,cachecol,bigode,dente,olho,nariz,orelha,mão,pé,coração,cérebro,esqueleto,múmia,vampiro,zumbi,bruxa,anjo').split(',');
 const QUIZ = [
@@ -96,6 +100,7 @@ function hostStart(){
   if(st.players.length < GAMES[st.game].min){ App.toast(`${GAMES[st.game].name} precisa de pelo menos ${GAMES[st.game].min} pessoas no jogo.`, true); return; }
   st.scores = Object.fromEntries(st.players.map(u => [u, 0])); st.feed = [];
   if(st.game === 'rabisco'){ st.order = shuffle(st.players); st.rounds = st.players.length <= 3 ? 3 : 2; st.turn = -1; rabNextTurn(); }
+  else if(GAME_EXT[st.game]) GAME_EXT[st.game].start(st);
   else if(st.game === 'quiz'){ st.qs = shuffle(QUIZ.map((q, i) => i)).slice(0, 10); st.qi = -1; quizNext(); }
   else { st.ps = shuffle(PROVAVEL.map((q, i) => i)).slice(0, 8); st.pi = -1; st.titles = []; provNext(); }
 }
@@ -178,11 +183,13 @@ function hostAct(uid, a){
   else if(a.a === 'guess') rabGuess(uid, a.text);
   else if(a.a === 'pick' && uid === st.drawer) rabPick(a.i);
   else if(a.a === 'answer') quizAnswer(uid, a.i);
-  else if(a.a === 'vote') provVote(uid, a.who);
+  else if(a.a === 'vote' && st.game === 'provavel') provVote(uid, a.who);
+  else if(GAME_EXT[st.game] && GAME_EXT[st.game].act) GAME_EXT[st.game].act(st, uid, a);
 }
 function hostTick(){
   const st = G.st; if(!st || !amHost() || !st.dl || now() < st.dl) return;
   st.dl = 0;
+  if(GAME_EXT[st.game]){ GAME_EXT[st.game].tick(st); return; }
   if(st.game === 'rabisco'){
     if(st.phase === 'pick') rabPick(Math.floor(Math.random() * 3));
     else if(st.phase === 'draw') rabReveal();
@@ -314,6 +321,7 @@ function renderGame(){
   if(!st){ if(G.el) G.el.remove(); return; }
   // quem está digitando o palpite não pode perder o teclado quando chega o palpite de outra pessoa
   const typing = G.inp && document.activeElement === G.inp ? [G.inp.selectionStart, G.inp.selectionEnd] : null;
+  const ae = document.activeElement, keepId = G.el && ae && ae.id && G.el.contains(ae) && /^(INPUT|TEXTAREA)$/.test(ae.tagName) ? [ae.id, ae.selectionStart, ae.selectionEnd] : null;
   if(!G.el){ G.el = document.createElement('div'); G.el.className = 'gpanel'; G.el.addEventListener('click', onPanelClick); }
   const info = GAMES[st.game], here = presentIds(), inGame = st.players.includes(S.me.id);
   let body = '';
@@ -329,11 +337,14 @@ function renderGame(){
     const rows = st.players.slice().sort((a, b) => (st.scores[b] || 0) - (st.scores[a] || 0));
     const pod = rows.slice(0, 3);
     body = `<div class="gend"><h2>Fim de jogo!</h2>
+      ${GAME_EXT[st.game] && GAME_EXT[st.game].endExtra ? GAME_EXT[st.game].endExtra(st) : ''}
       ${st.game === 'provavel' && st.titles.length ? `<div class="gtitles">${st.titles.map(t => `<div class="gtt"><span>Mais provável de ${esc(t.prompt)}</span><b>${t.uids.map(nm).join(' e ')}</b></div>`).join('')}</div>` : ''}
       <div class="gpod">${[1, 0, 2].map(i => pod[i] ? `<div class="gpd p${i + 1}">${avatar(prof(pod[i]), i === 0 ? 'xl' : 'lg')}<b>${nm(pod[i])}</b><span>${st.scores[pod[i]] || 0} pts</span><div class="gstep">${i + 1}º</div></div>` : '').join('')}</div>
       ${rows.length > 3 ? scoreList({ ...st, players: rows.slice(3) }) : ''}
       <div class="gacts">${amHost() ? `<button class="btn ok" data-g="again">Jogar de novo</button>` : ''}<button class="btn sec" data-g="close">Fechar</button></div></div>`;
     reportEnd();
+  }else if(GAME_EXT[st.game]){
+    body = GAME_EXT[st.game].render(st, inGame);
   }else if(st.game === 'rabisco'){
     const drawer = st.drawer === S.me.id;
     const top = st.phase === 'pick' ? (drawer ? `<b>Escolha o que você vai desenhar</b>` : `<b>${nm(st.drawer)} está escolhendo a palavra…</b>`)
@@ -376,6 +387,8 @@ function renderGame(){
     }else if(gg) gg.innerHTML = st.drawer === S.me.id && st.phase === 'draw' ? '<span class="mut small">Desenhe! Sem letras nem números 😉</span>' : (st.guessed || []).includes(S.me.id) ? '<span class="okc small">Você acertou! Espere a galera.</span>' : '';
     const fd = G.el.querySelector('#gFeed'); if(fd) fd.scrollTop = fd.scrollHeight;
   }
+  if(GAME_EXT[st.game] && GAME_EXT[st.game].after) GAME_EXT[st.game].after(st, G.el);
+  if(keepId){ const el = G.el.querySelector('#' + keepId[0]); if(el){ el.focus({ preventScroll: true }); try{ el.setSelectionRange(keepId[1], keepId[2]); }catch(e){} } }
   G.hidden = false;
 }
 async function onPanelClick(e){
@@ -394,6 +407,7 @@ async function onPanelClick(e){
   else if(k === 'leave'){ act({ a: 'leave' }); }
   else if(k === 'end' && amHost()){ if(await confirmBox('Encerrar o jogo', 'O jogo acaba para todo mundo agora.', 'Encerrar')) endGame(); }
   else if(k === 'again' && amHost()){ const g = st.game, pl = st.players; G.st = null; gameNew(g); G.st.players = pl.filter(u => presentIds().includes(u)); pushState(); }
+  else if(GAME_EXT[st.game] && GAME_EXT[st.game].click && GAME_EXT[st.game].click(k, b, st)){}
   else if(k === 'close'){
     if(st.phase === 'end' || st.phase === 'lobby' && amHost()){ if(amHost()) send('quit'); G.st = null; }
     else G.hidden = true;
@@ -430,5 +444,6 @@ joinVoice = async function(){ const r = await _joinVoiceG.apply(this, arguments)
 const _leaveVoiceG = leaveVoice;
 leaveVoice = async function(){ if(G.st && G.st.players.includes(S.me.id) && !amHost()) send('act', { a: 'leave' }); G.st = null; if(G.el) G.el.remove(); return _leaveVoiceG.apply(this, arguments); };
 App.gameNew = gameNew;
+App.G = { get st(){ return G.st; }, push: pushState, act, send, setDeadline, endGame, feed, presentIds, amHost, now, shuffle, norm, lev, nm, scoreList, render: () => renderGame(), get el(){ return G.el; } };
 App.gameState = () => G.st;
 App.gameRender = () => renderGame();

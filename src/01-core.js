@@ -9,7 +9,7 @@ const esc = s => String(s ?? '').replace(/[&<>"']/g, c => ({'&':'&amp;','<':'&lt
 const COLORS = ['#5865f2','#eb459e','#3ba55c','#faa61a','#ed4245','#f47b67','#1abc9c','#9b59b6','#e67e22','#607d8b'];
 const ls = { get(k,d){ try{ const v=localStorage.getItem(k); return v==null?d:JSON.parse(v); }catch(e){ return d; } }, set(k,v){ try{ localStorage.setItem(k, JSON.stringify(v)); }catch(e){} } };
 
-const APP_VERSION = '6.20';
+const APP_VERSION = '6.21';
 const S = {
   me: null, profiles: new Map(), servers: [], channels: new Map(), members: new Map(),
   friends: [], dms: [], dmActivity: ls.get('telao-dmact', {}), online: new Set(),
@@ -437,6 +437,7 @@ function subscribeRealtime(){
     .on('broadcast', { event:'ring-cancel' }, ({payload}) => { if(S.ringing && S.ringing.channel_id === payload.channel_id) stopRing(); })
     .on('broadcast', { event:'mod-disconnect' }, ({payload}) => App.onModDisconnect && App.onModDisconnect(payload))
     .on('broadcast', { event:'mod-move' }, ({payload}) => App.onModMove && App.onModMove(payload))
+    .on('broadcast', { event:'game-priv' }, ({payload}) => App.onGamePriv && App.onGamePriv(payload))
     .on('broadcast', { event:'ring-decline' }, ({payload}) => { App.toast(prof(payload.from).display_name + ' recusou a chamada.'); })
     .subscribe();
 }

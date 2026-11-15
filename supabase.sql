@@ -1949,7 +1949,7 @@ begin
     if coalesce(x->>'kind', '') not in ('text', 'voice') then continue; end if;
     select array_agg((rmap->>r)::uuid) into ar from jsonb_array_elements_text(case when jsonb_typeof(x->'allowed_roles') = 'array' then x->'allowed_roles' else '[]'::jsonb end) r where rmap ? r;
     -- campos que faltarem (ex.: templates do Discord) ficam com o padrão
-    base := '{"position":0,"nsfw":false,"slowmode":0,"readonly":false,"user_limit":0,"bitrate":96,"video_quality":"auto","no_links":false,"no_media":false,"ptt_only":false,"no_camera":false,"no_screen":false,"stage":false,"radio":false}'::jsonb
+    base := '{"position":0,"nsfw":false,"slowmode":0,"readonly":false,"user_limit":0,"bitrate":96,"video_quality":"auto","no_links":false,"no_media":false,"ptt_only":false,"no_camera":false,"no_screen":false,"stage":false,"radio":false,"plaza":false}'::jsonb
       || jsonb_strip_nulls(x - 'id' - 'allowed_roles') || jsonb_build_object('id', gen_random_uuid(), 'server_id', p_server, 'created_at', now(),
       'slowmode', 0, 'readonly', false, 'no_links', false, 'no_media', false, 'allowed_roles', null, 'dm_a', null, 'dm_b', null, 'owner_id', null, 'dm_status', 'ok', 'dm_requester', null);
     ch := jsonb_populate_record(null::channels, base);
@@ -2209,6 +2209,156 @@ language sql stable security definer set search_path = public as $$
   from servers s where auth.uid() is not null and s.invite_code = lower(trim(p_code)) limit 1;
 $$;
 grant execute on function public.invite_preview(text) to authenticated;
+
+-- =====================================================================
+-- v6.21: FEED DE CLIPES (estilo Medal) e PRAÇA DO SERVIDOR
+-- =====================================================================
+alter table public.channels add column if not exists plaza boolean not null default false;
+
+create table if not exists public.feed_posts (
+  id uuid primary key default gen_random_uuid(),
+  user_id uuid not null default auth.uid() references public.profiles(id) on delete cascade,
+  video_url text not null check (video_url ~ '^https://'),
+  thumb_url text check (thumb_url is null or thumb_url ~ '^https://'),
+  title text not null check (char_length(title) between 1 and 100),
+  game text check (game is null or char_length(game) <= 60),
+  duration real,
+  start_at real not null default 0,
+  w int, h int,
+  visibility text not null default 'public' check (visibility in ('public', 'friends')),
+  views int not null default 0,
+  created_at timestamptz not null default now()
+);
+alter table public.feed_posts add column if not exists start_at real not null default 0;
+create index if not exists feed_posts_created_idx on public.feed_posts (created_at desc);
+create index if not exists feed_posts_user_idx on public.feed_posts (user_id, created_at desc);
+create table if not exists public.feed_likes (
+  post_id uuid not null references public.feed_posts(id) on delete cascade,
+  user_id uuid not null default auth.uid() references public.profiles(id) on delete cascade,
+  created_at timestamptz not null default now(),
+  primary key (post_id, user_id)
+);
+create table if not exists public.feed_comments (
+  id uuid primary key default gen_random_uuid(),
+  post_id uuid not null references public.feed_posts(id) on delete cascade,
+  user_id uuid not null default auth.uid() references public.profiles(id) on delete cascade,
+  content text not null check (char_length(content) between 1 and 500),
+  created_at timestamptz not null default now()
+);
+create index if not exists feed_comments_post_idx on public.feed_comments (post_id, created_at);
+create table if not exists public.feed_views (
+  post_id uuid not null references public.feed_posts(id) on delete cascade,
+  user_id uuid not null references public.profiles(id) on delete cascade,
+  primary key (post_id, user_id)
+);
+create table if not exists public.follows (
+  follower uuid not null default auth.uid() references public.profiles(id) on delete cascade,
+  followee uuid not null references public.profiles(id) on delete cascade,
+  created_at timestamptz not null default now(),
+  primary key (follower, followee),
+  check (follower <> followee)
+);
+create or replace function public.can_see_post(p feed_posts) returns boolean
+language sql stable security definer set search_path = public as $$
+  select auth.uid() is not null and (p.visibility = 'public' or p.user_id = auth.uid() or public.are_friends(p.user_id, auth.uid()) or public.is_admin_user());
+$$;
+alter table public.feed_posts enable row level security;
+alter table public.feed_likes enable row level security;
+alter table public.feed_comments enable row level security;
+alter table public.feed_views enable row level security;
+alter table public.follows enable row level security;
+drop policy if exists "feed ver" on public.feed_posts;
+create policy "feed ver" on public.feed_posts for select to authenticated using (public.can_see_post(feed_posts));
+drop policy if exists "feed postar" on public.feed_posts;
+create policy "feed postar" on public.feed_posts for insert to authenticated with check (user_id = auth.uid());
+drop policy if exists "feed editar" on public.feed_posts;
+create policy "feed editar" on public.feed_posts for update to authenticated using (user_id = auth.uid()) with check (user_id = auth.uid());
+drop policy if exists "feed apagar" on public.feed_posts;
+create policy "feed apagar" on public.feed_posts for delete to authenticated using (user_id = auth.uid() or public.is_admin_user());
+drop policy if exists "likes ver" on public.feed_likes;
+create policy "likes ver" on public.feed_likes for select to authenticated using (true);
+drop policy if exists "likes dar" on public.feed_likes;
+create policy "likes dar" on public.feed_likes for insert to authenticated with check (user_id = auth.uid() and exists (select 1 from feed_posts p where p.id = post_id and public.can_see_post(p)));
+drop policy if exists "likes tirar" on public.feed_likes;
+create policy "likes tirar" on public.feed_likes for delete to authenticated using (user_id = auth.uid());
+drop policy if exists "coment ver" on public.feed_comments;
+create policy "coment ver" on public.feed_comments for select to authenticated using (exists (select 1 from feed_posts p where p.id = post_id and public.can_see_post(p)));
+drop policy if exists "coment fazer" on public.feed_comments;
+create policy "coment fazer" on public.feed_comments for insert to authenticated with check (user_id = auth.uid() and exists (select 1 from feed_posts p where p.id = post_id and public.can_see_post(p)));
+drop policy if exists "coment apagar" on public.feed_comments;
+create policy "coment apagar" on public.feed_comments for delete to authenticated using (user_id = auth.uid() or public.is_admin_user() or exists (select 1 from feed_posts p where p.id = post_id and p.user_id = auth.uid()));
+drop policy if exists "seguir ver" on public.follows;
+create policy "seguir ver" on public.follows for select to authenticated using (true);
+drop policy if exists "seguir" on public.follows;
+create policy "seguir" on public.follows for insert to authenticated with check (follower = auth.uid());
+drop policy if exists "deixar de seguir" on public.follows;
+create policy "deixar de seguir" on public.follows for delete to authenticated using (follower = auth.uid());
+grant select, insert, update, delete on public.feed_posts, public.feed_likes, public.feed_comments, public.follows to authenticated;
+-- ninguém mexe nas visualizações direto
+create or replace function public.feed_guard() returns trigger language plpgsql as $$
+begin
+  if tg_op = 'UPDATE' and (new.views is distinct from old.views or new.user_id is distinct from old.user_id or new.video_url is distinct from old.video_url or new.created_at is distinct from old.created_at)
+     and current_setting('telao.feed_ok', true) is distinct from '1' then
+    raise exception 'Só dá para mudar título, jogo e quem vê.';
+  end if;
+  if tg_op = 'INSERT' then new.views := 0; new.created_at := now(); end if;
+  return new;
+end $$;
+drop trigger if exists feed_guard on public.feed_posts;
+create trigger feed_guard before insert or update on public.feed_posts for each row execute function public.feed_guard();
+-- no máximo 30 clipes por dia por pessoa
+create or replace function public.feed_rate() returns trigger language plpgsql security definer set search_path = public as $$
+begin
+  if (select count(*) from feed_posts where user_id = new.user_id and created_at > now() - interval '1 day') >= 30 then raise exception 'Você já postou 30 clipes hoje. Volte amanhã!'; end if;
+  return new;
+end $$;
+drop trigger if exists feed_rate on public.feed_posts;
+create trigger feed_rate before insert on public.feed_posts for each row execute function public.feed_rate();
+
+create or replace function public.feed_view(p_post uuid) returns void
+language plpgsql security definer set search_path = public as $$
+begin
+  if auth.uid() is null then return; end if;
+  insert into feed_views (post_id, user_id) values (p_post, auth.uid()) on conflict do nothing;
+  if found then perform set_config('telao.feed_ok', '1', true); update feed_posts set views = views + 1 where id = p_post; end if;
+end $$;
+
+-- lista do feed: p_tab = 'top' (em alta), 'new' (recentes), 'following' (quem eu sigo), 'user' (de uma pessoa)
+drop function if exists public.feed_list(text, uuid, text, int);
+create or replace function public.feed_list(p_tab text default 'top', p_user uuid default null, p_game text default null, p_offset int default 0)
+returns table (id uuid, user_id uuid, video_url text, thumb_url text, title text, game text, duration real, start_at real, w int, h int, visibility text, views int, created_at timestamptz,
+  likes int, comments int, liked boolean, following boolean)
+language sql stable security definer set search_path = public as $$
+  select p.id, p.user_id, p.video_url, p.thumb_url, p.title, p.game, p.duration, p.start_at, p.w, p.h, p.visibility, p.views, p.created_at,
+    (select count(*)::int from feed_likes l where l.post_id = p.id),
+    (select count(*)::int from feed_comments c where c.post_id = p.id),
+    exists (select 1 from feed_likes l where l.post_id = p.id and l.user_id = auth.uid()),
+    exists (select 1 from follows f where f.follower = auth.uid() and f.followee = p.user_id)
+  from feed_posts p
+  where public.can_see_post(p)
+    and (p_tab <> 'following' or exists (select 1 from follows f where f.follower = auth.uid() and f.followee = p.user_id))
+    and (p_tab <> 'user' or p.user_id = p_user)
+    and (p_game is null or p.game ilike p_game)
+  order by case when p_tab = 'top' then
+      ((select count(*) from feed_likes l where l.post_id = p.id) * 3 + (select count(*) from feed_comments c where c.post_id = p.id) * 2 + p.views * 0.2 + 1)
+      / power(extract(epoch from (now() - p.created_at)) / 3600 + 2, 1.3) end desc nulls last,
+    p.created_at desc
+  limit 24 offset greatest(0, p_offset);
+$$;
+create or replace function public.feed_profile(p_user uuid) returns jsonb
+language sql stable security definer set search_path = public as $$
+  select jsonb_build_object(
+    'clips', (select count(*) from feed_posts p where p.user_id = p_user and public.can_see_post(p)),
+    'followers', (select count(*) from follows where followee = p_user),
+    'following', (select count(*) from follows where follower = p_user),
+    'likes', (select count(*) from feed_likes l join feed_posts p on p.id = l.post_id where p.user_id = p_user),
+    'i_follow', exists (select 1 from follows where follower = auth.uid() and followee = p_user));
+$$;
+grant execute on function public.feed_view(uuid), public.feed_list(text, uuid, text, int), public.feed_profile(uuid) to authenticated;
+
+-- v6.21: jogos novos no ranking
+alter table public.game_scores drop constraint if exists game_scores_game_check;
+alter table public.game_scores add constraint game_scores_game_check check (game in ('rabisco','quiz','provavel','stop','quemsou','truco'));
 
 -- impede trocar campos sensíveis via update
 create or replace function public.guard_updates() returns trigger

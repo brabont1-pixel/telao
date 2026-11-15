@@ -9,7 +9,7 @@ const esc = s => String(s ?? '').replace(/[&<>"']/g, c => ({'&':'&amp;','<':'&lt
 const COLORS = ['#5865f2','#eb459e','#3ba55c','#faa61a','#ed4245','#f47b67','#1abc9c','#9b59b6','#e67e22','#607d8b'];
 const ls = { get(k,d){ try{ const v=localStorage.getItem(k); return v==null?d:JSON.parse(v); }catch(e){ return d; } }, set(k,v){ try{ localStorage.setItem(k, JSON.stringify(v)); }catch(e){} } };
 
-const APP_VERSION = '6.20';
+const APP_VERSION = '6.21';
 const S = {
   me: null, profiles: new Map(), servers: [], channels: new Map(), members: new Map(),
   friends: [], dms: [], dmActivity: ls.get('telao-dmact', {}), online: new Set(),
@@ -437,6 +437,7 @@ function subscribeRealtime(){
     .on('broadcast', { event:'ring-cancel' }, ({payload}) => { if(S.ringing && S.ringing.channel_id === payload.channel_id) stopRing(); })
     .on('broadcast', { event:'mod-disconnect' }, ({payload}) => App.onModDisconnect && App.onModDisconnect(payload))
     .on('broadcast', { event:'mod-move' }, ({payload}) => App.onModMove && App.onModMove(payload))
+    .on('broadcast', { event:'game-priv' }, ({payload}) => App.onGamePriv && App.onGamePriv(payload))
     .on('broadcast', { event:'ring-decline' }, ({payload}) => { App.toast(prof(payload.from).display_name + ' recusou a chamada.'); })
     .subscribe();
 }
@@ -2241,7 +2242,7 @@ function activitiesMenu(anchor){
   el.innerHTML = `<div class="pphead">${ic('gamepad',18)} Atividades</div>
     <button class="actbig" id="acWT"><span class="ai">${ic('tv',26)}</span><div><b>Assistir juntos</b><small>Vídeo do YouTube sincronizado para todo mundo na chamada</small></div></button>
     <div class="actsec">${ic('dice',15)} Jogos <small>todo mundo da chamada</small></div>
-    <div class="gamegrid">${[['rabisco','🎨','Rabisco','desenhe e adivinhe'],['quiz','🧠','Quiz','10 perguntas'],['provavel','👀','Quem é mais provável','votação da galera']].map(([k,e,n,d]) => `<button data-newgame="${k}"><span>${e}</span><b>${n}</b><small>${d}</small></button>`).join('')}</div>
+    <div class="gamegrid">${[['rabisco','🎨','Rabisco','desenhe e adivinhe'],['quiz','🧠','Quiz','10 perguntas'],['provavel','👀','Quem é mais provável','votação da galera'],['stop','✋','Stop','adedonha'],['quemsou','🤔','Quem sou eu?','descubra quem você é'],['truco','🃏','Truco','paulista, 2 ou 4']].filter(([k]) => k === 'rabisco' || k === 'quiz' || k === 'provavel' || (App.hasGame && App.hasGame(k))).map(([k,e,n,d]) => `<button data-newgame="${k}"><span>${e}</span><b>${n}</b><small>${d}</small></button>`).join('')}</div>
     <button class="actbig" id="acCap"><span class="ai">🗨️</span><div><b>Legendas ao vivo</b><small>Sua fala vira texto para todo mundo da chamada (acessibilidade)</small></div></button>
     <div class="actsec">${ic('music',15)} Soundboard <small>todos ouvem</small></div>
     <div class="sboard">${soundList().map(([id, e, n]) => `<button data-snd="${id}"><span>${e}</span>${n}</button>`).join('')}</div>
@@ -2685,20 +2686,21 @@ function createChannelModal(s, kind, category){
     <div class="mc">
       <div class="ctype"><label><input type="radio" name="k" value="text" ${kind!=='voice'?'checked':''}><span class="ci">${ic('hash',22)}</span><div><b>Texto</b><small>Mensagens, imagens, GIFs, emojis e opiniões</small></div></label>
         <label><input type="radio" name="k" value="voice" ${kind==='voice'?'checked':''}><span class="ci">${ic('volume',22)}</span><div><b>Voz</b><small>Chamada, câmera e compartilhar tela</small></div></label>
-        <label><input type="radio" name="k" value="radio" ${kind==='radio'?'checked':''}><span class="ci">📻</span><div><b>Rádio</b><small>Canal de voz com música que todo mundo pede e ouve junto</small></div></label></div>
+        <label><input type="radio" name="k" value="radio" ${kind==='radio'?'checked':''}><span class="ci">📻</span><div><b>Rádio</b><small>Canal de voz com música que todo mundo pede e ouve junto</small></div></label>
+        <label><input type="radio" name="k" value="plaza" ${kind==='plaza'?'checked':''}><span class="ci">🌳</span><div><b>Praça</b><small>Mapa 2D: ande pela praça e só ouça quem está perto</small></div></label></div>
       <label class="field"><span>Nome do canal</span><div class="inpic"><span id="ccIc">${ic(kind==='voice'?'volume':'hash',18)}</span><input class="inp" id="ccN" maxlength="40" placeholder="novo-canal" required></div></label>
       <label class="field"><span>Categoria (opcional)</span><input class="inp" id="ccC" maxlength="40" list="ccCats" value="${esc(category||'')}" placeholder="Ex: Jogos"><datalist id="ccCats">${cats.map(c => `<option value="${esc(c)}">`).join('')}</datalist></label></div>
     <div class="mf"><button type="button" class="btn sec" data-close>Cancelar</button><button class="btn">Criar canal</button></div></form>`, m => {
-    m.querySelectorAll('input[name=k]').forEach(r => r.onchange = () => m.querySelector('#ccIc').innerHTML = r.value === 'radio' ? '📻' : ic(r.value === 'voice' ? 'volume' : 'hash', 18));
+    m.querySelectorAll('input[name=k]').forEach(r => r.onchange = () => m.querySelector('#ccIc').innerHTML = r.value === 'radio' ? '📻' : r.value === 'plaza' ? '🌳' : ic(r.value === 'voice' ? 'volume' : 'hash', 18));
     m.querySelector('#ccF').onsubmit = async e => {
       e.preventDefault();
-      const k0 = m.querySelector('input[name=k]:checked').value, k = k0 === 'radio' ? 'voice' : k0;
+      const k0 = m.querySelector('input[name=k]:checked').value, k = k0 === 'radio' || k0 === 'plaza' ? 'voice' : k0;
       let name = m.querySelector('#ccN').value.trim();
       if(k === 'text') name = name.toLowerCase().replace(/\s+/g, '-');
       if(!name) return;
       const list = S.channels.get(s.id) || [];
       const position = list.reduce((a,c) => Math.max(a, c.position), 0) + 1;
-      const { data, error } = await App.sb.from('channels').insert({ server_id: s.id, name, kind: k, position, category: m.querySelector('#ccC').value.trim() || null, ...(k0 === 'radio' ? { radio: true } : {}) }).select().single();
+      const { data, error } = await App.sb.from('channels').insert({ server_id: s.id, name, kind: k, position, category: m.querySelector('#ccC').value.trim() || null, ...(k0 === 'radio' ? { radio: true } : {}), ...(k0 === 'plaza' ? { plaza: true } : {}) }).select().single();
       if(error){ App.toast(error.message, true); return; }
       closeModal(); await loadChannels(s.id); go({ kind:'server', sid: s.id, cid: data.id });
     };
@@ -5379,6 +5381,7 @@ editChannelModal = function(c){
           ${row('Bloquear câmera', 'Ninguém liga a câmera neste canal (moderadores sim).', toggle('ecNoCam', c.no_camera))}
           ${row('Bloquear compartilhar tela', 'Ninguém compartilha a tela neste canal (moderadores sim).', toggle('ecNoScr', c.no_screen))}
           <hr class="sdiv">
+          ${row('🌳 Praça (mapa 2D)', 'O canal vira uma praça: cada um anda com o bonequinho e só ouve quem está perto. Tem mesas privadas e um coreto que a praça toda ouve.', toggle('ecPlaza', c.plaza))}
           ${row('📻 Rádio do servidor', 'Quem entra ouve a mesma música junto. Qualquer um pede músicas (até 3 na fila); a moderação pausa e pula, os outros votam para pular.', toggle('ecRadio', c.radio))}
           ${row('Modo palco', 'Para lives, aulas e anúncios: só quem está no palco fala. Quem entra fica na plateia ouvindo e pode levantar a mão. Moderadores chamam para o palco.', toggle('ecStage', c.stage))}
           <label class="field ${c.stage ? '' : 'hidden'}" id="ecStT"><span>Assunto do palco</span><input class="inp" id="ecStTopic" maxlength="120" value="${esc(c.stage_topic || '')}" placeholder="Ex.: Sexta do karaokê, aula de violão…"></label>`
@@ -5413,7 +5416,7 @@ editChannelModal = function(c){
       const roleIds = q('#ecPriv').checked ? [...m.querySelectorAll('#ecRoles input:checked')].map(x => x.value) : [];
       if(q('#ecPriv').checked && !roleIds.length){ App.toast('Escolha pelo menos um cargo para o canal privado.', true); return; }
       const up = { name, category: q('#ecC').value.trim() || null, nsfw: q('#ecNs').checked, allowed_roles: roleIds.length ? roleIds : null };
-      if(voice) Object.assign(up, { user_limit: +q('#ecLim').value, bitrate: +q('#ecBr').value, video_quality: q('#ecVq').value, ptt_only: q('#ecPtt').checked, no_camera: q('#ecNoCam').checked, no_screen: q('#ecNoScr').checked, radio: q('#ecRadio').checked, stage: q('#ecStage').checked, stage_topic: q('#ecStTopic').value.trim() || null });
+      if(voice) Object.assign(up, { user_limit: +q('#ecLim').value, bitrate: +q('#ecBr').value, video_quality: q('#ecVq').value, ptt_only: q('#ecPtt').checked, no_camera: q('#ecNoCam').checked, no_screen: q('#ecNoScr').checked, radio: q('#ecRadio').checked, plaza: q('#ecPlaza').checked, stage: q('#ecStage').checked, stage_topic: q('#ecStTopic').value.trim() || null });
       else Object.assign(up, { topic: q('#ecT').value.trim() || null, slowmode: +q('#ecSlow').value, readonly: q('#ecRo').checked, no_links: q('#ecNoL').checked, no_media: q('#ecNoM').checked });
       const { error } = await App.sb.from('channels').update(up).eq('id', c.id);
       if(error){ App.toast(error.message, true); return; }
@@ -6602,10 +6605,11 @@ function clipModal(blob, start, len, video, who){
       ${targets.length ? `<label class="field" style="margin-top:12px"><span>Enviar em</span><select class="inp" id="clTo">${targets.map(c => `<option value="${c.id}">${esc(chLabel(c))}</option>`).join('')}</select></label>
         <label class="field"><span>Mensagem (opcional)</span><input class="inp" id="clTxt" maxlength="500" placeholder="olha isso 😂"></label>` : '<p class="mut small" style="margin-top:10px">Abra uma conversa para enviar o clipe no chat, ou baixe o arquivo.</p>'}
     </div>
-    <div class="mf"><button class="btn sec" id="clDl">${ic('download', 16)} Baixar</button><span class="grow"></span><button class="btn sec" id="clX">Descartar</button>${targets.length ? `<button class="btn" id="clSend">${ic('send', 16)} Enviar no chat</button>` : ''}</div>`, m => {
+    <div class="mf"><button class="btn sec" id="clDl">${ic('download', 16)} Baixar</button>${video && App.feedPostModal ? `<button class="btn sec" id="clFeed">${ic('film', 16)} Postar no Feed</button>` : ''}<span class="grow"></span><button class="btn sec" id="clX">Descartar</button>${targets.length ? `<button class="btn" id="clSend">${ic('send', 16)} Enviar no chat</button>` : ''}</div>`, m => {
     const done = () => { closeModal(); setTimeout(() => URL.revokeObjectURL(url), 2000); };
     m.querySelector('#clX').onclick = done;
     m.onclick = e => { if(e.target === m) done(); };
+    const fb = m.querySelector('#clFeed'); if(fb) fb.onclick = () => App.feedPostModal({ blob, start: +start.toFixed(1), len, fname });
     m.querySelector('#clDl').onclick = () => { const a = document.createElement('a'); a.href = url; a.download = fname; document.body.appendChild(a); a.click(); a.remove(); };
     const sb = m.querySelector('#clSend'); if(sb) sb.onclick = async () => {
       const cid = m.querySelector('#clTo').value, txt = m.querySelector('#clTxt').value.trim();
@@ -6939,6 +6943,10 @@ const GAMES = {
   quiz: { name: 'Quiz', icon: '🧠', desc: '10 perguntas de conhecimentos gerais. Acertar rápido vale mais.', min: 1 },
   provavel: { name: 'Quem é mais provável', icon: '👀', desc: 'Todo mundo vota em quem combina mais com a frase. Sem certo nem errado.', min: 3 },
 };
+// v6.21: outros arquivos registram jogos novos aqui (Stop, Quem sou eu, Truco…)
+const GAME_EXT = {};
+App.registerGame = (id, info, ext) => { GAMES[id] = info; GAME_EXT[id] = ext; };
+App.hasGame = id => !!GAMES[id];
 const T_PICK = 15000, T_DRAW = 80000, T_REVEAL = 5000, T_Q = 15000, T_ANS = 4500, T_VOTE = 20000, T_RES = 6000;
 const WORDS = ('casa,sol,gato,cachorro,árvore,carro,bicicleta,avião,foguete,peixe,pizza,hambúrguer,sorvete,banana,maçã,abacaxi,melancia,uva,bolo,café,xícara,garrafa,celular,computador,teclado,mouse,fone de ouvido,televisão,controle,cadeira,mesa,cama,sofá,janela,porta,chave,cadeado,relógio,óculos,chapéu,sapato,camiseta,guarda-chuva,nuvem,chuva,raio,arco-íris,lua,estrela,montanha,praia,ilha,vulcão,rio,ponte,castelo,coroa,espada,escudo,dragão,fantasma,robô,alienígena,astronauta,pirata,mago,sereia,palhaço,bola,gol,troféu,medalha,violão,bateria,microfone,piano,livro,lápis,tesoura,mochila,presente,balão,vela,fogo,flor,cacto,cogumelo,folha,borboleta,abelha,aranha,cobra,tartaruga,coelho,leão,girafa,elefante,macaco,pinguim,coruja,pato,galinha,vaca,porco,cavalo,polvo,tubarão,baleia,caranguejo,dinossauro,unicórnio,boneco de neve,pipoca,cachorro-quente,ovo,queijo,pão,coxinha,brigadeiro,sanduíche,escova de dente,chuveiro,lâmpada,barco,trem,ônibus,moto,semáforo,roda-gigante,barraca,mapa,bússola,âncora,cometa,planeta,igreja,farol,trator,helicóptero,submarino,skate,patins,pipa,ioiô,dado,baralho,tênis,meia,luva,cachecol,bigode,dente,olho,nariz,orelha,mão,pé,coração,cérebro,esqueleto,múmia,vampiro,zumbi,bruxa,anjo').split(',');
 const QUIZ = [
@@ -7027,6 +7035,7 @@ function hostStart(){
   if(st.players.length < GAMES[st.game].min){ App.toast(`${GAMES[st.game].name} precisa de pelo menos ${GAMES[st.game].min} pessoas no jogo.`, true); return; }
   st.scores = Object.fromEntries(st.players.map(u => [u, 0])); st.feed = [];
   if(st.game === 'rabisco'){ st.order = shuffle(st.players); st.rounds = st.players.length <= 3 ? 3 : 2; st.turn = -1; rabNextTurn(); }
+  else if(GAME_EXT[st.game]) GAME_EXT[st.game].start(st);
   else if(st.game === 'quiz'){ st.qs = shuffle(QUIZ.map((q, i) => i)).slice(0, 10); st.qi = -1; quizNext(); }
   else { st.ps = shuffle(PROVAVEL.map((q, i) => i)).slice(0, 8); st.pi = -1; st.titles = []; provNext(); }
 }
@@ -7109,11 +7118,13 @@ function hostAct(uid, a){
   else if(a.a === 'guess') rabGuess(uid, a.text);
   else if(a.a === 'pick' && uid === st.drawer) rabPick(a.i);
   else if(a.a === 'answer') quizAnswer(uid, a.i);
-  else if(a.a === 'vote') provVote(uid, a.who);
+  else if(a.a === 'vote' && st.game === 'provavel') provVote(uid, a.who);
+  else if(GAME_EXT[st.game] && GAME_EXT[st.game].act) GAME_EXT[st.game].act(st, uid, a);
 }
 function hostTick(){
   const st = G.st; if(!st || !amHost() || !st.dl || now() < st.dl) return;
   st.dl = 0;
+  if(GAME_EXT[st.game]){ GAME_EXT[st.game].tick(st); return; }
   if(st.game === 'rabisco'){
     if(st.phase === 'pick') rabPick(Math.floor(Math.random() * 3));
     else if(st.phase === 'draw') rabReveal();
@@ -7245,6 +7256,7 @@ function renderGame(){
   if(!st){ if(G.el) G.el.remove(); return; }
   // quem está digitando o palpite não pode perder o teclado quando chega o palpite de outra pessoa
   const typing = G.inp && document.activeElement === G.inp ? [G.inp.selectionStart, G.inp.selectionEnd] : null;
+  const ae = document.activeElement, keepId = G.el && ae && ae.id && G.el.contains(ae) && /^(INPUT|TEXTAREA)$/.test(ae.tagName) ? [ae.id, ae.selectionStart, ae.selectionEnd] : null;
   if(!G.el){ G.el = document.createElement('div'); G.el.className = 'gpanel'; G.el.addEventListener('click', onPanelClick); }
   const info = GAMES[st.game], here = presentIds(), inGame = st.players.includes(S.me.id);
   let body = '';
@@ -7260,11 +7272,14 @@ function renderGame(){
     const rows = st.players.slice().sort((a, b) => (st.scores[b] || 0) - (st.scores[a] || 0));
     const pod = rows.slice(0, 3);
     body = `<div class="gend"><h2>Fim de jogo!</h2>
+      ${GAME_EXT[st.game] && GAME_EXT[st.game].endExtra ? GAME_EXT[st.game].endExtra(st) : ''}
       ${st.game === 'provavel' && st.titles.length ? `<div class="gtitles">${st.titles.map(t => `<div class="gtt"><span>Mais provável de ${esc(t.prompt)}</span><b>${t.uids.map(nm).join(' e ')}</b></div>`).join('')}</div>` : ''}
       <div class="gpod">${[1, 0, 2].map(i => pod[i] ? `<div class="gpd p${i + 1}">${avatar(prof(pod[i]), i === 0 ? 'xl' : 'lg')}<b>${nm(pod[i])}</b><span>${st.scores[pod[i]] || 0} pts</span><div class="gstep">${i + 1}º</div></div>` : '').join('')}</div>
       ${rows.length > 3 ? scoreList({ ...st, players: rows.slice(3) }) : ''}
       <div class="gacts">${amHost() ? `<button class="btn ok" data-g="again">Jogar de novo</button>` : ''}<button class="btn sec" data-g="close">Fechar</button></div></div>`;
     reportEnd();
+  }else if(GAME_EXT[st.game]){
+    body = GAME_EXT[st.game].render(st, inGame);
   }else if(st.game === 'rabisco'){
     const drawer = st.drawer === S.me.id;
     const top = st.phase === 'pick' ? (drawer ? `<b>Escolha o que você vai desenhar</b>` : `<b>${nm(st.drawer)} está escolhendo a palavra…</b>`)
@@ -7307,6 +7322,8 @@ function renderGame(){
     }else if(gg) gg.innerHTML = st.drawer === S.me.id && st.phase === 'draw' ? '<span class="mut small">Desenhe! Sem letras nem números 😉</span>' : (st.guessed || []).includes(S.me.id) ? '<span class="okc small">Você acertou! Espere a galera.</span>' : '';
     const fd = G.el.querySelector('#gFeed'); if(fd) fd.scrollTop = fd.scrollHeight;
   }
+  if(GAME_EXT[st.game] && GAME_EXT[st.game].after) GAME_EXT[st.game].after(st, G.el);
+  if(keepId){ const el = G.el.querySelector('#' + keepId[0]); if(el){ el.focus({ preventScroll: true }); try{ el.setSelectionRange(keepId[1], keepId[2]); }catch(e){} } }
   G.hidden = false;
 }
 async function onPanelClick(e){
@@ -7325,6 +7342,7 @@ async function onPanelClick(e){
   else if(k === 'leave'){ act({ a: 'leave' }); }
   else if(k === 'end' && amHost()){ if(await confirmBox('Encerrar o jogo', 'O jogo acaba para todo mundo agora.', 'Encerrar')) endGame(); }
   else if(k === 'again' && amHost()){ const g = st.game, pl = st.players; G.st = null; gameNew(g); G.st.players = pl.filter(u => presentIds().includes(u)); pushState(); }
+  else if(GAME_EXT[st.game] && GAME_EXT[st.game].click && GAME_EXT[st.game].click(k, b, st)){}
   else if(k === 'close'){
     if(st.phase === 'end' || st.phase === 'lobby' && amHost()){ if(amHost()) send('quit'); G.st = null; }
     else G.hidden = true;
@@ -7361,6 +7379,7 @@ joinVoice = async function(){ const r = await _joinVoiceG.apply(this, arguments)
 const _leaveVoiceG = leaveVoice;
 leaveVoice = async function(){ if(G.st && G.st.players.includes(S.me.id) && !amHost()) send('act', { a: 'leave' }); G.st = null; if(G.el) G.el.remove(); return _leaveVoiceG.apply(this, arguments); };
 App.gameNew = gameNew;
+App.G = { get st(){ return G.st; }, push: pushState, act, send, setDeadline, endGame, feed, presentIds, amHost, now, shuffle, norm, lev, nm, scoreList, render: () => renderGame(), get el(){ return G.el; } };
 App.gameState = () => G.st;
 App.gameRender = () => renderGame();
 /* =====================================================================
@@ -9511,6 +9530,972 @@ const _renderRailCall = renderRail;
 renderRail = function(){ _renderRailCall.apply(this, arguments); railCallBadges(); };
 const _onPresenceRc = Voice.onPresence.bind(Voice);
 Voice.onPresence = function(topic, metas){ const r = _onPresenceRc(topic, metas); if(!String(topic).startsWith('vp:dm:')) railCallBadges(); return r; };
+/* =====================================================================
+   v6.21: FEED DE CLIPES (estilo Medal)
+   - Botão "Feed" na barra da esquerda: Em alta · Seguindo · Recentes, filtro por jogo
+   - Postar: direto depois de gravar um clipe (Alt+C), de um clipe/vídeo seu já mandado no chat, ou de um arquivo
+   - Curtir, comentar, seguir quem posta, contar visualizações, compartilhar link (#clipe=…) e mandar no chat
+   - Perfil de clipes de cada pessoa (seguidores, curtidas, todos os clipes)
+   ===================================================================== */
+const FD = { tab: 'top', game: null, user: null, items: [], offset: 0, done: false, loading: false };
+const fdMiss = e => /feed_|follows|could not find|PGRST20|schema cache|does not exist/i.test((e && (e.message || e.code)) || '');
+const FD_SQL = 'Falta rodar o supabase.sql novo no Supabase para o Feed funcionar.';
+const fdAgo = d => { const s = (Date.now() - new Date(d)) / 1000; return s < 60 ? 'agora' : s < 3600 ? Math.floor(s / 60) + ' min' : s < 86400 ? Math.floor(s / 3600) + ' h' : s < 2592000 ? Math.floor(s / 86400) + ' d' : new Date(d).toLocaleDateString('pt-BR'); };
+const fdK = n => n >= 1e6 ? (n / 1e6).toFixed(1).replace('.0', '') + ' mi' : n >= 1e3 ? (n / 1e3).toFixed(1).replace('.0', '') + ' mil' : String(n || 0);
+const fdDur = s => { s = Math.round(s || 0); return Math.floor(s / 60) + ':' + String(s % 60).padStart(2, '0'); };
+const GAME_SUGG = ['Valorant', 'Counter-Strike 2', 'League of Legends', 'Fortnite', 'Minecraft', 'GTA V', 'Roblox', 'EA FC 26', 'Free Fire', 'Rocket League', 'Apex Legends', 'Call of Duty', 'Rainbow Six Siege', 'Dota 2', 'Overwatch 2', 'Marvel Rivals', 'PUBG', 'Brawlhalla', 'Dead by Daylight', 'R.E.P.O.', 'PEAK', 'Lethal Company', 'Sea of Thieves', 'Rust', 'Outro'];
+
+/* ---------- miniatura: pega um quadro do vídeo ---------- */
+function videoThumb(src, at){
+  return new Promise(res => {
+    const v = document.createElement('video'); v.muted = true; v.playsInline = true; v.preload = 'auto'; v.crossOrigin = 'anonymous';
+    let done = false; const fin = r => { if(done) return; done = true; res(r); };
+    v.onloadedmetadata = () => { try{ v.currentTime = Math.min((at || 0) + 1, Math.max(0, (isFinite(v.duration) ? v.duration : 2) - 0.1)); }catch(e){ fin(null); } };
+    v.onseeked = () => {
+      try{
+        const W = 480, H = Math.round(W * (v.videoHeight || 270) / (v.videoWidth || 480));
+        const c = document.createElement('canvas'); c.width = W; c.height = H; c.getContext('2d').drawImage(v, 0, 0, W, H);
+        c.toBlob(b => fin(b ? { blob: b, w: v.videoWidth, h: v.videoHeight, dur: isFinite(v.duration) ? v.duration : null } : null), 'image/jpeg', 0.8);
+      }catch(e){ fin(null); }
+    };
+    v.onerror = () => fin(null);
+    setTimeout(() => fin(null), 8000);
+    v.src = src;
+  });
+}
+
+/* ---------- postar ---------- */
+App.feedPostModal = function(src){
+  // src: { blob, start, len, fname } (clipe gravado) | { url, start, dur, w, h } (já enviado) | {} (escolher arquivo)
+  let file = src.blob ? new File([src.blob], src.fname || 'clipe.webm', { type: src.blob.type || 'video/webm' }) : null;
+  let localUrl = file ? URL.createObjectURL(file) : src.url || null;
+  modal(`<form id="fpF"><div class="mh"><h2>${ic('film', 20)} Postar no Feed</h2><p>Todo mundo do Telão pode ver (ou só seus amigos, se preferir).</p></div>
+    <div class="mc">
+      <div class="fpvid" id="fpV">${localUrl ? `<video src="${esc(localUrl)}${src.start ? '#t=' + src.start : ''}" controls playsinline muted></video>` : `<label class="fpdrop"><input type="file" accept="video/*" id="fpFile" hidden>${ic('upload', 28)}<b>Escolher vídeo</b><small>MP4 ou WEBM, até 25 MB</small></label>`}</div>
+      ${!localUrl ? `<button type="button" class="btn sec sm" id="fpMine" style="margin-top:8px">${ic('clip', 15)} Usar um clipe que já mandei no chat</button>` : ''}
+      <label class="field" style="margin-top:12px"><span>Título</span><input class="inp" id="fpT" maxlength="100" required placeholder="ace no último round 😱"></label>
+      <div class="frow2"><label class="field"><span>Jogo</span><input class="inp" id="fpG" maxlength="60" list="fpGL" placeholder="Valorant" value="${esc((S.me.activity && S.me.activity.type === 'playing' && S.me.activity.name) || '')}"><datalist id="fpGL">${GAME_SUGG.map(g => `<option value="${esc(g)}">`).join('')}</datalist></label>
+        <label class="field"><span>Quem vê</span><select class="inp" id="fpVis"><option value="public">Todo mundo</option><option value="friends">Só amigos</option></select></label></div>
+      <div class="err" id="fpE"></div></div>
+    <div class="mf"><button type="button" class="btn sec" data-close>Cancelar</button><button class="btn" id="fpGo">${ic('film', 16)} Postar</button></div></form>`, m => {
+    const err = t => m.querySelector('#fpE').textContent = t || '';
+    const setVideo = (u, start) => { localUrl = u; m.querySelector('#fpV').innerHTML = `<video src="${esc(u)}${start ? '#t=' + start : ''}" controls playsinline muted></video>`; const b = m.querySelector('#fpMine'); if(b) b.remove(); };
+    const fi = m.querySelector('#fpFile');
+    if(fi) fi.onchange = () => {
+      const f = fi.files[0]; if(!f) return;
+      if(!/^video\//.test(f.type)){ err('Escolha um arquivo de vídeo.'); return; }
+      if(f.size > 25 * 1048576){ err('O vídeo passou de 25 MB. Corte ou diminua a qualidade antes.'); return; }
+      file = f; src = {}; setVideo(URL.createObjectURL(f)); err();
+    };
+    const mb = m.querySelector('#fpMine');
+    if(mb) mb.onclick = async () => {
+      mb.disabled = true;
+      const { data } = await App.sb.from('messages').select('attachments,created_at').eq('author_id', S.me.id).order('created_at', { ascending: false }).limit(200);
+      const vids = []; (data || []).forEach(r => (r.attachments || []).forEach(a => { if(a && a.url && (a.clip || /^video\//.test(a.type || ''))) vids.push(a); }));
+      mb.disabled = false;
+      if(!vids.length){ App.toast('Você ainda não mandou clipes nem vídeos no chat.', true); return; }
+      const box = document.createElement('div'); box.className = 'fpmine';
+      box.innerHTML = vids.slice(0, 24).map((a, i) => `<button type="button" data-fpi="${i}"><video src="${esc(a.url)}#t=${(+a.start || 0) + 0.5}" preload="metadata" muted playsinline></video>${a.dur ? `<small>${fdDur(a.dur)}</small>` : ''}</button>`).join('');
+      mb.replaceWith(box);
+      box.querySelectorAll('[data-fpi]').forEach(b => b.onclick = () => { const a = vids[+b.dataset.fpi]; src = { url: a.url, start: +a.start || 0, dur: a.dur, w: a.w, h: a.h }; file = null; setVideo(a.url, src.start); box.remove(); });
+    };
+    m.querySelector('#fpF').onsubmit = async e => {
+      e.preventDefault(); err();
+      const title = m.querySelector('#fpT').value.trim(), game = m.querySelector('#fpG').value.trim(), vis = m.querySelector('#fpVis').value;
+      if(!localUrl){ err('Escolha um vídeo.'); return; }
+      if(!title){ err('Dê um título.'); return; }
+      const b = m.querySelector('#fpGo'); b.disabled = true; b.textContent = 'Postando…';
+      try{
+        let video_url = src.url || null, meta = {};
+        if(file){
+          if(file.size > 25 * 1048576) throw new Error('O vídeo passou de 25 MB.');
+          meta = await uploadOne({ file }); video_url = meta.url;
+        }
+        const th = await videoThumb(localUrl, src.start || 0);
+        let thumb_url = null;
+        if(th && th.blob){ try{ const tm = await uploadOne({ file: new File([th.blob], 'thumb.jpg', { type: 'image/jpeg' }) }); thumb_url = tm.url; }catch(x){} }
+        const row = { video_url, thumb_url, title, game: game && game !== 'Outro' ? game : null, visibility: vis, start_at: +(src.start || 0),
+          duration: src.len || src.dur || (th && th.dur) || null, w: meta.w || src.w || (th && th.w) || null, h: meta.h || src.h || (th && th.h) || null };
+        const { data, error } = await App.sb.from('feed_posts').insert(row).select().single();
+        if(error) throw error;
+        closeModal(); App.toast('Clipe postado no Feed! 🎬');
+        if(document.getElementById('feedBox')){ FD.tab = 'new'; FD.user = null; feedLoad(true); }
+        else feedOpen({ tab: 'new' });
+      }catch(x){ b.disabled = false; b.innerHTML = `${ic('film', 16)} Postar`; err(fdMiss(x) ? FD_SQL : (x.message || String(x))); }
+    };
+  });
+};
+// menu da mensagem: postar um clipe/vídeo meu
+const _msgMenuExtraFd = App.msgMenuExtra;
+App.msgMenuExtra = m => {
+  const out = _msgMenuExtraFd ? _msgMenuExtraFd(m) : [];
+  const a = (m.attachments || []).find(x => x && x.url && !x._local && (x.clip || /^video\//.test(x.type || '')));
+  if(a && m.author_id === S.me.id) out.push({ label: 'Postar no Feed', icon: ic('film', 18), onClick: () => App.feedPostModal({ url: a.url, start: +a.start || 0, dur: a.dur, w: a.w, h: a.h }) });
+  return out;
+};
+
+/* ---------- lista ---------- */
+function cardHtml(p){
+  const pr = prof(p.user_id);
+  return `<div class="fdc" data-fp="${p.id}">
+    <div class="fdth">${p.thumb_url ? `<img src="${esc(p.thumb_url)}" alt="" loading="lazy">` : `<video src="${esc(p.video_url)}#t=${(p.start_at || 0) + 1}" preload="metadata" muted playsinline></video>`}
+      <span class="fdur">${p.duration ? fdDur(p.duration) : ''}</span>${p.game ? `<span class="fgame">${esc(p.game)}</span>` : ''}<span class="fplay">${ic('play', 26)}</span></div>
+    <div class="fdinf">${avatar(pr, 'sm')}<div class="ftx"><b>${esc(p.title)}</b><small><span class="fuser" data-fu="${p.user_id}">${esc(pr.display_name)}</span> · ${fdK(p.views)} views · ${fdAgo(p.created_at)}</small></div>
+      <span class="flk ${p.liked ? 'on' : ''}">${ic('heart', 14)} ${fdK(p.likes)}</span></div></div>`;
+}
+async function feedLoad(reset){
+  const box = document.getElementById('feedBox'); if(!box || FD.loading) return;
+  if(reset){ FD.items = []; FD.offset = 0; FD.done = false; }
+  if(FD.done) return;
+  FD.loading = true;
+  const grid = box.querySelector('#fdG');
+  if(reset) grid.innerHTML = '<div class="spin" style="margin:50px auto;grid-column:1/-1"></div>';
+  const { data, error } = await App.sb.rpc('feed_list', { p_tab: FD.user ? 'user' : FD.tab, p_user: FD.user, p_game: FD.game, p_offset: FD.offset });
+  FD.loading = false;
+  if(error){ grid.innerHTML = `<div class="empty" style="grid-column:1/-1">${esc(fdMiss(error) ? FD_SQL : error.message)}</div>`; return; }
+  const rows = data || []; await ensureProfiles(rows.map(r => r.user_id));
+  FD.items = FD.items.concat(rows); FD.offset += rows.length; FD.done = rows.length < 24;
+  if(reset) grid.innerHTML = '';
+  if(!FD.items.length){
+    grid.innerHTML = `<div class="empty fdempty" style="grid-column:1/-1"><div class="fdemj">🎬</div><b>${FD.user ? 'Nenhum clipe por aqui ainda.' : FD.tab === 'following' ? 'Quem você segue ainda não postou nada.' : 'O Feed está vazio.'}</b><span>${FD.tab === 'following' && !FD.user ? 'Siga a galera clicando no nome de quem posta.' : 'Na call, aperte Alt+C para gravar os últimos 30 segundos e poste aqui.'}</span></div>`;
+    return;
+  }
+  grid.insertAdjacentHTML('beforeend', rows.map(cardHtml).join(''));
+  box.querySelector('#fdMore').classList.toggle('hidden', FD.done);
+}
+async function feedHeader(){
+  const box = document.getElementById('feedBox'); if(!box) return;
+  const h = box.querySelector('#fdUserHead');
+  if(!FD.user){ h.innerHTML = ''; h.classList.add('hidden'); box.querySelector('#fdTabs').classList.remove('hidden'); return; }
+  box.querySelector('#fdTabs').classList.add('hidden');
+  await ensureProfiles([FD.user]);
+  const p = prof(FD.user);
+  h.classList.remove('hidden');
+  h.innerHTML = `<button class="ibtn" id="fdBack" data-tip="Voltar">${ic('arrowLeft', 18)}</button>${avatar(p, 'lg')}<div><b>${esc(p.display_name)}</b><small>@${esc(p.username)}</small><div class="fdstats" id="fdSt"></div></div><span class="grow"></span>${FD.user !== S.me.id ? `<button class="btn" id="fdFollow">Seguir</button>` : ''}`;
+  h.querySelector('#fdBack').onclick = () => { FD.user = null; feedHeader(); feedLoad(true); };
+  const { data } = await App.sb.rpc('feed_profile', { p_user: FD.user });
+  if(data){
+    h.querySelector('#fdSt').innerHTML = `<span><b>${fdK(data.clips)}</b> clipes</span><span><b>${fdK(data.followers)}</b> seguidores</span><span><b>${fdK(data.following)}</b> seguindo</span><span><b>${fdK(data.likes)}</b> curtidas</span>`;
+    const fb = h.querySelector('#fdFollow');
+    if(fb){ const set = on => { fb.textContent = on ? 'Seguindo' : 'Seguir'; fb.classList.toggle('sec', on); }; set(data.i_follow);
+      fb.onclick = async () => { const on = fb.textContent === 'Seguindo'; await toggleFollow(FD.user, on); set(!on); feedHeader(); }; }
+  }
+}
+async function toggleFollow(uid, on){
+  const { error } = on ? await App.sb.from('follows').delete().eq('follower', S.me.id).eq('followee', uid) : await App.sb.from('follows').insert({ followee: uid });
+  if(error && !/duplicate/i.test(error.message)) App.toast(fdMiss(error) ? FD_SQL : error.message, true);
+  else if(!on) App.toast(`Agora você segue ${prof(uid).display_name}.`);
+  FD.items.forEach(p => { if(p.user_id === uid) p.following = !on; });
+}
+function feedOpen(opt){
+  opt = opt || {};
+  document.getElementById('feedBox')?.remove();
+  FD.tab = opt.tab || 'top'; FD.user = opt.user || null; FD.game = null;
+  const el = document.createElement('div'); el.className = 'explore feed'; el.id = 'feedBox';
+  el.innerHTML = `<div class="exbox"><div class="exhead fdhead"><div><h1>${ic('film', 26)} Feed</h1><p>Os melhores clipes da galera do Telão.</p></div><span class="grow"></span>
+      <button class="btn" id="fdPost">${ic('plus', 16)} Postar clipe</button><button class="ibtn" id="fdMe" data-tip="Meus clipes">${avatar(S.me, 'sm')}</button><button class="ibtn" id="fdX" data-tip="Fechar">${ic('x', 20)}</button></div>
+    <div class="fdbar" id="fdTabs"><button data-ft="top">🔥 Em alta</button><button data-ft="following">Seguindo</button><button data-ft="new">Recentes</button><span class="grow"></span>
+      <input class="inp fdgame" id="fdGame" list="fdGL" placeholder="Filtrar por jogo"><datalist id="fdGL">${GAME_SUGG.slice(0, -1).map(g => `<option value="${esc(g)}">`).join('')}</datalist></div>
+    <div class="fduser hidden" id="fdUserHead"></div>
+    <div class="fdgrid" id="fdG"></div><div style="text-align:center;padding:14px"><button class="btn sec hidden" id="fdMore">Ver mais</button></div></div>`;
+  document.body.appendChild(el);
+  const close = () => { el.remove(); document.removeEventListener('keydown', kd); if(location.hash.startsWith('#clipe=')) history.replaceState(null, '', location.pathname + location.search); };
+  const kd = e => { if(e.key === 'Escape' && !document.getElementById('fdView') && $('#modal').classList.contains('hidden')) close(); };
+  document.addEventListener('keydown', kd);
+  el.querySelector('#fdX').onclick = close; el.onclick = e => { if(e.target === el) close(); };
+  el.querySelector('#fdPost').onclick = () => App.feedPostModal({});
+  el.querySelector('#fdMe').onclick = () => { FD.user = S.me.id; feedHeader(); feedLoad(true); };
+  const tabs = () => el.querySelectorAll('[data-ft]').forEach(b => b.classList.toggle('on', b.dataset.ft === FD.tab));
+  el.querySelectorAll('[data-ft]').forEach(b => b.onclick = () => { FD.tab = b.dataset.ft; tabs(); feedLoad(true); });
+  let gt = null; el.querySelector('#fdGame').oninput = e => { clearTimeout(gt); gt = setTimeout(() => { FD.game = e.target.value.trim() || null; feedLoad(true); }, 350); };
+  el.querySelector('#fdMore').onclick = () => feedLoad(false);
+  el.querySelector('#fdG').addEventListener('click', e => {
+    const u = e.target.closest('[data-fu]'); if(u){ e.stopPropagation(); FD.user = u.dataset.fu; feedHeader(); feedLoad(true); return; }
+    const c = e.target.closest('[data-fp]'); if(c){ const p = FD.items.find(x => x.id === c.dataset.fp); if(p) feedView(p); }
+  });
+  // prévia ao passar o mouse
+  el.querySelector('#fdG').addEventListener('mouseover', e => {
+    const c = e.target.closest('.fdc'); if(!c || c.querySelector('.fprev')) return;
+    const p = FD.items.find(x => x.id === c.dataset.fp); if(!p) return;
+    const t = setTimeout(() => {
+      if(!c.matches(':hover')) return;
+      const v = document.createElement('video'); v.className = 'fprev'; v.src = p.video_url + (p.start_at ? '#t=' + p.start_at : ''); v.muted = true; v.autoplay = true; v.loop = true; v.playsInline = true;
+      c.querySelector('.fdth').appendChild(v);
+      c.addEventListener('mouseleave', () => v.remove(), { once: true });
+    }, 450);
+    c.addEventListener('mouseleave', () => clearTimeout(t), { once: true });
+  });
+  tabs(); feedHeader(); feedLoad(true);
+  if(opt.post) feedView(opt.post);
+}
+App.feedOpen = feedOpen;
+
+/* ---------- ver um clipe ---------- */
+async function feedView(p){
+  document.getElementById('fdView')?.remove();
+  await ensureProfiles([p.user_id]);
+  const pr = prof(p.user_id), mine = p.user_id === S.me.id, admin = S.me.is_admin;
+  const el = document.createElement('div'); el.id = 'fdView'; el.className = 'fdview';
+  el.innerHTML = `<div class="fvbox"><button class="ibtn fvx" id="fvX">${ic('x', 22)}</button>
+    <div class="fvvid"><video id="fvV" src="${esc(p.video_url)}${p.start_at ? '#t=' + p.start_at : ''}" controls autoplay playsinline></video></div>
+    <div class="fvside"><div class="fvhead">${avatar(pr, 'lg')}<div class="fvwho"><b class="fuser" data-fu="${p.user_id}">${esc(pr.display_name)}</b><small>${fdAgo(p.created_at)}${p.visibility === 'friends' ? ' · só amigos' : ''}</small></div>
+        ${mine ? '' : `<button class="btn sm ${p.following ? 'sec' : ''}" id="fvFol">${p.following ? 'Seguindo' : 'Seguir'}</button>`}</div>
+      <h2 class="fvt">${esc(p.title)}</h2>${p.game ? `<span class="fgame inl" data-fg="${esc(p.game)}">${ic('gamepad', 13)} ${esc(p.game)}</span>` : ''}
+      <div class="fvacts"><button class="fvbtn ${p.liked ? 'on' : ''}" id="fvLike">${ic('heart', 18)} <span>${fdK(p.likes)}</span></button><span class="fvbtn st">${ic('eye', 18)} ${fdK(p.views)}</span>
+        <button class="fvbtn" id="fvShare">${ic('link', 18)} Copiar link</button><button class="fvbtn" id="fvSend">${ic('send', 18)} Mandar</button>
+        ${mine || admin ? `<button class="fvbtn danger" id="fvDel" data-tip="Apagar">${ic('trash', 18)}</button>` : ''}</div>
+      <div class="fvcom" id="fvC"><div class="spin" style="margin:20px auto"></div></div>
+      <form class="fvform" id="fvF"><input class="inp" id="fvI" maxlength="500" placeholder="Comentar…" autocomplete="off"><button class="btn sm">${ic('send', 16)}</button></form></div></div>`;
+  document.body.appendChild(el);
+  history.replaceState(null, '', '#clipe=' + p.id);
+  const close = () => { el.remove(); document.removeEventListener('keydown', kd); if(location.hash.startsWith('#clipe=')) history.replaceState(null, '', location.pathname + location.search); };
+  const kd = e => { if(e.key === 'Escape' && $('#modal').classList.contains('hidden')){ e.stopImmediatePropagation(); close(); } };
+  document.addEventListener('keydown', kd, true);
+  el.querySelector('#fvX').onclick = close; el.onclick = e => { if(e.target === el) close(); };
+  App.sb.rpc('feed_view', { p_post: p.id }).then(() => {}, () => {});
+  el.querySelector('.fvhead [data-fu]').onclick = () => { close(); if(!document.getElementById('feedBox')) feedOpen({ user: p.user_id }); else { FD.user = p.user_id; feedHeader(); feedLoad(true); } };
+  const gtag = el.querySelector('[data-fg]'); if(gtag) gtag.onclick = () => { close(); const fg = document.querySelector('#fdGame'); if(fg){ FD.user = null; feedHeader(); fg.value = p.game; FD.game = p.game; feedLoad(true); } };
+  const fol = el.querySelector('#fvFol'); if(fol) fol.onclick = async () => { const on = fol.textContent === 'Seguindo'; await toggleFollow(p.user_id, on); fol.textContent = on ? 'Seguir' : 'Seguindo'; fol.classList.toggle('sec', !on); };
+  el.querySelector('#fvLike').onclick = async e => {
+    const b = e.currentTarget, on = b.classList.contains('on');
+    b.classList.toggle('on', !on); p.liked = !on; p.likes += on ? -1 : 1; b.querySelector('span').textContent = fdK(p.likes);
+    if(!on){ b.classList.add('pop'); setTimeout(() => b.classList.remove('pop'), 400); }
+    const { error } = on ? await App.sb.from('feed_likes').delete().eq('post_id', p.id).eq('user_id', S.me.id) : await App.sb.from('feed_likes').insert({ post_id: p.id });
+    if(error && !/duplicate/i.test(error.message)) App.toast(error.message, true);
+    const card = document.querySelector(`.fdc[data-fp="${p.id}"] .flk`); if(card){ card.classList.toggle('on', p.liked); card.innerHTML = `${ic('heart', 14)} ${fdK(p.likes)}`; }
+  };
+  // dois toques no vídeo = curtir
+  el.querySelector('#fvV').addEventListener('dblclick', e => { e.preventDefault(); if(!p.liked) el.querySelector('#fvLike').click(); const h = document.createElement('div'); h.className = 'fvheart'; h.textContent = '❤️'; el.querySelector('.fvvid').appendChild(h); setTimeout(() => h.remove(), 900); });
+  const link = location.origin + location.pathname + '#clipe=' + p.id;
+  el.querySelector('#fvShare').onclick = () => { copy(link); App.toast('Link do clipe copiado.'); };
+  el.querySelector('#fvSend').onclick = () => {
+    const targets = [...S.dms.slice(0, 8), ...S.groups.slice(0, 4)];
+    const r = el.querySelector('#fvSend').getBoundingClientRect();
+    if(!targets.length && !M.cid){ copy(link); App.toast('Link copiado. Cole numa conversa.'); return; }
+    menu(r.left, r.bottom + 6, [...(M.cid ? [{ label: 'No chat aberto', icon: ic('chat', 18), onClick: () => feedSend(M.cid, p, link) }] : []),
+      ...targets.map(c => ({ label: c.kind === 'dm' ? prof(dmOther(c)).display_name : groupName(c), icon: ic('send', 16), onClick: () => feedSend(c.id, p, link) }))]);
+  };
+  const del = el.querySelector('#fvDel'); if(del) del.onclick = async () => {
+    if(!(await confirmBox('Apagar clipe', 'O clipe some do Feed para todo mundo.', 'Apagar'))) return;
+    const { error } = await App.sb.from('feed_posts').delete().eq('id', p.id);
+    if(error){ App.toast(error.message, true); return; }
+    close(); FD.items = FD.items.filter(x => x.id !== p.id); document.querySelector(`.fdc[data-fp="${p.id}"]`)?.remove(); App.toast('Clipe apagado.');
+  };
+  const loadCom = async () => {
+    const { data, error } = await App.sb.from('feed_comments').select('*').eq('post_id', p.id).order('created_at', { ascending: true }).limit(200);
+    const box = el.querySelector('#fvC'); if(!box) return;
+    if(error){ box.innerHTML = `<p class="mut small">${esc(error.message)}</p>`; return; }
+    await ensureProfiles((data || []).map(c => c.user_id));
+    box.innerHTML = (data || []).length ? data.map(c => `<div class="fvc">${avatar(prof(c.user_id), 'xs')}<div><b>${esc(prof(c.user_id).display_name)}</b> <small>${fdAgo(c.created_at)}</small><p>${esc(c.content)}</p></div>${c.user_id === S.me.id || mine || admin ? `<button class="ibtn sm" data-fcd="${c.id}" data-tip="Apagar">${ic('trash', 13)}</button>` : ''}</div>`).join('')
+      : '<p class="mut small fvnone">Nenhum comentário ainda. Seja o primeiro!</p>';
+    box.querySelectorAll('[data-fcd]').forEach(b => b.onclick = async () => { await App.sb.from('feed_comments').delete().eq('id', b.dataset.fcd); p.comments = Math.max(0, p.comments - 1); loadCom(); });
+    box.scrollTop = box.scrollHeight;
+  };
+  loadCom();
+  el.querySelector('#fvF').onsubmit = async e => {
+    e.preventDefault(); const i = el.querySelector('#fvI'), t = i.value.trim(); if(!t) return;
+    i.value = '';
+    const { error } = await App.sb.from('feed_comments').insert({ post_id: p.id, content: t });
+    if(error){ App.toast(error.message, true); i.value = t; return; }
+    p.comments++; loadCom();
+  };
+}
+async function feedSend(cid, p, link){
+  const { error } = await App.sb.from('messages').insert({ channel_id: cid, content: `🎬 ${p.title}\n${link}` });
+  if(error) App.toast(error.message, true); else App.toast('Clipe enviado!');
+}
+// link de clipe no chat vira um cartãozinho clicável
+const CLIP_RE = /#clipe=([0-9a-f-]{36})/gi;
+const _embedsHtmlFd = embedsHtml;
+embedsHtml = function(m){
+  const base = _embedsHtmlFd.apply(this, arguments) || '';
+  const ids = [...new Set([...String(m.content || '').matchAll(CLIP_RE)].map(x => x[1]))].slice(0, 2);
+  return base + ids.map(id => `<div class="fdemb" data-fdemb="${id}"><div class="spin sm"></div></div>`).join('');
+};
+const FDC = new Map();
+new MutationObserver(() => document.querySelectorAll('.fdemb[data-fdemb]:not([data-done])').forEach(async el => {
+  el.dataset.done = '1'; const id = el.dataset.fdemb;
+  let p = FDC.get(id);
+  if(!p){
+    const { data } = await App.sb.from('feed_posts').select('*').eq('id', id).maybeSingle();
+    p = data; if(p) FDC.set(id, p);
+  }
+  if(!p){ el.innerHTML = '<span class="mut small">Clipe apagado ou só para amigos.</span>'; return; }
+  await ensureProfiles([p.user_id]);
+  el.innerHTML = `<div class="fdembt">${p.thumb_url ? `<img src="${esc(p.thumb_url)}" alt="">` : ''}<span class="fplay">${ic('play', 22)}</span></div><div class="fdembi"><small>${ic('film', 12)} CLIPE NO FEED</small><b>${esc(p.title)}</b><span>${esc(prof(p.user_id).display_name)}${p.game ? ' · ' + esc(p.game) : ''}</span></div>`;
+  el.onclick = async () => { const { data } = await App.sb.rpc('feed_list', { p_tab: 'user', p_user: p.user_id, p_game: null, p_offset: 0 }); const full = (data || []).find(x => x.id === id) || { ...p, likes: 0, comments: 0, liked: false, following: false }; feedOpen({ tab: 'top', post: full }); };
+})).observe(document.body, { childList: true, subtree: true });
+
+/* ---------- botão na barra e link direto ---------- */
+const _renderRailFd = renderRail;
+renderRail = function(){
+  _renderRailFd.apply(this, arguments);
+  const ex = $('#rExplore'), at = ex || $('#rAdd');
+  if(at && !$('#rFeed')){
+    at.insertAdjacentHTML('afterend', `<button class="ricon add feedbtn" id="rFeed" data-tip="Feed de clipes" data-tipside="r">${ic('film', 22)}</button>`);
+    $('#rFeed').onclick = () => feedOpen();
+  }
+};
+// perfil: "Ver clipes"
+const _userMenuExtraFd = App.userMenuExtra;
+App.userMenuExtra = uid => (_userMenuExtraFd ? _userMenuExtraFd(uid) : []).concat(uid === '7e1a0000-0000-4000-a000-000000000001' ? [] : [{ label: 'Clipes no Feed', icon: ic('film', 18), onClick: () => feedOpen({ user: uid }) }]);
+const _selfMenuExtraFd = App.selfMenuExtra;
+App.selfMenuExtra = () => (_selfMenuExtraFd ? _selfMenuExtraFd() : []).concat([{ label: 'Meus clipes no Feed', icon: ic('film', 18), onClick: () => feedOpen({ user: S.me.id }) }]);
+const _startFd = start;
+start = async function(){
+  const r = await _startFd.apply(this, arguments);
+  const m = location.hash.match(/^#clipe=([0-9a-f-]{36})/i);
+  if(m && S.me){ setTimeout(async () => { const { data } = await App.sb.from('feed_posts').select('user_id').eq('id', m[1]).maybeSingle(); if(!data){ App.toast('Esse clipe não existe mais.', true); return; } const { data: l } = await App.sb.rpc('feed_list', { p_tab: 'user', p_user: data.user_id, p_game: null, p_offset: 0 }); const p = (l || []).find(x => x.id === m[1]); feedOpen(p ? { post: p } : {}); }, 900); }
+  return r;
+};
+/* =====================================================================
+   v6.21: TRADUZIR MENSAGEM (menu da mensagem → Traduzir)
+   1º tenta o tradutor que já vem no Chrome/Edge (roda no próprio computador, de graça e sem mandar o texto para fora);
+   se o navegador não tiver, usa o MyMemory (serviço gratuito de tradução).
+   ===================================================================== */
+const TR = { cache: new Map(), shown: new Map() };
+const LANG_NAMES = { pt: 'português', en: 'inglês', es: 'espanhol', fr: 'francês', de: 'alemão', it: 'italiano', ja: 'japonês', ko: 'coreano', zh: 'chinês', ru: 'russo', ar: 'árabe', tr: 'turco', pl: 'polonês', nl: 'holandês', hi: 'hindi', uk: 'ucraniano', sv: 'sueco', id: 'indonésio', vi: 'vietnamita', th: 'tailandês', he: 'hebraico', el: 'grego', cs: 'tcheco', ro: 'romeno', hu: 'húngaro', fi: 'finlandês', da: 'dinamarquês', no: 'norueguês' };
+const trTarget = () => P.lang || 'pt';
+const langName = c => LANG_NAMES[(c || '').slice(0, 2)] || c || 'outra língua';
+async function translateText(text){
+  const to = trTarget(), key = to + '|' + text;
+  if(TR.cache.has(key)) return TR.cache.get(key);
+  let res = null;
+  // 1) tradutor do próprio navegador
+  try{
+    if('Translator' in self && 'LanguageDetector' in self){
+      const det = await LanguageDetector.create();
+      const [best] = await det.detect(text);
+      const from = best && best.detectedLanguage;
+      if(from && from !== 'und'){
+        if(from.slice(0, 2) === to) res = { same: true, from };
+        else{
+          const av = await Translator.availability({ sourceLanguage: from, targetLanguage: to });
+          if(av && av !== 'unavailable'){
+            const t = await Translator.create({ sourceLanguage: from, targetLanguage: to });
+            res = { text: await t.translate(text), from, how: 'navegador' };
+          }
+        }
+      }
+    }
+  }catch(e){}
+  // 2) MyMemory
+  if(!res){
+    const r = await fetch('https://api.mymemory.translated.net/get?q=' + encodeURIComponent(text.slice(0, 480)) + '&langpair=' + encodeURIComponent('Autodetect|' + (to === 'pt' ? 'pt-BR' : to)) + (S.me ? '&de=' + encodeURIComponent('telao+' + S.me.id.slice(0, 8) + '@telao.app') : ''));
+    if(!r.ok) throw new Error('O tradutor não respondeu.');
+    const j = await r.json();
+    const t = j && j.responseData && j.responseData.translatedText;
+    if(!t || /MYMEMORY WARNING|QUERY LENGTH LIMIT|INVALID/i.test(t)) throw new Error(/WARNING/i.test(t || '') ? 'O limite de traduções grátis de hoje acabou. Tente amanhã.' : 'Não deu para traduzir agora.');
+    const from = (j.responseData.detectedLanguage || (j.matches && j.matches[0] && j.matches[0].source) || '').slice(0, 2);
+    const clean = String(t).replace(/&#39;/g, "'").replace(/&quot;/g, '"').replace(/&amp;/g, '&');
+    res = from && from === to ? { same: true, from } : clean.trim().toLowerCase() === text.trim().toLowerCase() ? { same: true, from: from || to } : { text: clean, from, how: 'MyMemory' };
+  }
+  TR.cache.set(key, res);
+  return res;
+}
+function trBox(mid, html){
+  const row = document.querySelector(`[data-m="${mid}"]`); if(!row) return;
+  let b = row.querySelector('.trbox');
+  if(!b){ b = document.createElement('div'); b.className = 'trbox'; const ct = row.querySelector('.bub .ct'); if(ct) ct.after(b); else (row.querySelector('.bub') || row).appendChild(b); }
+  b.innerHTML = html;
+  const x = b.querySelector('[data-trx]'); if(x) x.onclick = e => { e.stopPropagation(); TR.shown.delete(mid); b.remove(); };
+}
+async function translateMsg(m){
+  const text = String(m.content || '').replace(/https?:\/\/\S+/g, ' ').replace(/<a?:[a-z0-9_]+:[0-9a-f-]{36}>/gi, ' ').trim();
+  if(!text){ App.toast('Não tem texto para traduzir nessa mensagem.', true); return; }
+  trBox(m.id, `<span class="trtag">${ic('globe', 12)} Traduzindo…</span>`);
+  try{
+    const r = await translateText(text);
+    if(r.same){ trBox(m.id, `<span class="trtag">${ic('globe', 12)} Essa mensagem já está em ${langName(trTarget())}.</span><button class="trx" data-trx>${ic('x', 12)}</button>`); setTimeout(() => { const b = document.querySelector(`[data-m="${m.id}"] .trbox`); if(b && !TR.shown.has(m.id)) b.remove(); }, 4000); return; }
+    TR.shown.set(m.id, r);
+    trBox(m.id, `<div class="trtxt">${richText(r.text)}</div><span class="trtag">${ic('globe', 12)} Traduzido do ${langName(r.from)}${r.how ? ' · ' + r.how : ''}</span><button class="trx" data-trx data-tip="Esconder tradução">${ic('x', 12)}</button>`);
+  }catch(e){ trBox(m.id, `<span class="trtag err">${esc(e.message || 'Não deu para traduzir agora.')}</span><button class="trx" data-trx>${ic('x', 12)}</button>`); }
+}
+App.translateMsg = translateMsg;
+// volta a mostrar a tradução quando a mensagem é redesenhada
+new MutationObserver(() => {
+  if(!TR.shown.size) return;
+  TR.shown.forEach((r, mid) => { const row = document.querySelector(`[data-m="${mid}"]`); if(row && !row.querySelector('.trbox')) trBox(mid, `<div class="trtxt">${richText(r.text)}</div><span class="trtag">${ic('globe', 12)} Traduzido do ${langName(r.from)}${r.how ? ' · ' + r.how : ''}</span><button class="trx" data-trx>${ic('x', 12)}</button>`); });
+}).observe(document.body, { childList: true, subtree: true });
+const _msgMenuExtraTr = App.msgMenuExtra;
+App.msgMenuExtra = m => {
+  const out = _msgMenuExtraTr ? _msgMenuExtraTr(m) : [];
+  if(m.content && m.content.trim() && !String(m.id).startsWith('tmp-')) out.unshift({ label: TR.shown.has(m.id) ? 'Mostrar original' : 'Traduzir', icon: ic('globe', 18), onClick: () => { if(TR.shown.has(m.id)){ TR.shown.delete(m.id); document.querySelector(`[data-m="${m.id}"] .trbox`)?.remove(); } else translateMsg(m); } });
+  return out;
+};
+/* =====================================================================
+   v6.21: MAIS JOGOS NA CHAMADA — Stop (adedonha), Quem sou eu? e Truco paulista
+   Usam o mesmo esquema dos outros jogos: quem abre é o anfitrião e manda o estado para todos.
+   No Truco, cada um recebe as próprias cartas em particular (ninguém vê a mão dos outros na tela).
+   ===================================================================== */
+const J = App.G;
+const J2 = { drafts: {}, sent: {}, hands: null, handsGid: null, myHand: [], myHandGid: null, shownShout: 0 };
+const pres = () => J.presentIds();
+const inG = st => st.players.includes(S.me.id);
+
+/* ============================ STOP ============================ */
+const STOP_CATS = ['Nome', 'Animal', 'Cor', 'Fruta', 'Comida', 'Cidade, estado ou país', 'Objeto', 'Marca', 'Profissão', 'Filme ou série', 'Parte do corpo', 'Time de futebol', 'Famoso', 'Minha sogra é…', 'Algo que tem na cozinha', 'Verbo', 'Carro', 'Personagem', 'Música ou banda', 'Coisa que se leva na praia', 'Jogo', 'Desculpa para faltar'];
+const STOP_LETTERS = 'ABCDEFGILMNOPRSTV'.split('');
+const T_STOP_TYPE = 120000, T_STOP_GRACE = 3500, T_STOP_COLLECT = 4500, T_STOP_REVIEW = 45000, T_STOP_SCORE = 8000;
+function stopRound(st){
+  st.round = (st.round || 0) + 1;
+  if(st.round > st.rounds){ J.endGame(); return; }
+  const left = STOP_LETTERS.filter(l => !(st.used || []).includes(l));
+  st.letter = J.shuffle(left.length ? left : STOP_LETTERS)[0]; st.used = (st.used || []).concat(st.letter);
+  st.ans = {}; st.vetos = {}; st.stopper = null; st.roundPts = null; st.phase = 'type'; J.setDeadline(T_STOP_TYPE); J.push();
+}
+function stopValid(st, uid, ci){
+  const a = J.norm(((st.ans[uid] || {})[ci]) || '');
+  if(a.length < 2 || a[0] !== J.norm(st.letter)) return false;
+  const others = st.players.length - 1, need = Math.max(1, Math.ceil(others / 2));
+  return ((st.vetos[uid + '|' + ci] || []).length) < need;
+}
+function stopScore(st){
+  st.roundPts = {};
+  st.players.forEach(u => st.roundPts[u] = {});
+  st.cats.forEach((c, ci) => {
+    const valid = st.players.filter(u => stopValid(st, u, ci));
+    const count = {}; valid.forEach(u => { const k = J.norm(st.ans[u][ci]); count[k] = (count[k] || 0) + 1; });
+    st.players.forEach(u => { const ok = valid.includes(u); const pts = ok ? (count[J.norm(st.ans[u][ci])] > 1 ? 5 : 10) : 0; st.roundPts[u][ci] = pts; st.scores[u] = (st.scores[u] || 0) + pts; });
+  });
+  st.phase = 'score'; J.setDeadline(T_STOP_SCORE); J.push();
+}
+function stopReview(st){ st.phase = 'review'; J.setDeadline(T_STOP_REVIEW); J.push(); }
+App.registerGame('stop', { name: 'Stop', icon: '✋', desc: 'Sai uma letra e todo mundo preenche as categorias. Resposta única vale 10, repetida vale 5. A galera vota nas respostas duvidosas.', min: 2 }, {
+  start(st){ st.cats = J.shuffle(STOP_CATS).slice(0, 6); st.rounds = 5; st.round = 0; st.used = []; stopRound(st); },
+  act(st, uid, a){
+    if(a.a === 'stop' && st.phase === 'type' && st.players.includes(uid)){ st.stopper = uid; st.phase = 'stopping'; J.setDeadline(T_STOP_GRACE); J.push(); }
+    else if(a.a === 'answers' && (st.phase === 'collect' || st.phase === 'stopping' || st.phase === 'type') && st.players.includes(uid) && a.round === st.round){
+      const clean = {}; st.cats.forEach((c, ci) => { const v = String((a.ans || {})[ci] || '').trim().slice(0, 40); if(v) clean[ci] = v; });
+      st.ans[uid] = clean;
+      if(st.phase === 'collect' && st.players.filter(u => pres().includes(u)).every(u => st.ans[u])) stopReview(st); else J.push();
+    }
+    else if(a.a === 'veto' && st.phase === 'review' && st.players.includes(uid) && a.u !== uid && st.players.includes(a.u)){
+      const k = a.u + '|' + (a.ci | 0), l = st.vetos[k] || [];
+      st.vetos[k] = l.includes(uid) ? l.filter(x => x !== uid) : l.concat(uid); J.push();
+    }
+    else if(a.a === 'next' && uid === st.host && st.phase === 'review') stopScore(st);
+  },
+  tick(st){
+    if(st.phase === 'type' || st.phase === 'stopping'){ st.phase = 'collect'; J.setDeadline(T_STOP_COLLECT); J.push(); }
+    else if(st.phase === 'collect') stopReview(st);
+    else if(st.phase === 'review') stopScore(st);
+    else if(st.phase === 'score') stopRound(st);
+  },
+  render(st, inGame){
+    const d = J2.drafts[st.id + ':' + st.round] || {};
+    const head = `<div class="stophead"><div class="stopletter">${esc(st.letter)}</div><div><b>Rodada ${st.round} de ${st.rounds}</b><small>Tudo começando com <b>${esc(st.letter)}</b></small></div></div>`;
+    if(st.phase === 'type' || st.phase === 'stopping'){
+      const can = inGame;
+      return `<div class="gstop">${head}
+        ${st.phase === 'stopping' ? `<div class="stopbang">✋ STOP! <small>${J.nm(st.stopper)} parou. Termine em ${Math.max(0, Math.ceil((st.dl - J.now()) / 1000))} s…</small></div>` : ''}
+        <div class="stopform">${st.cats.map((c, ci) => `<label class="stopf"><span>${esc(c)}</span><input class="inp" id="stIn${ci}" data-stin="${ci}" maxlength="40" autocomplete="off" value="${esc(d[ci] || '')}" ${can ? '' : 'disabled'} placeholder="${esc(st.letter)}…"></label>`).join('')}</div>
+        ${can ? `<div class="gacts"><button class="btn ok big" data-g="ststop" id="stStop" ${st.phase === 'stopping' ? 'disabled' : ''}>✋ STOP!</button><span class="mut small" id="stHint"></span></div>` : '<p class="mut">Você está só olhando esta rodada.</p>'}</div>`;
+    }
+    if(st.phase === 'collect') return `<div class="gstop">${head}<div class="stopbang">✋ STOP! <small>Recolhendo as respostas da galera…</small></div></div>`;
+    const showPts = st.phase === 'score';
+    return `<div class="gstop">${head}
+      <p class="mut small">${showPts ? 'Pontos da rodada: única = 10, repetida = 5.' : 'Clique numa resposta dos outros para votar que ela <b>não vale</b>. Com metade dos votos ela cai.'}</p>
+      <div class="stoptbl"><table><thead><tr><th></th>${st.players.map(u => `<th>${avatar(prof(u), 'xs')}<span>${J.nm(u)}</span></th>`).join('')}</tr></thead><tbody>
+      ${st.cats.map((c, ci) => `<tr><th>${esc(c)}</th>${st.players.map(u => {
+        const v = (st.ans[u] || {})[ci] || '', ok = stopValid(st, u, ci), vt = (st.vetos[u + '|' + ci] || []), mine = vt.includes(S.me.id);
+        const pts = showPts ? `<em>${st.roundPts[u][ci]}</em>` : '';
+        return `<td><button class="stcell ${v ? (ok ? 'ok' : 'bad') : 'empty'} ${mine ? 'voted' : ''}" ${!showPts && u !== S.me.id && v && inGame ? `data-g="stveto" data-u="${u}" data-ci="${ci}"` : 'disabled'}>${v ? esc(v) : '—'}${vt.length ? `<small>👎 ${vt.length}</small>` : ''}${pts}</button></td>`;
+      }).join('')}</tr>`).join('')}
+      ${showPts ? `<tr class="sttot"><th>Rodada</th>${st.players.map(u => `<td><b>+${Object.values(st.roundPts[u]).reduce((a, b) => a + b, 0)}</b></td>`).join('')}</tr>` : ''}
+      </tbody></table></div>
+      ${!showPts && J.amHost() ? `<div class="gacts"><button class="btn ok" data-g="stnext">Contar os pontos</button></div>` : ''}
+      ${showPts ? J.scoreList(st) : ''}</div>`;
+  },
+  after(st, el){
+    const key = st.id + ':' + st.round;
+    J2.drafts[key] = J2.drafts[key] || {};
+    el.querySelectorAll('[data-stin]').forEach(inp => {
+      inp.oninput = () => { J2.drafts[key][inp.dataset.stin] = inp.value; stopHint(st, el); };
+      inp.onkeydown = e => { e.stopPropagation(); if(e.key === 'Enter'){ const n = el.querySelector(`#stIn${+inp.dataset.stin + 1}`); if(n) n.focus(); } };
+    });
+    stopHint(st, el);
+    // na hora do STOP, cada um manda as próprias respostas uma vez
+    if(st.phase === 'collect' && inG(st) && !J2.sent[key]){ J2.sent[key] = 1; J.act({ a: 'answers', round: st.round, ans: J2.drafts[key] }); }
+  },
+  click(k, b, st){
+    if(k === 'ststop'){ const key = st.id + ':' + st.round; J.act({ a: 'answers', round: st.round, ans: J2.drafts[key] || {} }); J.act({ a: 'stop' }); return true; }
+    if(k === 'stveto'){ J.act({ a: 'veto', u: b.dataset.u, ci: +b.dataset.ci }); return true; }
+    if(k === 'stnext'){ J.act({ a: 'next' }); return true; }
+  },
+});
+function stopHint(st, el){
+  const btn = el.querySelector('#stStop'), hint = el.querySelector('#stHint'); if(!btn) return;
+  const d = J2.drafts[st.id + ':' + st.round] || {};
+  const filled = st.cats.filter((c, ci) => J.norm(d[ci] || '')[0] === J.norm(st.letter)).length;
+  if(st.phase === 'type') btn.disabled = filled < st.cats.length;
+  if(hint) hint.textContent = filled < st.cats.length ? `${filled} de ${st.cats.length} preenchidas com ${st.letter}` : 'Tudo pronto! Aperte STOP';
+}
+
+/* ============================ QUEM SOU EU ============================ */
+const QSE = ('Neymar,Pelé,Anitta,Xuxa,Silvio Santos,Faustão,Ronaldinho Gaúcho,Ayrton Senna,Ivete Sangalo,Gusttavo Lima,Luan Santana,Casimiro,Gaules,Felipe Neto,Whindersson Nunes,Galvão Bueno,Marta,Rebeca Andrade,Vini Jr.,Gisele Bündchen,Messi,Cristiano Ronaldo,Taylor Swift,Beyoncé,Michael Jackson,Albert Einstein,Leonardo da Vinci,Napoleão,Cleópatra,Papai Noel,Coelhinho da Páscoa,Fada do Dente,Saci,Curupira,Mula sem cabeça,Iara,Chaves,Seu Madruga,Chapolin,Mônica,Cebolinha,Cascão,Magali,Bob Esponja,Patrick Estrela,Mickey,Pato Donald,Shrek,Homem-Aranha,Batman,Superman,Mulher-Maravilha,Hulk,Thor,Homer Simpson,Pikachu,Mario,Sonic,Kratos,Lara Croft,Harry Potter,Darth Vader,Yoda,Frodo,Gandalf,Elsa,Simba,Buzz Lightyear,Woody,Pinóquio,Cinderela,Branca de Neve,Peter Pan,Capitão Gancho,Drácula,Frankenstein,Múmia,Lobisomem,Zumbi,Alienígena,Astronauta,Bombeiro,Policial,Médico,Professor,Palhaço,Pirata,Ninja,Samurai,Cowboy,Mágico,Cozinheiro,Jogador de futebol,Youtuber,Streamer,Pinguim,Girafa,Elefante,Tubarão,Polvo,Capivara,Bicho-preguiça,Tucano,Arara,Jacaré,Gato,Cachorro,Galinha,Vaca,Abelha,Formiga,Dinossauro,Dragão,Unicórnio,Sereia,Robô,Fantasma,Vampiro,Bruxa').split(',');
+const T_QS_TURN = 75000, T_QS_RIGHT = 4500, QS_MAX_TURNS = 12;
+function qsNext(st){
+  const order = st.order, n = order.length;
+  for(let k = 1; k <= n; k++){
+    const i = ((st.turn < 0 ? -1 : st.turn) + k) % n, u = order[i];
+    if(!st.guessed[u] && pres().includes(u) && (st.turns[u] || 0) < QS_MAX_TURNS){
+      st.turn = i; st.asker = u; st.turns[u] = (st.turns[u] || 0) + 1; st.answers = {}; st.phase = 'ask'; J.setDeadline(T_QS_TURN); J.push(); return;
+    }
+  }
+  J.endGame();
+}
+function qsMatch(guess, target){
+  const g = J.norm(guess), t = J.norm(target); if(!g) return false;
+  if(g === t) return true;
+  if(t.length > 5 && J.lev(g, t) <= 2) return true;
+  if(t.length <= 5 && J.lev(g, t) <= 1 && g.length === t.length) return true;
+  return g.length >= 4 && t.split(' ').some(w => w.length >= 4 && (w === g || J.lev(w, g) <= 1));
+}
+App.registerGame('quemsou', { name: 'Quem sou eu?', icon: '🤔', desc: 'Cada um recebe um personagem que todo mundo vê, menos você. Na sua vez, pergunte em voz alta (só sim ou não) e tente adivinhar quem você é.', min: 2 }, {
+  start(st){
+    const names = J.shuffle(QSE); st.who = {}; st.players.forEach((u, i) => st.who[u] = names[i]);
+    st.order = J.shuffle(st.players); st.turn = -1; st.turns = {}; st.guessed = {}; st.answers = {};
+    qsNext(st);
+  },
+  act(st, uid, a){
+    if(a.a === 'qsans' && st.phase === 'ask' && uid !== st.asker && st.players.includes(uid) && ['sim', 'nao', 'talvez'].includes(a.v)){ st.answers[uid] = a.v; J.push(); }
+    else if(a.a === 'qsguess' && st.phase === 'ask' && uid === st.asker){
+      const text = String(a.text || '').slice(0, 60);
+      if(qsMatch(text, st.who[uid])){
+        const pts = Math.max(200, 1100 - 100 * (st.turns[uid] || 1));
+        st.guessed[uid] = st.turns[uid]; st.scores[uid] = (st.scores[uid] || 0) + pts;
+        J.feed({ uid, ok: true, pts, text: st.who[uid] }); st.phase = 'right'; J.setDeadline(T_QS_RIGHT); J.push();
+      }else{ J.feed({ uid, text }); qsNext(st); }
+    }
+    else if(a.a === 'qspass' && st.phase === 'ask' && uid === st.asker) qsNext(st);
+  },
+  tick(st){ if(st.phase === 'ask' || st.phase === 'right') qsNext(st); },
+  render(st, inGame){
+    const me = S.me.id, asking = st.asker === me, my = (st.answers || {})[me];
+    const cnt = { sim: 0, nao: 0, talvez: 0 }; Object.values(st.answers || {}).forEach(v => cnt[v]++);
+    const cards = st.order.map(u => {
+      const hidden = u === me && !st.guessed[me];
+      return `<div class="qscard ${u === st.asker ? 'turn' : ''} ${st.guessed[u] ? 'done' : ''}">${avatar(prof(u), 'lg')}<b>${J.nm(u)}</b>
+        <div class="qsname ${hidden ? 'hid' : ''}">${hidden ? '???' : esc(st.who[u])}</div>${st.guessed[u] ? `<small>✓ em ${st.guessed[u]} vez${st.guessed[u] > 1 ? 'es' : ''}</small>` : u === st.asker ? '<small>🎤 perguntando</small>' : ''}</div>`;
+    }).join('');
+    let panel = '';
+    if(st.phase === 'right'){ const f = (st.feed || []).slice(-1)[0]; panel = `<div class="qsright">🎉 <b>${J.nm(st.asker)}</b> descobriu: era <b>${esc(st.who[st.asker])}</b>! ${f && f.pts ? `+${f.pts}` : ''}</div>`; }
+    else if(asking) panel = `<div class="qsask"><b>Sua vez!</b> Pergunte em voz alta algo que dê para responder com sim ou não (ex.: “Eu sou uma pessoa de verdade?”). A galera responde aqui embaixo.
+        <div class="qsres"><span class="y">Sim ${cnt.sim}</span><span class="n">Não ${cnt.nao}</span><span class="t">Talvez ${cnt.talvez}</span></div>
+        <div class="qsgform"><input class="inp" id="qsG" maxlength="60" placeholder="Já sabe? Chute quem você é" autocomplete="off"><button class="btn ok" data-g="qsguess">Chutar</button><button class="btn sec" data-g="qspass">Passar a vez</button></div></div>`;
+    else if(inGame) panel = `<div class="qsvote"><span>${J.nm(st.asker)} perguntou… a resposta é:</span><div class="qsbtns">${[['sim', 'Sim'], ['nao', 'Não'], ['talvez', 'Talvez / não sei']].map(([v, l]) => `<button class="btn ${my === v ? 'on' : 'sec'} qb-${v}" data-g="qsans" data-v="${v}">${l}</button>`).join('')}</div><small class="mut">${J.nm(st.asker)} é <b>${esc(st.who[st.asker])}</b> 🤫</small></div>`;
+    return `<div class="gqs"><div class="qsgrid">${cards}</div>${panel}
+      <div class="gfeed qsfeed">${(st.feed || []).slice(-6).map(f => f.ok ? `<div class="gf ok"><b>${J.nm(f.uid)}</b> acertou: ${esc(f.text)} (+${f.pts})</div>` : `<div class="gf"><b>${J.nm(f.uid)}</b> chutou “${esc(f.text)}” ❌</div>`).join('')}</div></div>`;
+  },
+  endExtra(st){ return `<div class="gtitles">${st.players.map(u => `<div class="gtt"><span>${J.nm(u)} era</span><b>${esc(st.who[u])}</b></div>`).join('')}</div>`; },
+  after(st, el){ const i = el.querySelector('#qsG'); if(i) i.onkeydown = e => { e.stopPropagation(); if(e.key === 'Enter' && i.value.trim()){ J.act({ a: 'qsguess', text: i.value.trim() }); i.value = ''; } }; },
+  click(k, b, st){
+    if(k === 'qsans'){ J.act({ a: 'qsans', v: b.dataset.v }); return true; }
+    if(k === 'qsguess'){ const i = J.el && J.el.querySelector('#qsG'); if(i && i.value.trim()){ J.act({ a: 'qsguess', text: i.value.trim() }); i.value = ''; } return true; }
+    if(k === 'qspass'){ J.act({ a: 'qspass' }); return true; }
+  },
+});
+
+/* ============================ TRUCO PAULISTA ============================ */
+const T_RANKS = ['4', '5', '6', '7', 'Q', 'J', 'K', 'A', '2', '3'];
+const T_SUITS = ['♦', '♠', '♥', '♣'];   // força da manilha: ouros < espadas < copas < paus (zap)
+const T_PLAY = 40000, T_RAISE = 30000, T_HANDEND = 3800;
+const RAISE_NAME = { 3: 'TRUCO!', 6: 'SEIS!', 9: 'NOVE!', 12: 'DOZE!' };
+const cardStr = c => T_RANKS[c.r] + T_SUITS[c.s];
+const manilhaOf = vira => (vira.r + 1) % 10;
+const power = (c, man) => c.r === man ? 100 + c.s : c.r;
+const teamOf = (st, seat) => seat % 2;
+const seatOf = (st, uid) => st.seats.indexOf(uid);
+function tSend(uid, hand, st){
+  if(uid === S.me.id){ J2.myHand = hand.slice(); J2.myHandGid = st.id + ':' + st.handNo; return; }
+  sendToUser(uid, 'game-priv', { gid: st.id, handNo: st.handNo, hand });
+}
+App.onGamePriv = pl => {
+  const st = J.st; if(!st || !pl || pl.gid !== st.id) return;
+  J2.myHand = pl.hand || []; J2.myHandGid = st.id + ':' + pl.handNo; J.render();
+};
+function tNewHand(st){
+  if(st.pts[0] >= 12 || st.pts[1] >= 12){ tFinish(st); return; }
+  const n = st.seats.length;
+  st.handNo = (st.handNo || 0) + 1;
+  st.dealer = ((st.dealer ?? -1) + 1) % n;
+  const deck = J.shuffle(T_RANKS.flatMap((r, ri) => T_SUITS.map((s, si) => ({ r: ri, s: si }))));
+  st.vira = deck.pop(); st.man = manilhaOf(st.vira);
+  J2.hands = {}; J2.handsGid = st.id;
+  st.seats.forEach((u, i) => { J2.hands[i] = [deck.pop(), deck.pop(), deck.pop()]; });
+  st.counts = st.seats.map(() => 3);
+  st.vazas = []; st.table = []; st.lastTable = null; st.lead = (st.dealer + 1) % n; st.turnSeat = st.lead;
+  st.onze = st.pts[0] === 11 || st.pts[1] === 11;
+  st.value = st.onze ? 3 : 1; st.raise = null; st.lastRaiseTeam = -1; st.handWin = null;
+  st.phase = 'play'; J.setDeadline(T_PLAY);
+  st.seats.forEach((u, i) => tSend(u, J2.hands[i], st));
+  J.push();
+  // quem entrar atrasado no canal privado recebe de novo
+  setTimeout(() => { if(J.st && J.st.id === st.id && J.st.handNo === st.handNo && J2.hands) st.seats.forEach((u, i) => u !== S.me.id && tSend(u, J2.hands[i], st)); }, 1500);
+}
+function tHandWinner(v){
+  const w = [0, 0]; v.forEach(x => { if(x >= 0) w[x]++; });
+  if(w[0] >= 2) return 0; if(w[1] >= 2) return 1;
+  if(v.length >= 2){
+    if(v[0] === -1){ if(v[1] !== -1) return v[1]; if(v.length === 3) return v[2] === -1 ? -2 : v[2]; return null; }
+    if(v[1] === -1) return v[0];
+  }
+  if(v.length === 3) return v[2] === -1 ? v[0] : v[2];
+  return null;
+}
+function tEndHand(st, team, why){
+  st.handWin = { team, value: st.value, why };
+  if(team >= 0) st.pts[team] = Math.min(12, st.pts[team] + st.value);
+  st.raise = null; st.phase = 'handEnd'; J.setDeadline(T_HANDEND); J.push();
+}
+function tFinish(st){
+  const win = st.pts[0] >= 12 ? 0 : 1;
+  st.winTeam = win;
+  st.players.forEach(u => { const t = teamOf(st, seatOf(st, u)); st.scores[u] = t === win ? 1000 + st.pts[t] * 20 : st.pts[t] * 40; });
+  J.endGame();
+}
+function tShout(st, text, uid){ st.shout = { text, uid, at: Date.now() }; }
+function tPlay(st, seat, idx){
+  const hand = J2.hands[seat] || []; const card = hand[idx]; if(!card) return;
+  hand.splice(idx, 1); st.counts[seat] = hand.length;
+  st.table.push({ seat, c: card });
+  tSend(st.seats[seat], hand, st);
+  const n = st.seats.length;
+  if(st.table.length < n){ st.turnSeat = (seat + 1) % n; J.setDeadline(T_PLAY); J.push(); return; }
+  // fecha a vaza
+  let best = null, bestP = -1, tie = false;
+  st.table.forEach(t => { const p = power(t.c, st.man); if(p > bestP){ bestP = p; best = t; tie = false; } else if(p === bestP && teamOf(st, t.seat) !== teamOf(st, best.seat)) tie = true; });
+  const res = tie ? -1 : teamOf(st, best.seat);
+  st.vazas.push(res); st.lastTable = { cards: st.table, win: tie ? null : best.seat };
+  st.table = [];
+  const hw = tHandWinner(st.vazas);
+  if(hw === -2){ tEndHand(st, -1, 'empate'); return; }
+  if(hw !== null){ tEndHand(st, hw, 'vazas'); return; }
+  st.lead = tie ? st.lead : best.seat; st.turnSeat = st.lead;
+  J.setDeadline(T_PLAY); J.push();
+}
+App.registerGame('truco', { name: 'Truco', icon: '🃏', desc: 'Truco paulista com vira e manilha. 2 pessoas (um contra um) ou 4 (duplas: quem senta na frente é seu parceiro). Quem fizer 12 tentos ganha.', min: 2 }, {
+  start(st){
+    if(st.players.length !== 2 && st.players.length !== 4){ App.toast('Truco precisa de 2 ou 4 jogadores. Tire ou chame alguém.', true); st.phase = 'lobby'; J.push(); return; }
+    st.seats = J.shuffle(st.players); st.pts = [0, 0]; st.dealer = -1; st.handNo = 0;
+    tNewHand(st);
+  },
+  act(st, uid, a){
+    const seat = seatOf(st, uid); if(seat < 0) return;
+    const team = teamOf(st, seat);
+    if(a.a === 'tplay' && st.phase === 'play' && !st.raise && st.turnSeat === seat) tPlay(st, seat, a.i | 0);
+    else if(a.a === 'truco' && st.phase === 'play' && !st.raise && !st.onze && st.turnSeat === seat && st.value < 12 && st.lastRaiseTeam !== team){
+      const to = st.value === 1 ? 3 : st.value + 3;
+      st.raise = { team, to, by: uid }; tShout(st, RAISE_NAME[to], uid); J.setDeadline(T_RAISE); J.push();
+    }
+    else if(a.a === 'tresp' && st.phase === 'play' && st.raise && team !== st.raise.team){
+      if(a.r === 'accept'){ st.value = st.raise.to; st.lastRaiseTeam = st.raise.team; st.raise = null; tShout(st, 'DESCE! 👊', uid); J.setDeadline(T_PLAY); J.push(); }
+      else if(a.r === 'run'){ tShout(st, 'CORREU! 🏃', uid); tEndHand(st, st.raise.team, 'correu'); }
+      else if(a.r === 'raise' && st.raise.to < 12){
+        st.value = st.raise.to; st.lastRaiseTeam = st.raise.team;
+        const to = st.value + 3; st.raise = { team, to, by: uid }; tShout(st, RAISE_NAME[to], uid); J.setDeadline(T_RAISE); J.push();
+      }
+    }
+  },
+  tick(st){
+    if(st.phase === 'handEnd'){ tNewHand(st); return; }
+    if(st.phase !== 'play') return;
+    if(!J2.hands || J2.handsGid !== st.id){ J.feed({ sys: 'Quem dava as cartas saiu da call, então a partida acabou.' }); tFinish(st); return; }
+    if(!st.seats.every(u => pres().includes(u))){ J.feed({ sys: 'Alguém saiu da call, então a partida acabou.' }); tFinish(st); return; }
+    if(st.raise){ st.value = st.raise.to; st.lastRaiseTeam = st.raise.team; st.raise = null; tShout(st, 'Aceito (tempo) 👊'); J.setDeadline(T_PLAY); J.push(); return; }
+    // demorou para jogar: joga a carta mais fraca
+    const h = J2.hands[st.turnSeat] || []; if(!h.length) return;
+    let wi = 0; h.forEach((c, i) => { if(power(c, st.man) < power(h[wi], st.man)) wi = i; });
+    tPlay(st, st.turnSeat, wi);
+  },
+  render(st, inGame){
+    const me = seatOf(st, S.me.id), n = st.seats.length, myTeam = me >= 0 ? teamOf(st, me) : 0;
+    const teamName = t => st.seats.filter((u, i) => teamOf(st, i) === t).map(u => J.nm(u)).join(' e ');
+    const card = (c, extra = '') => `<span class="tcard ${c.s === 0 || c.s === 2 ? 'red' : ''} ${c.r === st.man ? 'man' : ''} ${extra}"><b>${T_RANKS[c.r]}</b><i>${T_SUITS[c.s]}</i></span>`;
+    // posições na mesa a partir de mim: eu embaixo, frente em cima, lados
+    const pos = i => { const rel = ((i - (me >= 0 ? me : 0)) % n + n) % n; return n === 2 ? (rel === 0 ? 'b' : 't') : ['b', 'r', 't', 'l'][rel]; };
+    const shown = st.phase === 'handEnd' || !st.table.length ? (st.lastTable ? st.lastTable.cards : []) : st.table;
+    const seatsHtml = st.seats.map((u, i) => {
+      const p = pos(i), turn = st.phase === 'play' && st.turnSeat === i && !st.raise;
+      const played = shown.find(t => t.seat === i);
+      return `<div class="tseat ${p} ${turn ? 'turn' : ''} t${teamOf(st, i)}">${avatar(prof(u), 'sm')}<span>${J.nm(u)}</span>${i !== me ? `<div class="tbacks">${'<span class="tback"></span>'.repeat(st.counts ? st.counts[i] : 0)}</div>` : ''}
+        ${played ? `<div class="tplayed ${p}">${card(played.c, st.lastTable && st.lastTable.win === i && shown === st.lastTable.cards ? 'win' : '')}</div>` : ''}</div>`;
+    }).join('');
+    const myHand = J2.myHandGid === st.id + ':' + st.handNo ? J2.myHand : [];
+    const myTurn = st.phase === 'play' && st.turnSeat === me && !st.raise;
+    const canTruco = myTurn && !st.onze && st.value < 12 && st.lastRaiseTeam !== myTeam;
+    const facing = st.phase === 'play' && st.raise && me >= 0 && teamOf(st, me) !== st.raise.team;
+    const shoutNew = st.shout && Date.now() - st.shout.at < 2600;
+    return `<div class="gtruco">
+      <div class="tscore"><div class="tteam ${myTeam === 0 ? 'mine' : ''}"><small>${myTeam === 0 && me >= 0 ? 'Nós' : 'Time 1'}</small><b>${st.pts[0]}</b><span>${teamName(0)}</span></div>
+        <div class="tmid"><span>Mão vale</span><b>${st.value}</b>${st.onze ? '<small>Mão de onze: sem truco</small>' : ''}<div class="tvazas">${[0, 1, 2].map(k => `<i class="${st.vazas[k] === undefined ? '' : st.vazas[k] === -1 ? 'tie' : 'v' + st.vazas[k]}"></i>`).join('')}</div></div>
+        <div class="tteam ${myTeam === 1 ? 'mine' : ''}"><small>${myTeam === 1 ? 'Nós' : me >= 0 ? 'Eles' : 'Time 2'}</small><b>${st.pts[1]}</b><span>${teamName(1)}</span></div></div>
+      <div class="tfelt n${n}">${seatsHtml}
+        <div class="tcenter"><div class="tvira"><small>Vira</small>${st.vira ? card(st.vira) : ''}<small>Manilha: <b>${T_RANKS[st.man]}</b></small></div></div>
+        ${shoutNew ? `<div class="tshout" data-at="${st.shout.at}">${esc(st.shout.text)}<small>${st.shout.uid ? J.nm(st.shout.uid) : ''}</small></div>` : ''}
+        ${st.phase === 'handEnd' && st.handWin ? `<div class="thandend">${st.handWin.team < 0 ? 'Empatou tudo, ninguém marcou' : `${st.handWin.team === myTeam && me >= 0 ? 'Vocês' : teamName(st.handWin.team)} ${st.handWin.team === myTeam && me >= 0 ? 'levaram' : 'levou'} <b>+${st.handWin.value}</b>${st.handWin.why === 'correu' ? ' (o outro time correu)' : ''}`}</div>` : ''}
+      </div>
+      ${me >= 0 ? `<div class="thand">${myHand.map((c, i) => `<button class="tcardbtn" data-g="tplay" data-i="${i}" ${myTurn ? '' : 'disabled'}>${card(c)}</button>`).join('') || '<span class="mut small">Esperando as cartas…</span>'}</div>
+        <div class="tacts">${facing ? `<b>${J.nm(st.raise.by)} pediu ${RAISE_NAME[st.raise.to].replace('!', '')}!</b><button class="btn ok" data-g="tresp" data-r="accept">Aceitar</button><button class="btn sec" data-g="tresp" data-r="run">Correr</button>${st.raise.to < 12 ? `<button class="btn tbig" data-g="tresp" data-r="raise">${RAISE_NAME[st.raise.to + 3]}</button>` : ''}`
+          : st.raise ? `<span class="mut">Esperando a resposta do ${RAISE_NAME[st.raise.to].replace('!', '')}…</span>`
+          : myTurn ? `<span class="tyour">Sua vez de jogar</span>${canTruco ? `<button class="btn tbig" data-g="truco">${RAISE_NAME[st.value === 1 ? 3 : st.value + 3]}</button>` : ''}`
+          : st.phase === 'play' ? `<span class="mut">Vez de ${J.nm(st.seats[st.turnSeat])}</span>` : ''}</div>` : '<p class="mut small">Você está assistindo.</p>'}
+      ${(st.feed || []).filter(f => f.sys).slice(-1).map(f => `<p class="mut small">${esc(f.sys)}</p>`).join('')}</div>`;
+  },
+  endExtra(st){ const tn = t => st.seats.filter((u, i) => i % 2 === t).map(u => J.nm(u)).join(' e '); return st.winTeam === undefined ? '' : `<div class="truend">🃏 <b>${tn(st.winTeam)}</b> ganhou de <b>${st.pts[st.winTeam]}</b> a <b>${st.pts[1 - st.winTeam]}</b></div>`; },
+  after(st){
+    if(st.shout && st.shout.at !== J2.shownShout && Date.now() - st.shout.at < 2600){ J2.shownShout = st.shout.at; App.sfx && App.sfx('screen'); if(navigator.vibrate) try{ navigator.vibrate(60); }catch(e){} }
+  },
+  click(k, b){
+    if(k === 'tplay'){ J.act({ a: 'tplay', i: +b.dataset.i }); return true; }
+    if(k === 'truco'){ J.act({ a: 'truco' }); return true; }
+    if(k === 'tresp'){ J.act({ a: 'tresp', r: b.dataset.r }); return true; }
+  },
+});
+/* =====================================================================
+   v6.21: PRAÇA DO SERVIDOR — canal de voz em forma de mapa 2D
+   Cada pessoa é um bonequinho; você anda com WASD/setas ou clicando no chão.
+   Só ouve quem está perto (o volume cai com a distância). Nas mesas, só quem está na mesma mesa se ouve.
+   No coreto, todo mundo da praça ouve você (bom para avisos e karaokê).
+   ===================================================================== */
+const PZW = 1400, PZH = 900, NEAR = 140, FAR = 420, SPEED = 260;
+const PZ_ZONES = [
+  { id: 'coreto', name: 'Coreto', x: 600, y: 60, w: 200, h: 150, kind: 'stage' },
+  { id: 'mesa1', name: 'Mesa da esquerda', x: 110, y: 330, w: 220, h: 200, kind: 'private' },
+  { id: 'mesa2', name: 'Mesa da direita', x: 1070, y: 330, w: 220, h: 200, kind: 'private' },
+  { id: 'banco', name: 'Cantinho do banco', x: 560, y: 690, w: 280, h: 150, kind: 'private' },
+];
+const PZ = { on: false, cid: null, pos: new Map(), me: null, keys: new Set(), target: null, raf: 0, last: 0, sent: 0, wrap: null, cv: null, ctx: null, imgs: new Map(), emo: new Map(), showStage: false, volT: 0 };
+const isPlaza = ch => !!(ch && ch.plaza && ch.kind === 'voice' && ch.server_id);
+const zoneAt = (x, y) => PZ_ZONES.find(z => x >= z.x && x <= z.x + z.w && y >= z.y && y <= z.y + z.h) || null;
+function pzFactor(sess){
+  if(!PZ.on || !PZ.me) return 1;
+  const o = PZ.pos.get(sess); if(!o) return 0.35;            // ainda não sabemos onde está: baixinho
+  const zs = zoneAt(o.x, o.y), zl = zoneAt(PZ.me.x, PZ.me.y);
+  if(zs && zs.kind === 'stage') return 1;                   // coreto: todo mundo ouve
+  if((zs && zs.kind === 'private') || (zl && zl.kind === 'private')) return zs && zl && zs.id === zl.id ? 1 : 0;
+  const d = Math.hypot(o.x - PZ.me.x, o.y - PZ.me.y);
+  return d <= NEAR ? 1 : d >= FAR ? 0 : 1 - (d - NEAR) / (FAR - NEAR);
+}
+const _applyVolumePz = Voice.applyVolume.bind(Voice);
+Voice.applyVolume = function(p){
+  _applyVolumePz(p);
+  if(!PZ.on) return;
+  const info = this.infos.get(p.remote), f = pzFactor(p.remote);
+  p.streams.forEach((s, id) => {
+    const a = p.audioEls.get(id); if(!a) return;
+    const isScreen = s.getVideoTracks().length > 0 || (info && info.screen === id);
+    if(!isScreen) a.volume = Math.max(0, Math.min(1, a.volume * f));
+  });
+};
+function pzSend(force){
+  if(!PZ.on || !PZ.me) return;
+  const t = Date.now(); if(!force && t - PZ.sent < 110) return;
+  PZ.sent = t; Voice.sendFx({ t: 'pz', x: Math.round(PZ.me.x), y: Math.round(PZ.me.y), d: PZ.me.d });
+}
+const _onFxPz = Voice.onFx;
+Voice.onFx = (pl, mine) => {
+  if(pl && (pl.t === 'pz' || pl.t === 'pz-hello' || pl.t === 'pz-emo')){
+    if(!PZ.on || mine) return;
+    if(pl.t === 'pz'){ const o = PZ.pos.get(pl.from) || { x: pl.x, y: pl.y }; Object.assign(o, { tx: pl.x, ty: pl.y, d: pl.d, uid: pl.uid, seen: Date.now() }); PZ.pos.set(pl.from, o); pzVolumes(); }
+    else if(pl.t === 'pz-hello') pzSend(true);
+    else if(pl.t === 'pz-emo') PZ.emo.set(pl.from, { e: String(pl.e || '').slice(0, 4), at: Date.now() });
+    return;
+  }
+  _onFxPz(pl, mine);
+};
+function pzVolumes(){ if(Date.now() - PZ.volT < 150) return; PZ.volT = Date.now(); Voice.peers.forEach(p => Voice.applyVolume(p)); }
+function pzStart(ch){
+  PZ.on = true; PZ.cid = ch.id; PZ.pos.clear(); PZ.showStage = false;
+  PZ.me = { x: 700 + (Math.random() * 160 - 80), y: 470 + (Math.random() * 80 - 40), d: 1 };
+  [600, 2000].forEach(t => setTimeout(() => { if(PZ.on){ Voice.sendFx({ t: 'pz-hello' }); pzSend(true); } }, t));
+  PZ.hb = setInterval(() => pzSend(true), 3000);
+  pzLoop();
+}
+function pzStop(){
+  PZ.on = false; PZ.cid = null; cancelAnimationFrame(PZ.raf); clearInterval(PZ.hb); PZ.pos.clear();
+  if(PZ.wrap) PZ.wrap.remove();
+  Voice.peers.forEach(p => Voice.applyVolume(p));
+}
+const _joinVoicePz = joinVoice;
+joinVoice = async function(ch){
+  if(PZ.on) pzStop();
+  const r = await _joinVoicePz.apply(this, arguments);
+  const c = Voice.channel && (findChannel(Voice.channel.id) || Voice.channel);
+  if(isPlaza(c)) pzStart(c);
+  return r;
+};
+const _leaveVoicePz = leaveVoice;
+leaveVoice = async function(){ if(PZ.on) pzStop(); return _leaveVoicePz.apply(this, arguments); };
+
+/* ---------- movimento ---------- */
+const PZ_SOLID = [{ x: 700, y: 380, r: 78 }];   // a fonte no meio
+function pzMove(dt){
+  if(!PZ.me) return false;
+  let vx = 0, vy = 0;
+  if(PZ.keys.has('a') || PZ.keys.has('arrowleft')) vx -= 1;
+  if(PZ.keys.has('d') || PZ.keys.has('arrowright')) vx += 1;
+  if(PZ.keys.has('w') || PZ.keys.has('arrowup')) vy -= 1;
+  if(PZ.keys.has('s') || PZ.keys.has('arrowdown')) vy += 1;
+  if(vx || vy) PZ.target = null;
+  else if(PZ.target){ const dx = PZ.target.x - PZ.me.x, dy = PZ.target.y - PZ.me.y, dd = Math.hypot(dx, dy); if(dd < 6) PZ.target = null; else { vx = dx / dd; vy = dy / dd; } }
+  if(!vx && !vy) return false;
+  const l = Math.hypot(vx, vy); vx /= l; vy /= l;
+  let nx = PZ.me.x + vx * SPEED * dt, ny = PZ.me.y + vy * SPEED * dt;
+  nx = Math.max(30, Math.min(PZW - 30, nx)); ny = Math.max(30, Math.min(PZH - 30, ny));
+  PZ_SOLID.forEach(s => { const dx = nx - s.x, dy = ny - s.y, d = Math.hypot(dx, dy) || 1; if(d < s.r){ nx = s.x + dx / d * s.r; ny = s.y + dy / d * s.r; } });
+  if(vx) PZ.me.d = vx > 0 ? 1 : -1;
+  PZ.me.x = nx; PZ.me.y = ny;
+  return true;
+}
+document.addEventListener('keydown', e => {
+  if(!PZ.on || !PZ.wrap || !PZ.wrap.isConnected || e.target.closest('input,textarea,[contenteditable]')) return;
+  const k = e.key.toLowerCase();
+  if(['w', 'a', 's', 'd', 'arrowup', 'arrowdown', 'arrowleft', 'arrowright'].includes(k)){ PZ.keys.add(k); e.preventDefault(); }
+  if(['1', '2', '3', '4', '5'].includes(k)) pzEmote(['👋', '😂', '❤️', '🔥', '👏'][+k - 1]);
+});
+document.addEventListener('keyup', e => PZ.keys.delete(e.key.toLowerCase()));
+window.addEventListener('blur', () => PZ.keys.clear());
+function pzEmote(e){ if(!PZ.on) return; PZ.emo.set(Voice.SESSION, { e, at: Date.now() }); Voice.sendFx({ t: 'pz-emo', e }); }
+
+/* ---------- desenho ---------- */
+function pzImg(p){
+  if(!p.avatar_url) return null;
+  let im = PZ.imgs.get(p.avatar_url);
+  if(!im){ im = new Image(); im.crossOrigin = 'anonymous'; im.src = p.avatar_url; PZ.imgs.set(p.avatar_url, im); }
+  return im.complete && im.naturalWidth ? im : null;
+}
+function pzDrawMap(g){
+  // grama
+  g.fillStyle = '#2f8f4e'; g.fillRect(0, 0, PZW, PZH);
+  g.fillStyle = '#3aa05a'; for(let i = 0; i < 140; i++){ const x = (i * 97) % PZW, y = (i * 211) % PZH; g.fillRect(x, y, 4, 4); }
+  // caminhos
+  g.fillStyle = '#d8c39a'; g.fillRect(0, 410, PZW, 80); g.fillRect(660, 0, 80, PZH);
+  g.beginPath(); g.arc(700, 450, 150, 0, Math.PI * 2); g.fill();
+  // fonte
+  g.fillStyle = '#9aa3ad'; g.beginPath(); g.arc(700, 380, 72, 0, Math.PI * 2); g.fill();
+  g.fillStyle = '#4fc3f7'; g.beginPath(); g.arc(700, 380, 58, 0, Math.PI * 2); g.fill();
+  g.fillStyle = '#b3e5fc'; g.beginPath(); g.arc(700, 380, 14 + Math.sin(Date.now() / 300) * 3, 0, Math.PI * 2); g.fill();
+  // árvores
+  [[80, 90], [250, 120], [1150, 100], [1300, 200], [90, 760], [300, 820], [1100, 800], [1310, 700], [470, 250], [930, 260], [470, 640], [930, 640]].forEach(([x, y]) => {
+    g.fillStyle = 'rgba(0,0,0,.18)'; g.beginPath(); g.ellipse(x + 6, y + 30, 34, 12, 0, 0, Math.PI * 2); g.fill();
+    g.fillStyle = '#6d4c2f'; g.fillRect(x - 6, y + 4, 12, 26);
+    g.fillStyle = '#1f6b37'; g.beginPath(); g.arc(x, y - 6, 34, 0, Math.PI * 2); g.fill();
+    g.fillStyle = '#2b8a48'; g.beginPath(); g.arc(x - 10, y - 14, 18, 0, Math.PI * 2); g.fill();
+  });
+  // zonas
+  PZ_ZONES.forEach(z => {
+    if(z.kind === 'stage'){
+      g.fillStyle = '#7a4a2a'; g.fillRect(z.x, z.y + 20, z.w, z.h - 20);
+      g.fillStyle = '#ff2e9a'; g.beginPath(); g.moveTo(z.x - 14, z.y + 26); g.lineTo(z.x + z.w / 2, z.y - 16); g.lineTo(z.x + z.w + 14, z.y + 26); g.closePath(); g.fill();
+      g.fillStyle = '#ffffff'; for(let i = 0; i < 5; i++) g.fillRect(z.x + 14 + i * 43, z.y + 26, 6, z.h - 26);
+    }else{
+      g.fillStyle = 'rgba(255,255,255,.10)'; g.strokeStyle = 'rgba(255,255,255,.35)'; g.lineWidth = 3; g.setLineDash([10, 8]);
+      g.beginPath(); g.roundRect ? g.roundRect(z.x, z.y, z.w, z.h, 24) : g.rect(z.x, z.y, z.w, z.h); g.fill(); g.stroke(); g.setLineDash([]);
+      if(z.id === 'banco'){ g.fillStyle = '#8d5a33'; g.fillRect(z.x + 30, z.y + 50, z.w - 60, 20); g.fillRect(z.x + 30, z.y + 90, z.w - 60, 20); }
+      else { g.fillStyle = '#a0683d'; g.beginPath(); g.arc(z.x + z.w / 2, z.y + z.h / 2, 46, 0, Math.PI * 2); g.fill(); }
+    }
+    g.fillStyle = 'rgba(0,0,0,.45)'; const tw = g.measureText(z.name).width + 20; g.font = '700 15px system-ui, sans-serif';
+    g.fillRect(z.x + z.w / 2 - tw / 2, z.y + z.h - (z.kind === 'stage' ? 26 : 30), tw, 22);
+    g.fillStyle = '#fff'; g.textAlign = 'center'; g.fillText((z.kind === 'stage' ? '📣 ' : '🔒 ') + z.name, z.x + z.w / 2, z.y + z.h - (z.kind === 'stage' ? 10 : 14)); g.textAlign = 'left';
+  });
+  // flores
+  ['#ff6b9a', '#ffd166', '#c084fc'].forEach((c, k) => { g.fillStyle = c; for(let i = 0; i < 18; i++){ const x = 120 + ((i * 131 + k * 47) % 1160), y = 560 + ((i * 53 + k * 29) % 100); g.beginPath(); g.arc(x, y, 4, 0, Math.PI * 2); g.fill(); } });
+}
+function pzDrawAvatar(g, sess, o, uid, now){
+  const p = prof(uid), x = o.x, y = o.y, talking = Voice.speaking.has(sess) || (sess === Voice.SESSION && Voice.speaking.has(sess));
+  const meta = voiceUsers(findChannel(PZ.cid) || { id: PZ.cid, server_id: null }).find(m => m.session === sess) || {};
+  g.fillStyle = 'rgba(0,0,0,.25)'; g.beginPath(); g.ellipse(x, y + 26, 20, 7, 0, 0, Math.PI * 2); g.fill();
+  if(talking){ g.strokeStyle = '#b6ff2e'; g.lineWidth = 4; g.beginPath(); g.arc(x, y, 27 + Math.sin(now / 90) * 2, 0, Math.PI * 2); g.stroke(); }
+  g.save(); g.beginPath(); g.arc(x, y, 22, 0, Math.PI * 2); g.closePath(); g.clip();
+  const im = pzImg(p);
+  if(im) g.drawImage(im, x - 22, y - 22, 44, 44);
+  else { g.fillStyle = p.color || '#5865f2'; g.fillRect(x - 22, y - 22, 44, 44); g.fillStyle = '#fff'; g.font = '800 16px system-ui'; g.textAlign = 'center'; g.fillText((p.display_name || '?').slice(0, 2).toUpperCase(), x, y + 6); g.textAlign = 'left'; }
+  g.restore();
+  g.strokeStyle = sess === Voice.SESSION ? '#ff2e9a' : '#ffffff'; g.lineWidth = 3; g.beginPath(); g.arc(x, y, 22, 0, Math.PI * 2); g.stroke();
+  // nome
+  g.font = '700 13px system-ui, sans-serif'; g.textAlign = 'center';
+  const nm = (p.display_name || '').slice(0, 16) + (meta.muted || meta.deafened ? ' 🔇' : '') + (meta.sharing ? ' 📺' : '');
+  const w = g.measureText(nm).width + 12;
+  g.fillStyle = 'rgba(0,0,0,.6)'; g.fillRect(x - w / 2, y + 30, w, 18);
+  g.fillStyle = '#fff'; g.fillText(nm, x, y + 43);
+  const em = PZ.emo.get(sess);
+  if(em && now - em.at < 2500){ const k = (now - em.at) / 2500; g.font = '30px system-ui'; g.globalAlpha = 1 - Math.max(0, k - 0.6) / 0.4; g.fillText(em.e, x, y - 34 - k * 20); g.globalAlpha = 1; }
+  g.textAlign = 'left';
+}
+function pzLoop(){
+  cancelAnimationFrame(PZ.raf);
+  const step = t => {
+    if(!PZ.on){ return; }
+    const dt = Math.min(0.05, (t - (PZ.last || t)) / 1000); PZ.last = t;
+    if(pzMove(dt)){ pzSend(); pzVolumes(); }
+    // os outros andam suave até a posição recebida
+    PZ.pos.forEach(o => { if(o.tx == null) return; o.x += (o.tx - o.x) * Math.min(1, dt * 10); o.y += (o.ty - o.y) * Math.min(1, dt * 10); });
+    // quem saiu da call some
+    const here = new Set(voiceUsers(findChannel(PZ.cid) || { id: PZ.cid }).map(m => m.session));
+    PZ.pos.forEach((o, s) => { if(!here.has(s)) PZ.pos.delete(s); });
+    if(PZ.cv && PZ.cv.isConnected){
+      const g = PZ.ctx, now = Date.now();
+      pzDrawMap(g);
+      // quem está ouvindo bem: um círculo leve mostra seu alcance
+      g.strokeStyle = 'rgba(255,255,255,.18)'; g.lineWidth = 2; g.setLineDash([6, 8]); g.beginPath(); g.arc(PZ.me.x, PZ.me.y, FAR, 0, Math.PI * 2); g.stroke(); g.setLineDash([]);
+      if(PZ.target){ g.strokeStyle = '#ff2e9a'; g.lineWidth = 3; g.beginPath(); g.arc(PZ.target.x, PZ.target.y, 10, 0, Math.PI * 2); g.stroke(); }
+      const all = [...PZ.pos.entries()].map(([s, o]) => [s, o, o.uid]).concat([[Voice.SESSION, PZ.me, S.me.id]]).sort((a, b) => a[1].y - b[1].y);
+      all.forEach(([s, o, u]) => u && pzDrawAvatar(g, s, o, u, now));
+      pzHud();
+    }
+    PZ.raf = requestAnimationFrame(step);
+  };
+  PZ.raf = requestAnimationFrame(step);
+}
+function pzHud(){
+  const h = PZ.wrap && PZ.wrap.querySelector('#pzHud'); if(!h) return;
+  const z = zoneAt(PZ.me.x, PZ.me.y);
+  const near = [...PZ.pos.entries()].filter(([s]) => pzFactor(s) > 0.05).map(([s, o]) => o.uid).filter(Boolean);
+  const txt = (z ? (z.kind === 'stage' ? '📣 Você está no coreto: a praça toda te ouve' : `🔒 ${z.name}: só quem está aqui ouve vocês`) : '🌳 Na praça') + ' · ' + (near.length ? 'ouvindo ' + [...new Set(near)].slice(0, 4).map(u => prof(u).display_name).join(', ') + (near.length > 4 ? '…' : '') : 'ninguém por perto');
+  if(h.textContent !== txt) h.textContent = txt;
+}
+function pzMount(area){
+  if(!PZ.wrap){
+    PZ.wrap = document.createElement('div'); PZ.wrap.className = 'pzwrap';
+    PZ.wrap.innerHTML = `<div class="pzbar"><b>🌳 Praça</b><span class="pzhud" id="pzHud"></span><span class="grow"></span>
+        <div class="pzemo">${['👋', '😂', '❤️', '🔥', '👏'].map((e, i) => `<button data-pze="${e}" data-tip="Tecla ${i + 1}">${e}</button>`).join('')}</div>
+        <button class="btn sec sm" id="pzStage">${ic('monitor', 15)} Ver telas</button></div>
+      <div class="pzcv"><canvas width="${PZW}" height="${PZH}"></canvas><div class="pzhelp">Ande com <b>WASD</b> ou as setas, ou clique no chão · Só quem está perto te ouve</div></div>`;
+    PZ.cv = PZ.wrap.querySelector('canvas'); PZ.ctx = PZ.cv.getContext('2d');
+    const toWorld = e => { const r = PZ.cv.getBoundingClientRect(); return { x: (e.clientX - r.left) * PZW / r.width, y: (e.clientY - r.top) * PZH / r.height }; };
+    PZ.cv.addEventListener('pointerdown', e => { PZ.target = toWorld(e); PZ.wrap.focus(); });
+    PZ.wrap.querySelectorAll('[data-pze]').forEach(b => b.onclick = () => pzEmote(b.dataset.pze));
+    PZ.wrap.querySelector('#pzStage').onclick = () => { PZ.showStage = true; renderStage(); };
+    PZ.wrap.tabIndex = -1;
+  }
+  area.innerHTML = ''; area.classList.add('plaza'); area.appendChild(PZ.wrap);
+}
+const _renderStagePz = renderStage;
+renderStage = function(){
+  _renderStagePz.apply(this, arguments);
+  if(!PZ.on || !Voice.channel || Voice.channel.id !== PZ.cid) return;
+  const { ch } = stageChannel(); if(!ch || ch.id !== PZ.cid) return;
+  const wrap = $('#stageWrap'), area = wrap && wrap.querySelector('.stage .area'); if(!area) return;
+  if(PZ.showStage){
+    if(!area.querySelector('#pzBack')){ area.insertAdjacentHTML('afterbegin', `<button class="gback" id="pzBack">🌳 Voltar para a praça</button>`); area.querySelector('#pzBack').onclick = () => { PZ.showStage = false; renderStage(); }; }
+    return;
+  }
+  if(area.querySelector('.gpanel')) return;   // jogo aberto tem prioridade
+  pzMount(area);
+};
+
+/* ---------- criar / configurar canal como praça ---------- */
+const _renderSidebarPz = renderSidebar;
+renderSidebar = function(){
+  _renderSidebarPz.apply(this, arguments);
+  S.channels.forEach(list => list.forEach(c => { if(!isPlaza(c)) return; const row = document.querySelector(`#sbBody .ch[data-cid="${c.id}"]`); if(row && !row.querySelector('.plazaic')){ const svg = row.querySelector('svg'); if(svg) svg.outerHTML = '<span class="plazaic radioic" data-tip="Praça (mapa 2D)">🌳</span>'; } }));
+};
+App.isPlaza = isPlaza;
+// usados nos testes
+App._pzN = () => PZ.pos.size;
+App._pzF = () => { const [s] = [...PZ.pos.keys()]; return s ? pzFactor(s) : null; };
 /* ---------------- PWA ---------------- */
 window.addEventListener('beforeinstallprompt', e => {
   e.preventDefault(); if(window.telaoDesktop) return; S.installEvt = e;

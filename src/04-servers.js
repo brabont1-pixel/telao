@@ -228,20 +228,21 @@ function createChannelModal(s, kind, category){
     <div class="mc">
       <div class="ctype"><label><input type="radio" name="k" value="text" ${kind!=='voice'?'checked':''}><span class="ci">${ic('hash',22)}</span><div><b>Texto</b><small>Mensagens, imagens, GIFs, emojis e opiniões</small></div></label>
         <label><input type="radio" name="k" value="voice" ${kind==='voice'?'checked':''}><span class="ci">${ic('volume',22)}</span><div><b>Voz</b><small>Chamada, câmera e compartilhar tela</small></div></label>
-        <label><input type="radio" name="k" value="radio" ${kind==='radio'?'checked':''}><span class="ci">📻</span><div><b>Rádio</b><small>Canal de voz com música que todo mundo pede e ouve junto</small></div></label></div>
+        <label><input type="radio" name="k" value="radio" ${kind==='radio'?'checked':''}><span class="ci">📻</span><div><b>Rádio</b><small>Canal de voz com música que todo mundo pede e ouve junto</small></div></label>
+        <label><input type="radio" name="k" value="plaza" ${kind==='plaza'?'checked':''}><span class="ci">🌳</span><div><b>Praça</b><small>Mapa 2D: ande pela praça e só ouça quem está perto</small></div></label></div>
       <label class="field"><span>Nome do canal</span><div class="inpic"><span id="ccIc">${ic(kind==='voice'?'volume':'hash',18)}</span><input class="inp" id="ccN" maxlength="40" placeholder="novo-canal" required></div></label>
       <label class="field"><span>Categoria (opcional)</span><input class="inp" id="ccC" maxlength="40" list="ccCats" value="${esc(category||'')}" placeholder="Ex: Jogos"><datalist id="ccCats">${cats.map(c => `<option value="${esc(c)}">`).join('')}</datalist></label></div>
     <div class="mf"><button type="button" class="btn sec" data-close>Cancelar</button><button class="btn">Criar canal</button></div></form>`, m => {
-    m.querySelectorAll('input[name=k]').forEach(r => r.onchange = () => m.querySelector('#ccIc').innerHTML = r.value === 'radio' ? '📻' : ic(r.value === 'voice' ? 'volume' : 'hash', 18));
+    m.querySelectorAll('input[name=k]').forEach(r => r.onchange = () => m.querySelector('#ccIc').innerHTML = r.value === 'radio' ? '📻' : r.value === 'plaza' ? '🌳' : ic(r.value === 'voice' ? 'volume' : 'hash', 18));
     m.querySelector('#ccF').onsubmit = async e => {
       e.preventDefault();
-      const k0 = m.querySelector('input[name=k]:checked').value, k = k0 === 'radio' ? 'voice' : k0;
+      const k0 = m.querySelector('input[name=k]:checked').value, k = k0 === 'radio' || k0 === 'plaza' ? 'voice' : k0;
       let name = m.querySelector('#ccN').value.trim();
       if(k === 'text') name = name.toLowerCase().replace(/\s+/g, '-');
       if(!name) return;
       const list = S.channels.get(s.id) || [];
       const position = list.reduce((a,c) => Math.max(a, c.position), 0) + 1;
-      const { data, error } = await App.sb.from('channels').insert({ server_id: s.id, name, kind: k, position, category: m.querySelector('#ccC').value.trim() || null, ...(k0 === 'radio' ? { radio: true } : {}) }).select().single();
+      const { data, error } = await App.sb.from('channels').insert({ server_id: s.id, name, kind: k, position, category: m.querySelector('#ccC').value.trim() || null, ...(k0 === 'radio' ? { radio: true } : {}), ...(k0 === 'plaza' ? { plaza: true } : {}) }).select().single();
       if(error){ App.toast(error.message, true); return; }
       closeModal(); await loadChannels(s.id); go({ kind:'server', sid: s.id, cid: data.id });
     };

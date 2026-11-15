@@ -164,10 +164,11 @@ function clipModal(blob, start, len, video, who){
       ${targets.length ? `<label class="field" style="margin-top:12px"><span>Enviar em</span><select class="inp" id="clTo">${targets.map(c => `<option value="${c.id}">${esc(chLabel(c))}</option>`).join('')}</select></label>
         <label class="field"><span>Mensagem (opcional)</span><input class="inp" id="clTxt" maxlength="500" placeholder="olha isso 😂"></label>` : '<p class="mut small" style="margin-top:10px">Abra uma conversa para enviar o clipe no chat, ou baixe o arquivo.</p>'}
     </div>
-    <div class="mf"><button class="btn sec" id="clDl">${ic('download', 16)} Baixar</button><span class="grow"></span><button class="btn sec" id="clX">Descartar</button>${targets.length ? `<button class="btn" id="clSend">${ic('send', 16)} Enviar no chat</button>` : ''}</div>`, m => {
+    <div class="mf"><button class="btn sec" id="clDl">${ic('download', 16)} Baixar</button>${video && App.feedPostModal ? `<button class="btn sec" id="clFeed">${ic('film', 16)} Postar no Feed</button>` : ''}<span class="grow"></span><button class="btn sec" id="clX">Descartar</button>${targets.length ? `<button class="btn" id="clSend">${ic('send', 16)} Enviar no chat</button>` : ''}</div>`, m => {
     const done = () => { closeModal(); setTimeout(() => URL.revokeObjectURL(url), 2000); };
     m.querySelector('#clX').onclick = done;
     m.onclick = e => { if(e.target === m) done(); };
+    const fb = m.querySelector('#clFeed'); if(fb) fb.onclick = () => App.feedPostModal({ blob, start: +start.toFixed(1), len, fname });
     m.querySelector('#clDl').onclick = () => { const a = document.createElement('a'); a.href = url; a.download = fname; document.body.appendChild(a); a.click(); a.remove(); };
     const sb = m.querySelector('#clSend'); if(sb) sb.onclick = async () => {
       const cid = m.querySelector('#clTo').value, txt = m.querySelector('#clTxt').value.trim();

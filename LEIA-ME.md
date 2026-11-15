@@ -408,3 +408,14 @@ O "Spotify direto" (com Ouvir junto) continua opcional e só aparece se você co
 
 - Passar o mouse num servidor da barra da esquerda mostra quem está em call em cada canal de voz (com câmera, mudo e ensurdecido), e quem está **transmitindo a tela** (selo AO VIVO). Atualiza sozinho enquanto o mouse está em cima. Nas pastas, mostra os servidores da pasta que têm gente em call.
 - O ícone do servidor ganha uma bolinha verde quando tem alguém em call, e o selo vermelho **AO VIVO** quando alguém está transmitindo.
+
+# Versão 6.21: Feed de clipes, tradução, Stop, Quem sou eu, Truco e Praça
+
+**Precisa rodar o `supabase.sql` novo no Supabase.**
+
+- **🎬 Feed de clipes (estilo Medal):** botão de filme na barra da esquerda. Abas **Em alta**, **Seguindo** e **Recentes**, filtro por jogo e prévia ao passar o mouse. Para postar: depois de gravar um clipe na call (Alt+C) tem o botão **Postar no Feed**; no menu de um clipe/vídeo seu no chat tem **Postar no Feed**; ou **Postar clipe** no próprio Feed (arquivo do computador até 25 MB, ou um clipe que você já mandou). Cada clipe tem título, jogo e quem vê (todo mundo ou só amigos). Dá para curtir (ou dois cliques no vídeo), comentar, seguir quem postou, copiar o link (`#clipe=…`, que vira um cartãozinho no chat) e mandar para alguém. Cada pessoa tem a página de clipes com seguidores, seguindo e curtidas (menu do perfil → **Clipes no Feed**). Limite de 30 clipes por dia por pessoa; quem posta (ou o admin) pode apagar.
+- **🌐 Traduzir mensagem:** menu da mensagem → **Traduzir**. Usa o tradutor que já vem no Chrome/Edge novos (roda no próprio computador) e, se não tiver, o MyMemory (grátis). Mostra de que língua veio e dá para esconder.
+- **✋ Stop (adedonha):** 5 rodadas, 6 categorias sorteadas. Quem preencher tudo aperta **STOP** e a galera tem 3 segundos para terminar. Depois todo mundo vê as respostas e vota nas que não valem. Resposta única 10, repetida 5, letra errada ou anulada 0.
+- **🤔 Quem sou eu?:** cada um recebe um personagem que todo mundo vê, menos você. Na sua vez, pergunte em voz alta (sim ou não), a galera responde nos botões, e você chuta quando souber. Quanto menos vezes, mais pontos.
+- **🃏 Truco paulista:** 2 jogadores ou 4 (duplas, o parceiro fica na sua frente). Vira e manilha (zap, copas, espadas, ouros), TRUCO / SEIS / NOVE / DOZE com aceitar, correr ou aumentar, mão de onze sem truco, 12 tentos. Cada um recebe as próprias cartas em particular.
+- **🌳 Praça do servidor:** ao criar um canal, escolha **Praça** (ou ligue em Configurar canal). Vira um mapa 2D com fonte, árvores, coreto e mesas. Cada pessoa é um bonequinho; ande com **WASD**/setas ou clicando no chão. Só se ouve quem está perto (o volume cai com a distância). Nas **mesas** e no **cantinho do banco**, só quem está ali dentro se ouve. No **coreto**, a praça toda ouve você. Teclas 1 a 5 mandam emojis por cima do bonequinho. "Ver telas" volta para as câmeras e telas compartilhadas.
