@@ -2471,6 +2471,74 @@ begin
 end $$;
 grant execute on function public.is_verified(uuid), public.feed_creator_stats() to authenticated;
 
+-- =====================================================================
+-- v6.25: BLOQUEAR PESSOAS
+-- Quem foi bloqueado não consegue te mandar DM, pedido de amizade nem começar conversa nova.
+-- Nada avisa a pessoa bloqueada além de "não é possível mandar mensagem".
+-- =====================================================================
+create table if not exists public.user_blocks (
+  blocker uuid not null default auth.uid() references public.profiles(id) on delete cascade,
+  blocked uuid not null references public.profiles(id) on delete cascade,
+  created_at timestamptz not null default now(),
+  primary key (blocker, blocked),
+  check (blocker <> blocked)
+);
+alter table public.user_blocks enable row level security;
+drop policy if exists "meus bloqueios" on public.user_blocks;
+create policy "meus bloqueios" on public.user_blocks for select to authenticated using (blocker = auth.uid());
+drop policy if exists "bloquear" on public.user_blocks;
+create policy "bloquear" on public.user_blocks for insert to authenticated with check (blocker = auth.uid());
+drop policy if exists "desbloquear" on public.user_blocks;
+create policy "desbloquear" on public.user_blocks for delete to authenticated using (blocker = auth.uid());
+
+create or replace function public.is_blocked_between(a uuid, b uuid) returns boolean
+language sql stable security definer set search_path = public as $$
+  select exists (select 1 from user_blocks where (blocker = a and blocked = b) or (blocker = b and blocked = a));
+$$;
+-- bloquear também desfaz a amizade / pedido pendente
+create or replace function public.user_blocks_after() returns trigger
+language plpgsql security definer set search_path = public as $$
+begin
+  if new.blocked = '7e1a0000-0000-4000-a000-000000000001'::uuid then raise exception 'Não dá para bloquear a conta oficial do Telão.'; end if;
+  delete from friendships where (requester = new.blocker and addressee = new.blocked) or (requester = new.blocked and addressee = new.blocker);
+  return new;
+end $$;
+drop trigger if exists user_blocks_after on public.user_blocks;
+create trigger user_blocks_after after insert on public.user_blocks for each row execute function public.user_blocks_after();
+
+-- DM: nenhuma das duas pessoas manda mensagem enquanto houver bloqueio
+create or replace function public.msg_block_guard() returns trigger
+language plpgsql security definer set search_path = public as $$
+declare c channels;
+begin
+  select * into c from channels where id = new.channel_id;
+  if c.kind = 'dm' and public.is_blocked_between(c.dm_a, c.dm_b) then
+    raise exception 'Não é possível mandar mensagem para essa pessoa.';
+  end if;
+  return new;
+end $$;
+drop trigger if exists msg_block_guard on public.messages;
+create trigger msg_block_guard before insert on public.messages for each row execute function public.msg_block_guard();
+-- conversa nova e pedido de amizade também não
+create or replace function public.dm_block_guard() returns trigger
+language plpgsql security definer set search_path = public as $$
+begin
+  if new.kind = 'dm' and public.is_blocked_between(new.dm_a, new.dm_b) then raise exception 'Não é possível mandar mensagem para essa pessoa.'; end if;
+  return new;
+end $$;
+drop trigger if exists dm_block_guard on public.channels;
+create trigger dm_block_guard before insert on public.channels for each row execute function public.dm_block_guard();
+create or replace function public.friend_block_guard() returns trigger
+language plpgsql security definer set search_path = public as $$
+begin
+  if public.is_blocked_between(new.requester, new.addressee) then raise exception 'Não é possível adicionar essa pessoa.'; end if;
+  return new;
+end $$;
+drop trigger if exists friend_block_guard on public.friendships;
+create trigger friend_block_guard before insert or update on public.friendships for each row execute function public.friend_block_guard();
+grant select, insert, delete on public.user_blocks to authenticated;
+grant execute on function public.is_blocked_between(uuid, uuid) to authenticated;
+
 -- impede trocar campos sensíveis via update
 create or replace function public.guard_updates() returns trigger
 language plpgsql as $$

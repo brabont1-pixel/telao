@@ -9,7 +9,7 @@ const esc = s => String(s ?? '').replace(/[&<>"']/g, c => ({'&':'&amp;','<':'&lt
 const COLORS = ['#5865f2','#eb459e','#3ba55c','#faa61a','#ed4245','#f47b67','#1abc9c','#9b59b6','#e67e22','#607d8b'];
 const ls = { get(k,d){ try{ const v=localStorage.getItem(k); return v==null?d:JSON.parse(v); }catch(e){ return d; } }, set(k,v){ try{ localStorage.setItem(k, JSON.stringify(v)); }catch(e){} } };
 
-const APP_VERSION = '6.24';
+const APP_VERSION = '6.25';
 const S = {
   me: null, profiles: new Map(), servers: [], channels: new Map(), members: new Map(),
   friends: [], dms: [], dmActivity: ls.get('telao-dmact', {}), online: new Set(),
@@ -505,7 +505,7 @@ async function onMsgEvent(p){
     if(isPriv(ch)){ S.dmActivity[ch.id] = m.created_at; ls.set('telao-dmact', S.dmActivity); }
     const viewing = M.cid === m.channel_id && !document.hidden;
     if(M.cid === m.channel_id) addMessage(m);
-    if(m.author_id !== S.me.id && !viewing){
+    if(m.author_id !== S.me.id && !viewing && !(S.blocked && S.blocked.has(m.author_id))){
       S.unread.add(m.channel_id); saveUnread();
       const mention = S.me && (m.content.includes('@'+S.me.username) || /@(todos|everyone)\b/.test(m.content));
       if((isPriv(ch) && P.notifDM) || (mention && P.notifMention)){
@@ -1353,6 +1353,8 @@ function msgHtml(m, prev){
   let pre = '';
   if(!prev || new Date(prev.created_at).toDateString() !== day) pre += `<div class="daysep"><span>${fmtDay(m.created_at)}</span></div>`;
   if(M.readAt && m.created_at > M.readAt && (!prev || prev.created_at <= M.readAt) && m.author_id !== S.me.id) pre += `<div class="newsep"><span>novas mensagens</span></div>`;
+  if(S.blocked && S.blocked.has(m.author_id) && !(M.showBlk && M.showBlk.has(m.id)))
+    return `${pre}<div class="msg first blkmsg" data-m="${m.id}"><div class="blkline">${ic('eyeOff', 14)} Mensagem de alguém que você bloqueou · <a data-showblk="${m.id}">mostrar</a></div></div>`;
   const grouped = !pre && prev && !m.reply_to && prev.author_id === m.author_id && (new Date(m.created_at) - new Date(prev.created_at)) < 7*60*1000;
   const p = prof(m.author_id), mine = m.author_id === S.me.id;
   const time = new Date(m.created_at).toLocaleTimeString('pt-BR',{hour:'2-digit',minute:'2-digit'});
@@ -1748,21 +1750,31 @@ async function startRecording(){
   if(M.rec) return;
   if(!window.MediaRecorder){ App.toast('Seu navegador não grava áudio.', true); return; }
   let stream;
-  try{ stream = await navigator.mediaDevices.getUserMedia({ audio:{ echoCancellation:true, noiseSuppression:true } }); }
-  catch(e){ App.toast('Sem acesso ao microfone.', true); return; }
-  const mime = ['audio/webm;codecs=opus','audio/ogg;codecs=opus','audio/mp4'].find(t => MediaRecorder.isTypeSupported(t)) || '';
-  const rec = new MediaRecorder(stream, mime ? { mimeType: mime, audioBitsPerSecond: 48000 } : {});
+  M.rec = { pending: true };
+  try{
+    const dev = P.inputId ? { deviceId: { ideal: P.inputId } } : {};   // usa o mesmo microfone escolhido para as chamadas
+    try{ stream = await navigator.mediaDevices.getUserMedia({ audio:{ ...dev, echoCancellation:true, noiseSuppression:true } }); }
+    catch(e){ stream = await navigator.mediaDevices.getUserMedia({ audio: true }); }
+  }catch(e){ M.rec = null; App.toast('Sem acesso ao microfone: ' + (e.message || e.name || e), true); return; }
+  const mime = ['audio/webm;codecs=opus','audio/ogg;codecs=opus','audio/mp4'].find(t => { try{ return MediaRecorder.isTypeSupported(t); }catch(e){ return false; } }) || '';
+  let rec;
+  try{ rec = new MediaRecorder(stream, mime ? { mimeType: mime, audioBitsPerSecond: 48000 } : {}); }
+  catch(e){ try{ rec = new MediaRecorder(stream); }catch(e2){ stream.getTracks().forEach(t => t.stop()); M.rec = null; App.toast('Não deu para gravar: ' + (e2.message || e2), true); return; } }
   const chunks = [], peaks = [];
   const ctx = new (window.AudioContext || window.webkitAudioContext)(), an = ctx.createAnalyser(); an.fftSize = 256;
   ctx.createMediaStreamSource(stream).connect(an); const buf = new Uint8Array(an.fftSize);
   const t0 = Date.now();
   M.rec = { rec, stream, ctx, chunks, peaks, t0, cancel:false };
   rec.ondataavailable = e => e.data.size && chunks.push(e.data);
-  rec.start(250);
+  rec.onerror = e => { App.toast('A gravação parou: ' + ((e.error && e.error.message) || 'erro no microfone'), true); stopRecording(true); };
+  try{ rec.start(250); }catch(e){ stream.getTracks().forEach(t => t.stop()); ctx.close().catch(()=>{}); M.rec = null; App.toast('Não deu para gravar: ' + (e.message || e), true); return; }
   // transcrição ao vivo (reconhecimento de voz do navegador, quando existe)
   const R0 = M.rec, SRc = window.SpeechRecognition || window.webkitSpeechRecognition;
   R0.fin = ''; R0.inter = '';
-  if(SRc && P.voiceText !== false){
+  // no app do Windows (Electron) o reconhecimento do navegador não existe de verdade: ele fica dando erro e
+  // reabrindo o microfone sem parar, o que atrapalhava a gravação. Lá o texto sai pelo botão "Transcrever".
+  const DESK = /Electron/i.test(navigator.userAgent) || !!window.telaoDesktop;
+  if(SRc && P.voiceText !== false && !DESK){
     try{
       const sr = new SRc(); sr.continuous = true; sr.interimResults = true; sr.lang = ({ en:'en-US', es:'es-ES' })[P.lang] || 'pt-BR';
       sr.onresult = e => {
@@ -1771,8 +1783,8 @@ async function startRecording(){
         R0.fin = (R0.base || '') + fin; R0.inter = inter;
         const tx = $('#recTx'); if(tx && M.rec === R0) tx.textContent = (R0.fin + R0.inter).trim().slice(-90);
       };
-      sr.onend = () => { if(M.rec === R0){ R0.base = R0.fin; try{ sr.start(); }catch(e){} } else if(R0.srDone) R0.srDone(); };
-      sr.onerror = () => {};
+      sr.onend = () => { if(M.rec === R0 && !R0.srDead){ R0.base = R0.fin; setTimeout(() => { if(M.rec === R0 && !R0.srDead) try{ sr.start(); }catch(e){} }, 250); } else if(R0.srDone) R0.srDone(); };
+      sr.onerror = ev => { if(ev.error !== 'no-speech' && ev.error !== 'aborted') R0.srDead = true; };
       sr.start(); R0.sr = sr;
     }catch(e){}
   }
@@ -1789,7 +1801,7 @@ async function startRecording(){
   }, 100);
 }
 function stopRecording(cancel){
-  const R = M.rec; if(!R) return; M.rec = null;
+  const R = M.rec; if(!R || R.pending) return; M.rec = null;
   clearInterval(R.timer);
   const bar = $('#recBar'); if(bar){ bar.classList.add('hidden'); bar.innerHTML = ''; } const f = $('#cmpF'); if(f) f.classList.remove('hidden');
   const srEnd = R.sr ? new Promise(res => { R.srDone = res; try{ R.sr.stop(); }catch(e){ res(); } setTimeout(res, 1500); }) : Promise.resolve();
@@ -1802,12 +1814,13 @@ function stopRecording(cancel){
     if(dur < 0.7){ App.toast('Áudio muito curto.'); return; }
     const type = (R.rec.mimeType || 'audio/webm').split(';')[0];
     const blob = new Blob(R.chunks, { type });
+    if(!blob.size){ App.toast('O áudio saiu vazio. Confira o microfone em Configurações → Voz e vídeo.', true); return; }
     const n = 40, step = Math.max(1, Math.floor(R.peaks.length / n));
     const wave = Array.from({ length: n }, (_, i) => Math.round(Math.max(...R.peaks.slice(i*step, i*step+step).concat([2])) / 2.2));
     const file = new File([blob], 'mensagem-de-voz.' + (type.includes('mp4') ? 'm4a' : type.includes('ogg') ? 'ogg' : 'webm'), { type });
     sendMessage([{ file, preview: null, voice: true, dur, wave, text }]);
   };
-  R.rec.stop();
+  try{ R.rec.state !== 'inactive' ? R.rec.stop() : R.rec.onstop(); }catch(e){ R.rec.onstop(); }
 }
 
 /* ---------- autocompletar @menções e :emojis: ---------- */
@@ -1980,6 +1993,7 @@ function sendToUser(uid, event, payload){
 /* toque de chamada */
 let ringTimer = null;
 async function onRing(pl){
+  if(pl && S.blocked && S.blocked.has(pl.from)) return;   // v6.25: pessoa bloqueada não toca
   if(Voice.channel && Voice.channel.id === pl.channel_id) return;
   if(!privOf(pl.channel_id)) await (pl.group ? loadGroups() : loadDms());
   await ensureProfiles([pl.from]);
@@ -10433,6 +10447,95 @@ App.registerGame('truco', { name: 'Truco', icon: '🃏', desc: 'Truco paulista c
     if(k === 'tresp'){ J.act({ a: 'tresp', r: b.dataset.r }); return true; }
   },
 });
+/* =====================================================================
+   v6.25: BLOQUEAR PESSOAS
+   Quem você bloqueia não consegue te mandar DM, ligar ou pedir amizade. As mensagens dela
+   nos servidores ficam escondidas (dá para mostrar uma por uma).
+   ===================================================================== */
+S.blocked = new Set();
+const BLK_SQL = 'Para bloquear pessoas, rode o supabase.sql novo (v6.25) no Supabase.';
+async function loadBlocks(){
+  try{
+    const { data, error } = await App.sb.from('user_blocks').select('blocked');
+    if(!error) S.blocked = new Set((data || []).map(r => r.blocked));
+  }catch(e){}
+}
+const _loadDmsBlk = loadDms;
+loadDms = async function(){ await loadBlocks(); return _loadDmsBlk.apply(this, arguments); };
+App.isBlocked = uid => S.blocked.has(uid);
+
+async function blockUser(uid){
+  const p = prof(uid);
+  if(!(await confirmBox('Bloquear ' + p.display_name + '?', `<b>${esc(p.display_name)}</b> não vai conseguir te mandar mensagem direta, te ligar nem te adicionar. A amizade de vocês é desfeita e as mensagens dela nos servidores ficam escondidas para você. Ela não recebe nenhum aviso.`, 'Bloquear'))) return;
+  const { error } = await App.sb.from('user_blocks').insert({ blocked: uid });
+  if(error && !/duplicate/i.test(error.message)){ App.toast(/user_blocks|does not exist|schema cache/i.test(error.message) ? BLK_SQL : error.message, true); return; }
+  S.blocked.add(uid);
+  if(Voice.channel && Voice.channel.kind === 'dm' && dmOther(Voice.channel) === uid) leaveVoice();
+  const d = S.dms.find(x => dmOther(x) === uid); if(d){ S.unread.delete(d.id); saveUnread(); }
+  await loadFriends();
+  App.toast(p.display_name + ' foi bloqueado.');
+  renderAll();
+}
+async function unblockUser(uid){
+  const p = prof(uid);
+  const { error } = await App.sb.from('user_blocks').delete().eq('blocker', S.me.id).eq('blocked', uid);
+  if(error){ App.toast(error.message, true); return; }
+  S.blocked.delete(uid);
+  App.toast(p.display_name + ' foi desbloqueado.');
+  renderAll(); if(SET && SET.sec === 'privacy') renderSettings();
+}
+App.blockUser = blockUser; App.unblockUser = unblockUser;
+
+// menu do perfil
+const _userMenuExtraBlk = App.userMenuExtra;
+App.userMenuExtra = uid => {
+  const base = _userMenuExtraBlk ? _userMenuExtraBlk(uid) : [];
+  if(uid === S.me.id || uid === '7e1a0000-0000-4000-a000-000000000001') return base;
+  return base.concat(S.blocked.has(uid)
+    ? [{ label: 'Desbloquear', icon: ic('minusCircle', 18), onClick: () => unblockUser(uid) }]
+    : [{ label: 'Bloquear', icon: ic('minusCircle', 18), danger: true, onClick: () => blockUser(uid) }]);
+};
+
+// conversa com alguém bloqueado: sem caixa de mensagem
+const _renderMainBlk = renderMain;
+renderMain = function(){
+  _renderMainBlk.apply(this, arguments);
+  const r = S.route; if(r.kind !== 'home' || !r.dm) return;
+  const d = S.dms.find(x => x.id === r.dm); if(!d) return;
+  const o = dmOther(d);
+  const f = $('#cmpF'); if(!f) return;
+  if(!S.blocked.has(o)){ $('#blkBar')?.remove(); f.classList.remove('hidden'); return; }
+  f.classList.add('hidden');
+  if(!$('#blkBar')) f.insertAdjacentHTML('afterend', `<div class="blkbar" id="blkBar">${ic('minusCircle', 16)}<span>Você bloqueou <b>${esc(prof(o).display_name)}</b>. Vocês não conseguem trocar mensagens nem se ligar.</span><button class="btn sec sm" id="blkUn">Desbloquear</button></div>`);
+  $('#blkUn').onclick = () => unblockUser(o);
+};
+// ligar para alguém bloqueado
+const _joinVoiceBlk = joinVoice;
+joinVoice = async function(ch){
+  if(ch && ch.kind === 'dm' && S.blocked.has(dmOther(ch))){ App.toast('Você bloqueou essa pessoa. Desbloqueie para ligar.', true); return; }
+  return _joinVoiceBlk.apply(this, arguments);
+};
+// "mostrar" mensagem escondida
+document.addEventListener('click', e => {
+  const a = e.target.closest('[data-showblk]'); if(!a) return;
+  e.preventDefault(); (M.showBlk ||= new Set()).add(a.dataset.showblk); renderMsgList(false);
+});
+
+// Configurações → Privacidade: lista de bloqueados
+const _secPrivacyBlk = secPrivacy;
+secPrivacy = function(box, back){
+  _secPrivacyBlk(box, back);
+  box.insertAdjacentHTML('beforeend', `<hr class="sdiv"><h3>Pessoas bloqueadas</h3><div id="blkList"><div class="spin" style="margin:10px 0"></div></div>`);
+  (async () => {
+    await loadBlocks();
+    const ids = [...S.blocked]; await ensureProfiles(ids);
+    const el = box.querySelector('#blkList'); if(!el) return;
+    el.innerHTML = ids.length ? ids.map(id => `<div class="blkrow">${avatar(prof(id), 'sm')}<div><b>${esc(prof(id).display_name)}</b><small>@${esc(prof(id).username)}</small></div><button class="btn sec sm" data-unblk="${id}">Desbloquear</button></div>`).join('')
+      : '<p class="mut small">Ninguém bloqueado. Para bloquear, clique no nome ou na foto da pessoa e escolha <b>Bloquear</b>.</p>';
+    el.querySelectorAll('[data-unblk]').forEach(b => b.onclick = () => unblockUser(b.dataset.unblk));
+  })();
+};
+App.openSettings = openSettings;
 /* ---------------- PWA ---------------- */
 window.addEventListener('beforeinstallprompt', e => {
   e.preventDefault(); if(window.telaoDesktop) return; S.installEvt = e;

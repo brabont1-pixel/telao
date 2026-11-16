@@ -323,6 +323,8 @@ function msgHtml(m, prev){
   let pre = '';
   if(!prev || new Date(prev.created_at).toDateString() !== day) pre += `<div class="daysep"><span>${fmtDay(m.created_at)}</span></div>`;
   if(M.readAt && m.created_at > M.readAt && (!prev || prev.created_at <= M.readAt) && m.author_id !== S.me.id) pre += `<div class="newsep"><span>novas mensagens</span></div>`;
+  if(S.blocked && S.blocked.has(m.author_id) && !(M.showBlk && M.showBlk.has(m.id)))
+    return `${pre}<div class="msg first blkmsg" data-m="${m.id}"><div class="blkline">${ic('eyeOff', 14)} Mensagem de alguém que você bloqueou · <a data-showblk="${m.id}">mostrar</a></div></div>`;
   const grouped = !pre && prev && !m.reply_to && prev.author_id === m.author_id && (new Date(m.created_at) - new Date(prev.created_at)) < 7*60*1000;
   const p = prof(m.author_id), mine = m.author_id === S.me.id;
   const time = new Date(m.created_at).toLocaleTimeString('pt-BR',{hour:'2-digit',minute:'2-digit'});
@@ -718,21 +720,31 @@ async function startRecording(){
   if(M.rec) return;
   if(!window.MediaRecorder){ App.toast('Seu navegador não grava áudio.', true); return; }
   let stream;
-  try{ stream = await navigator.mediaDevices.getUserMedia({ audio:{ echoCancellation:true, noiseSuppression:true } }); }
-  catch(e){ App.toast('Sem acesso ao microfone.', true); return; }
-  const mime = ['audio/webm;codecs=opus','audio/ogg;codecs=opus','audio/mp4'].find(t => MediaRecorder.isTypeSupported(t)) || '';
-  const rec = new MediaRecorder(stream, mime ? { mimeType: mime, audioBitsPerSecond: 48000 } : {});
+  M.rec = { pending: true };
+  try{
+    const dev = P.inputId ? { deviceId: { ideal: P.inputId } } : {};   // usa o mesmo microfone escolhido para as chamadas
+    try{ stream = await navigator.mediaDevices.getUserMedia({ audio:{ ...dev, echoCancellation:true, noiseSuppression:true } }); }
+    catch(e){ stream = await navigator.mediaDevices.getUserMedia({ audio: true }); }
+  }catch(e){ M.rec = null; App.toast('Sem acesso ao microfone: ' + (e.message || e.name || e), true); return; }
+  const mime = ['audio/webm;codecs=opus','audio/ogg;codecs=opus','audio/mp4'].find(t => { try{ return MediaRecorder.isTypeSupported(t); }catch(e){ return false; } }) || '';
+  let rec;
+  try{ rec = new MediaRecorder(stream, mime ? { mimeType: mime, audioBitsPerSecond: 48000 } : {}); }
+  catch(e){ try{ rec = new MediaRecorder(stream); }catch(e2){ stream.getTracks().forEach(t => t.stop()); M.rec = null; App.toast('Não deu para gravar: ' + (e2.message || e2), true); return; } }
   const chunks = [], peaks = [];
   const ctx = new (window.AudioContext || window.webkitAudioContext)(), an = ctx.createAnalyser(); an.fftSize = 256;
   ctx.createMediaStreamSource(stream).connect(an); const buf = new Uint8Array(an.fftSize);
   const t0 = Date.now();
   M.rec = { rec, stream, ctx, chunks, peaks, t0, cancel:false };
   rec.ondataavailable = e => e.data.size && chunks.push(e.data);
-  rec.start(250);
+  rec.onerror = e => { App.toast('A gravação parou: ' + ((e.error && e.error.message) || 'erro no microfone'), true); stopRecording(true); };
+  try{ rec.start(250); }catch(e){ stream.getTracks().forEach(t => t.stop()); ctx.close().catch(()=>{}); M.rec = null; App.toast('Não deu para gravar: ' + (e.message || e), true); return; }
   // transcrição ao vivo (reconhecimento de voz do navegador, quando existe)
   const R0 = M.rec, SRc = window.SpeechRecognition || window.webkitSpeechRecognition;
   R0.fin = ''; R0.inter = '';
-  if(SRc && P.voiceText !== false){
+  // no app do Windows (Electron) o reconhecimento do navegador não existe de verdade: ele fica dando erro e
+  // reabrindo o microfone sem parar, o que atrapalhava a gravação. Lá o texto sai pelo botão "Transcrever".
+  const DESK = /Electron/i.test(navigator.userAgent) || !!window.telaoDesktop;
+  if(SRc && P.voiceText !== false && !DESK){
     try{
       const sr = new SRc(); sr.continuous = true; sr.interimResults = true; sr.lang = ({ en:'en-US', es:'es-ES' })[P.lang] || 'pt-BR';
       sr.onresult = e => {
@@ -741,8 +753,8 @@ async function startRecording(){
         R0.fin = (R0.base || '') + fin; R0.inter = inter;
         const tx = $('#recTx'); if(tx && M.rec === R0) tx.textContent = (R0.fin + R0.inter).trim().slice(-90);
       };
-      sr.onend = () => { if(M.rec === R0){ R0.base = R0.fin; try{ sr.start(); }catch(e){} } else if(R0.srDone) R0.srDone(); };
-      sr.onerror = () => {};
+      sr.onend = () => { if(M.rec === R0 && !R0.srDead){ R0.base = R0.fin; setTimeout(() => { if(M.rec === R0 && !R0.srDead) try{ sr.start(); }catch(e){} }, 250); } else if(R0.srDone) R0.srDone(); };
+      sr.onerror = ev => { if(ev.error !== 'no-speech' && ev.error !== 'aborted') R0.srDead = true; };
       sr.start(); R0.sr = sr;
     }catch(e){}
   }
@@ -759,7 +771,7 @@ async function startRecording(){
   }, 100);
 }
 function stopRecording(cancel){
-  const R = M.rec; if(!R) return; M.rec = null;
+  const R = M.rec; if(!R || R.pending) return; M.rec = null;
   clearInterval(R.timer);
   const bar = $('#recBar'); if(bar){ bar.classList.add('hidden'); bar.innerHTML = ''; } const f = $('#cmpF'); if(f) f.classList.remove('hidden');
   const srEnd = R.sr ? new Promise(res => { R.srDone = res; try{ R.sr.stop(); }catch(e){ res(); } setTimeout(res, 1500); }) : Promise.resolve();
@@ -772,12 +784,13 @@ function stopRecording(cancel){
     if(dur < 0.7){ App.toast('Áudio muito curto.'); return; }
     const type = (R.rec.mimeType || 'audio/webm').split(';')[0];
     const blob = new Blob(R.chunks, { type });
+    if(!blob.size){ App.toast('O áudio saiu vazio. Confira o microfone em Configurações → Voz e vídeo.', true); return; }
     const n = 40, step = Math.max(1, Math.floor(R.peaks.length / n));
     const wave = Array.from({ length: n }, (_, i) => Math.round(Math.max(...R.peaks.slice(i*step, i*step+step).concat([2])) / 2.2));
     const file = new File([blob], 'mensagem-de-voz.' + (type.includes('mp4') ? 'm4a' : type.includes('ogg') ? 'ogg' : 'webm'), { type });
     sendMessage([{ file, preview: null, voice: true, dur, wave, text }]);
   };
-  R.rec.stop();
+  try{ R.rec.state !== 'inactive' ? R.rec.stop() : R.rec.onstop(); }catch(e){ R.rec.onstop(); }
 }
 
 /* ---------- autocompletar @menções e :emojis: ---------- */

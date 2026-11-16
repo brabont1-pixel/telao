@@ -436,3 +436,10 @@ O "Spotify direto" (com Ouvir junto) continua opcional e só aparece se você co
 - **Configurações do servidor no celular** abrem na lista de opções (Visão geral, Cargos, Canais, Emojis…). Antes ficava preso na Visão geral. O "Voltar" de qualquer seção volta para a lista; o X fecha.
 - **O Telão começa sempre em português.** Antes, celular configurado em inglês deixava algumas palavras em inglês ("Server name", "Remove"). Para trocar de idioma, use Configurações → Idioma.
 - **Foto de quem mandou DM na barra da esquerda** agora fica redonda e certinha, com a moldura animada em volta (quando a pessoa tem) e uma bolinha rosa de mensagem nova.
+
+# Versão 6.25: bloquear pessoas e áudio no app do Windows
+
+**Precisa rodar o `supabase.sql` novo no Supabase.**
+
+- **Bloquear:** clique no nome ou na foto da pessoa → **Bloquear**. Ela não consegue te mandar DM, te ligar nem te pedir amizade (a amizade é desfeita), e não recebe aviso nenhum. Na conversa com ela aparece "Você bloqueou…" com o botão Desbloquear. Nos servidores, as mensagens dela ficam escondidas para você ("mostrar" revela uma por uma). A lista de bloqueados fica em Configurações → Privacidade.
+- **Mensagem de voz no app do Windows** voltou a funcionar: o app não liga mais o reconhecimento de voz do navegador (que lá não funciona e atrapalhava o microfone) e grava com o mesmo microfone escolhido para as chamadas. O texto do áudio sai pelo botão "Transcrever".

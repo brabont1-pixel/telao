@@ -45,6 +45,7 @@ function sendToUser(uid, event, payload){
 /* toque de chamada */
 let ringTimer = null;
 async function onRing(pl){
+  if(pl && S.blocked && S.blocked.has(pl.from)) return;   // v6.25: pessoa bloqueada não toca
   if(Voice.channel && Voice.channel.id === pl.channel_id) return;
   if(!privOf(pl.channel_id)) await (pl.group ? loadGroups() : loadDms());
   await ensureProfiles([pl.from]);
