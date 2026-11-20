@@ -2158,3 +2158,82 @@ body.perf-game,body.perf-low{background-image:none}
   body:not(.m-main) #rail .rfold{flex-direction:row;padding:0}
   body:not(.m-main) #rail .ricon .badge,body:not(.m-main) #rail .ricon .rvoice{border-color:var(--panel)}
 }
+/* v6.27: status no perfil */
+.pscall{display:flex;align-items:center;gap:10px;padding:10px;border-radius:10px;background:rgba(0,0,0,.25)}
+.pscic{width:36px;height:36px;border-radius:10px;display:flex;align-items:center;justify-content:center;background:rgba(124,255,107,.15);color:#7cff6b}
+.pscall>div{display:flex;flex-direction:column;min-width:0}.pscall small{color:var(--txt3);font-size:12px}
+/* v6.27: roleta */
+.rltabs{display:flex;gap:6px;margin-bottom:12px}.rltabs button{flex:1;padding:9px;border-radius:10px;background:var(--bg1);border:1px solid var(--line);font-weight:700}.rltabs button.on{border-color:var(--pink,#ff2e9a);background:rgba(255,46,154,.12)}
+.rlov{position:fixed;inset:0;z-index:600;display:flex;align-items:center;justify-content:center;background:rgba(6,4,10,.6);backdrop-filter:blur(3px);animation:fadeIn .2s}
+.rlbox{display:flex;flex-direction:column;align-items:center;gap:12px;padding:20px;max-width:94vw}
+.rlhead{color:#fff;font-size:16px;text-align:center;text-shadow:0 2px 8px #000}
+.rlwheel{position:relative;width:min(420px,80vw);aspect-ratio:1}.rlwheel canvas{width:100%;height:100%;filter:drop-shadow(0 10px 40px rgba(255,46,154,.35))}
+.rlptr{position:absolute;left:50%;top:-6px;transform:translateX(-50%);width:0;height:0;border-left:16px solid transparent;border-right:16px solid transparent;border-top:30px solid #fff;filter:drop-shadow(0 2px 4px #000)}
+.rlhub{position:absolute;left:50%;top:50%;transform:translate(-50%,-50%);width:58px;height:58px;border-radius:50%;background:#16121c;border:4px solid #fff;display:flex;align-items:center;justify-content:center;font-size:24px}
+.rlres{min-height:44px;font-size:28px;color:#fff;opacity:0;transform:scale(.6);transition:all .35s cubic-bezier(.3,1.6,.5,1)}.rlres.on{opacity:1;transform:none}
+.rlteams{display:grid;grid-template-columns:repeat(auto-fit,minmax(160px,1fr));gap:12px;width:min(720px,92vw)}
+.rlteam{padding:14px;border-radius:14px;background:#16121c;border:2px solid var(--tc);display:flex;flex-direction:column;gap:6px;animation:rlpop .4s both}.rlteam h4{margin:0;color:var(--tc)}.rlteam span{color:#fff;font-weight:600}
+@keyframes rlpop{from{opacity:0;transform:translateY(20px) scale(.9)}}
+/* v6.27: modo streamer */
+body.streamer #aMail,body.streamer .copyrow input,body.streamer .codebig,body.streamer #ivL,body.streamer .invcode,body.streamer [data-sens]{filter:blur(7px);user-select:none;pointer-events:none}
+body.streamer #aShow{display:none}
+.stpill{position:fixed;top:10px;left:50%;transform:translateX(-50%);z-index:90;display:flex;align-items:center;gap:8px;padding:6px 14px;border-radius:20px;background:#a970ff;color:#fff;font-size:12px;font-weight:900;letter-spacing:.06em;box-shadow:0 6px 20px rgba(169,112,255,.4)}
+.stpill .dot{width:8px;height:8px;border-radius:50%;background:#fff;animation:pulse 1.4s infinite}
+.stpill small{font-weight:600;letter-spacing:0;opacity:.8}
+.stbox h3{margin-top:0}
+/* v6.27: denúncias */
+.rpquote{display:flex;flex-direction:column;gap:2px;padding:10px 12px;border-left:3px solid var(--pink,#ff2e9a);background:var(--bg1);border-radius:8px;margin-bottom:12px;font-size:14px}
+.rpreasons{display:flex;flex-direction:column;gap:6px;margin-bottom:12px}
+.rpreasons label{display:flex;align-items:center;gap:10px;padding:10px 12px;border-radius:10px;border:1px solid var(--line);background:var(--bg1);cursor:pointer;font-weight:600}
+.rpreasons label:has(input:checked){border-color:var(--pink,#ff2e9a);background:rgba(255,46,154,.1)}.rpreasons input{accent-color:var(--pink,#ff2e9a)}
+.rplist{display:flex;flex-direction:column;gap:12px;margin-top:12px}
+.rpcard{padding:14px;border-radius:14px;background:var(--bg1);border:1px solid var(--line);display:flex;flex-direction:column;gap:10px}.rpcard.done{opacity:.7}
+.rptop{display:flex;align-items:center;gap:10px}.rptop>div{display:flex;flex-direction:column}.rptop small{color:var(--txt3);font-size:12px}
+.rpn{font-size:12px;font-weight:800;color:#ff8f8f;background:rgba(255,92,92,.12);padding:3px 9px;border-radius:20px}
+.rpmsg{padding:10px 12px;border-radius:10px;background:var(--bg0,#0d0b12);font-size:14px;white-space:pre-wrap;word-break:break-word}
+.rpatt{display:flex;gap:6px;margin-top:8px;flex-wrap:wrap}.rpatt img{height:80px;border-radius:8px}
+.rpreas{display:flex;gap:6px;flex-wrap:wrap}.rptag{font-size:12px;padding:3px 9px;border-radius:20px;background:var(--bg3);font-weight:700}
+.rpdet{font-size:13px;color:var(--txt2);font-style:italic}
+.rpact{display:flex;gap:6px;flex-wrap:wrap;align-items:center}.rpdone{font-size:13px;color:var(--txt3)}
+.navcount{display:inline-flex;min-width:18px;height:18px;padding:0 5px;border-radius:9px;background:#ff5c5c;color:#fff;font-size:11px;font-weight:900;align-items:center;justify-content:center;margin-left:6px}
+/* v6.27: sons do servidor */
+.ssnform{display:flex;gap:8px;align-items:center;flex-wrap:wrap;margin:10px 0 4px}
+.ssnlist{display:flex;flex-direction:column;gap:6px;margin-top:14px}
+.ssnrow{display:flex;align-items:center;gap:10px;padding:8px 10px;border-radius:10px;background:var(--bg1)}.ssnrow .sse{font-size:20px}.ssnrow .range.sm{width:90px}
+.actsec .lnk{margin-left:auto;font-size:12px;color:var(--pink,#ff2e9a);font-weight:700;background:none}
+/* v6.27: forca */
+.gforca{margin:auto;width:100%;max-width:680px;padding:18px;display:flex;flex-direction:column;align-items:center;gap:12px;text-align:center}
+.fcwrap{display:flex;align-items:center;gap:20px;flex-wrap:wrap;justify-content:center}.fcgal{width:150px;height:140px}
+.fcright{display:flex;flex-direction:column;gap:10px;align-items:center}
+.fcword{display:flex;gap:6px;flex-wrap:wrap;justify-content:center}.fcl{width:30px;height:40px;border-bottom:3px solid #fff;display:flex;align-items:flex-end;justify-content:center;font:900 26px var(--hf);color:#fff}.fcl.on{animation:rlpop .3s}.fcsp{width:16px}
+.fclives{font-size:18px;letter-spacing:2px}.fcres{font-size:16px;color:#fff}
+.fckeys{display:grid;grid-template-columns:repeat(13,1fr);gap:5px;width:100%;max-width:560px}
+.fck{padding:8px 0;border-radius:8px;background:rgba(255,255,255,.08);color:#fff;font-weight:800}.fck:not(:disabled):hover{background:rgba(255,255,255,.18)}.fck.ok{background:#2e7d32}.fck.no{background:#5a2330;opacity:.6}
+@media(max-width:600px){.fckeys{grid-template-columns:repeat(7,1fr)}}
+/* v6.27: batalha naval */
+.gnaval{margin:auto;width:100%;max-width:900px;padding:16px;display:flex;flex-direction:column;align-items:center;gap:12px;text-align:center}
+.nvboards{display:flex;gap:24px;flex-wrap:wrap;justify-content:center}.nvboards h4{margin:0 0 6px;color:#fff}.nvboards h4 small{color:var(--txt3);font-weight:600}
+.nvgrid{display:grid;grid-template-columns:18px repeat(8,clamp(26px,4.2vw,36px));gap:3px}
+.nvh{font-size:11px;color:var(--txt3);display:flex;align-items:center;justify-content:center;font-weight:800}
+.nvc{aspect-ratio:1;border-radius:6px;background:rgba(46,230,255,.12);border:1px solid rgba(46,230,255,.18);color:#fff;font-size:14px;display:flex;align-items:center;justify-content:center;padding:0}
+.nvc.ship{background:#6b7486;border-color:#8a93a6}.nvc.miss{color:#9ad7ff;background:rgba(46,230,255,.05)}.nvc.hit{background:#b23b3b}.nvc.sunk{background:#4a1520;border-color:#ff5c5c}
+button.nvc:not(:disabled){cursor:crosshair}button.nvc:not(:disabled):hover{background:rgba(255,46,154,.35)}
+.nvturn{padding:8px 14px;border-radius:20px;background:rgba(255,255,255,.08);color:#fff}.nvturn.me{background:var(--pink,#ff2e9a);font-weight:800;animation:pulse 1.5s infinite}
+.nvcaps{display:flex;gap:14px;align-items:center;color:#fff}.nvcaps span{display:flex;gap:6px;align-items:center}
+/* v6.27: quiz de música */
+.mqgen{display:flex;flex-wrap:wrap;gap:6px;justify-content:center;margin:6px 0}
+.mqdisc{width:110px;height:110px;border-radius:50%;background:radial-gradient(circle,#2a2433 18%,#111 19%,#222 60%,#111 61%);display:flex;align-items:center;justify-content:center;font-size:30px;overflow:hidden}
+.mqdisc.spin2{animation:spin 3s linear infinite}.mqdisc.show{border-radius:14px}.mqdisc img{width:100%;height:100%;object-fit:cover}
+.gmus h2 small{display:block;font-size:14px;color:var(--txt3);font-weight:600}
+.mqa{display:block;font-size:12px;opacity:.75;font-weight:600}
+/* v6.27: telefone sem fio */
+.gtel{margin:auto;width:100%;max-width:720px;padding:16px;display:flex;flex-direction:column;align-items:center;gap:12px;text-align:center}
+.gtel h3{margin:0;color:#fff}.telp{color:#ff62b4}
+.telcvhost{width:100%;max-width:640px}.telcv{width:100%;aspect-ratio:640/440;background:#fff;border-radius:12px;touch-action:none;cursor:crosshair;display:block}
+.telimg{width:100%;max-width:520px;border-radius:12px;background:#fff}
+.telblank{padding:30px;border-radius:12px;border:2px dashed var(--line);color:var(--txt3)}
+.telprog{display:flex;gap:4px;flex-wrap:wrap;justify-content:center}.telprog span{opacity:.35}.telprog span.ok{opacity:1}
+.telchain{display:flex;flex-direction:column;gap:10px;width:100%;max-width:560px}
+.telit{padding:10px;border-radius:12px;background:rgba(255,255,255,.05);display:flex;flex-direction:column;gap:8px;align-items:center}.telit.new{animation:rlpop .4s}
+.telit img{width:100%;border-radius:10px;background:#fff}.telwho{display:flex;gap:6px;align-items:center;font-size:13px;color:var(--txt2)}
+.teltxt{font-size:20px;font-weight:800;color:#fff}

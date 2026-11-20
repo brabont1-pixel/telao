@@ -329,6 +329,7 @@ function renderGame(){
     const lb = G.lb[st.game] || [];
     body = `<div class="globby"><div class="gicon">${info.icon}</div><h2>${info.name}</h2><p>${info.desc}</p>
       <div class="gplayers">${st.players.map(u => `<span class="gpl">${avatar(prof(u), 'sm')}<span>${nm(u)}${u === st.host ? ' 👑' : ''}</span></span>`).join('')}</div>
+      ${GAME_EXT[st.game] && GAME_EXT[st.game].lobby ? GAME_EXT[st.game].lobby(st) : ''}
       <div class="gacts">${inGame ? '' : `<button class="btn" data-g="join">Entrar no jogo</button>`}
         ${amHost() ? `<button class="btn ok big" data-g="start" ${st.players.length < info.min ? 'disabled' : ''}>Começar (${st.players.length})</button><button class="btn sec" data-g="invite">Chamar todo mundo da call</button>` : `<span class="mut small">Esperando ${nm(st.host)} começar…</span>`}</div>
       ${st.players.length < info.min ? `<p class="mut small">Precisa de pelo menos ${info.min} pessoas.</p>` : ''}

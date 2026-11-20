@@ -2358,7 +2358,7 @@ grant execute on function public.feed_view(uuid), public.feed_list(text, uuid, t
 
 -- v6.21: jogos novos no ranking
 alter table public.game_scores drop constraint if exists game_scores_game_check;
-alter table public.game_scores add constraint game_scores_game_check check (game in ('rabisco','quiz','provavel','stop','quemsou','truco'));
+alter table public.game_scores add constraint game_scores_game_check check (game in ('rabisco','quiz','provavel','stop','quemsou','truco','forca','naval','musica','telefone'));
 
 -- =====================================================================
 -- v6.23: FEED COM ATÉ 5 CLIPES POR POST e SELO DE VERIFICADO (100 seguidores)
@@ -2538,6 +2538,112 @@ drop trigger if exists friend_block_guard on public.friendships;
 create trigger friend_block_guard before insert or update on public.friendships for each row execute function public.friend_block_guard();
 grant select, insert, delete on public.user_blocks to authenticated;
 grant execute on function public.is_blocked_between(uuid, uuid) to authenticated;
+
+-- =====================================================================
+-- v6.27: SONS DO SERVIDOR (soundboard) e DENÚNCIAS
+-- =====================================================================
+create table if not exists public.server_sounds (
+  id uuid primary key default gen_random_uuid(),
+  server_id uuid not null references public.servers(id) on delete cascade,
+  name text not null check (char_length(name) between 1 and 24),
+  emoji text check (emoji is null or char_length(emoji) <= 8),
+  url text not null check (url ~ '^https://'),
+  volume real not null default 1 check (volume between 0.1 and 1),
+  created_by uuid not null default auth.uid() references public.profiles(id) on delete cascade,
+  created_at timestamptz not null default now()
+);
+create index if not exists server_sounds_srv on public.server_sounds (server_id);
+alter table public.server_sounds enable row level security;
+drop policy if exists "membros veem sons" on public.server_sounds;
+create policy "membros veem sons" on public.server_sounds for select to authenticated using (public.is_member(server_id));
+drop policy if exists "quem gerencia emojis envia sons" on public.server_sounds;
+create policy "quem gerencia emojis envia sons" on public.server_sounds for insert to authenticated
+  with check (created_by = auth.uid() and (public.has_perm(server_id, 512) or public.has_perm(server_id, 2)));
+drop policy if exists "quem gerencia emojis muda sons" on public.server_sounds;
+create policy "quem gerencia emojis muda sons" on public.server_sounds for update to authenticated
+  using (public.has_perm(server_id, 512) or public.has_perm(server_id, 2)) with check (public.has_perm(server_id, 512) or public.has_perm(server_id, 2));
+drop policy if exists "quem gerencia emojis apaga sons" on public.server_sounds;
+create policy "quem gerencia emojis apaga sons" on public.server_sounds for delete to authenticated
+  using (public.has_perm(server_id, 512) or public.has_perm(server_id, 2));
+create or replace function public.server_sounds_limit() returns trigger language plpgsql security definer set search_path = public as $$
+begin
+  if (select count(*) from server_sounds where server_id = new.server_id) >= 24 then raise exception 'Este servidor já tem 24 sons. Apague um antes.'; end if;
+  return new;
+end $$;
+drop trigger if exists server_sounds_limit on public.server_sounds;
+create trigger server_sounds_limit before insert on public.server_sounds for each row execute function public.server_sounds_limit();
+grant select, insert, update, delete on public.server_sounds to authenticated;
+
+create table if not exists public.message_reports (
+  id uuid primary key default gen_random_uuid(),
+  message_id uuid references public.messages(id) on delete set null,
+  server_id uuid references public.servers(id) on delete cascade,
+  channel_id uuid,
+  reporter uuid not null default auth.uid() references public.profiles(id) on delete cascade,
+  author_id uuid references public.profiles(id) on delete set null,
+  content text,
+  attachments jsonb,
+  reason text not null check (reason in ('spam','ofensa','assedio','nsfw','golpe','outro')),
+  details text check (details is null or char_length(details) <= 500),
+  status text not null default 'open' check (status in ('open','resolved','dismissed')),
+  action text,
+  resolved_by uuid references public.profiles(id) on delete set null,
+  resolved_at timestamptz,
+  created_at timestamptz not null default now()
+);
+create unique index if not exists message_reports_once on public.message_reports (message_id, reporter);
+create index if not exists message_reports_srv on public.message_reports (server_id, status, created_at desc);
+alter table public.message_reports enable row level security;
+create or replace function public.can_mod_reports(sid uuid) returns boolean
+language sql stable security definer set search_path = public as $$
+  select case when sid is null then public.is_admin_user() else public.has_perm(sid, 8) or public.has_perm(sid, 64) end;
+$$;
+drop policy if exists "ver denúncias" on public.message_reports;
+create policy "ver denúncias" on public.message_reports for select to authenticated
+  using (reporter = auth.uid() or public.can_mod_reports(server_id));
+drop policy if exists "denunciar" on public.message_reports;
+create policy "denunciar" on public.message_reports for insert to authenticated with check (reporter = auth.uid());
+-- quem denuncia só manda message_id, motivo e detalhes; o resto vem do banco (foto da mensagem na hora)
+create or replace function public.message_reports_fill() returns trigger
+language plpgsql security definer set search_path = public as $$
+declare m messages; c channels;
+begin
+  new.reporter := auth.uid();
+  select * into m from messages where id = new.message_id;
+  if m.id is null or not public.can_access_channel(m.channel_id) then raise exception 'Mensagem não encontrada.'; end if;
+  if m.author_id = auth.uid() then raise exception 'Você não pode denunciar a própria mensagem.'; end if;
+  if (select count(*) from message_reports where reporter = auth.uid() and created_at > now() - interval '1 day') >= 20 then
+    raise exception 'Você já fez muitas denúncias hoje. Tente amanhã.';
+  end if;
+  select * into c from channels where id = m.channel_id;
+  new.server_id := c.server_id; new.channel_id := m.channel_id; new.author_id := m.author_id;
+  new.content := left(m.content, 4000);
+  new.attachments := (select to_jsonb(m) -> 'attachments');
+  new.status := 'open'; new.action := null; new.resolved_by := null; new.resolved_at := null; new.created_at := now();
+  return new;
+end $$;
+drop trigger if exists message_reports_fill on public.message_reports;
+create trigger message_reports_fill before insert on public.message_reports for each row execute function public.message_reports_fill();
+create or replace function public.resolve_report(p_id uuid, p_status text, p_action text default null) returns void
+language plpgsql security definer set search_path = public as $$
+declare r message_reports;
+begin
+  select * into r from message_reports where id = p_id;
+  if r.id is null then raise exception 'Denúncia não encontrada.'; end if;
+  if not public.can_mod_reports(r.server_id) then raise exception 'Sem permissão.'; end if;
+  if p_status not in ('open','resolved','dismissed') then raise exception 'Status inválido.'; end if;
+  -- resolve todas as denúncias da mesma mensagem de uma vez
+  update message_reports set status = p_status, action = left(p_action, 60),
+    resolved_by = case when p_status = 'open' then null else auth.uid() end,
+    resolved_at = case when p_status = 'open' then null else now() end
+  where (r.message_id is not null and message_id = r.message_id) or id = r.id;
+end $$;
+grant select, insert on public.message_reports to authenticated;
+grant execute on function public.can_mod_reports(uuid), public.resolve_report(uuid, text, text) to authenticated;
+
+-- v6.27: jogos novos no ranking
+alter table public.game_scores drop constraint if exists game_scores_game_check;
+alter table public.game_scores add constraint game_scores_game_check check (game in ('rabisco','quiz','provavel','stop','quemsou','truco','forca','naval','musica','telefone'));
 
 -- impede trocar campos sensíveis via update
 create or replace function public.guard_updates() returns trigger

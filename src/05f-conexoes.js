@@ -235,9 +235,12 @@ async function spPoll(){
       const art = it.album ? (it.album.images || []).slice(-2)[0] : (it.images || [])[0];
       act = { type: 'spotify', id: it.id, uri: it.uri, track: it.name, artist: it.artists ? it.artists.map(a => a.name).join(', ') : (it.show && it.show.name) || '',
         album: it.album ? it.album.name : '', art: art ? art.url : null, url: it.external_urls && it.external_urls.spotify, start, end: start + (it.duration_ms || 0), playing: true };
+      // v6.27: jogando e ouvindo ao mesmo tempo
+      const g = (App.gameNow && App.gameNow()) || (S.manualAct && S.manualAct.type === 'playing' ? S.manualAct : null);
+      if(g) act.also = { type: 'playing', name: g.name, since: g.since || Date.now() };
     }
     const cur = S.me.activity && S.me.activity.type === 'spotify' ? S.me.activity : null;
-    const changed = act ? (!cur || cur.id !== act.id || Math.abs(cur.start - act.start) > 6000) : !!cur;
+    const changed = act ? (!cur || cur.id !== act.id || Math.abs(cur.start - act.start) > 6000 || ((cur.also && cur.also.name) || '') !== ((act.also && act.also.name) || '')) : !!cur;
     if(changed) await setActivity(act || S.manualAct || null, true);
   }catch(e){
     if(e.status === 429) return;

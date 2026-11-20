@@ -77,12 +77,22 @@
           const c = this.micConstraints(); delete c.audio.deviceId; raw = await navigator.mediaDevices.getUserMedia(c);
         } else throw e;
       }
-      return this.processMic(raw);
+      return await this.processMic(raw);
+    },
+    /* v6.27: supressão por IA (RNNoise). Baixa uma vez (~150 KB) e roda dentro do navegador. */
+    async rnnoise(ctx){
+      const base = 'https://cdn.jsdelivr.net/npm/@sapphi-red/web-noise-suppressor@0.3/dist/';
+      if(!this._rnLib) this._rnLib = import(base + 'index.js').catch(e => { this._rnLib = null; throw e; });
+      const lib = await this._rnLib;
+      if(!this._rnBin) this._rnBin = lib.loadRnnoise({ url: base + 'rnnoise.wasm', simdUrl: base + 'rnnoise_simd.wasm' }).catch(e => { this._rnBin = null; throw e; });
+      const bin = await this._rnBin;
+      await ctx.audioWorklet.addModule(base + 'rnnoise/workletProcessor.js');
+      return new lib.RnnoiseWorkletNode(ctx, { wasmBinary: bin, maxChannels: 1 });
     },
     /* cadeia de áudio: corta grave de vento/ventilador, nivela a voz e fecha o microfone no silêncio (portão de ruído) */
-    processMic(raw){
+    async processMic(raw){
       const P = this.prefs(), lvl = this.noiseLevel();
-      if(P.musicMode || lvl !== 'forte' || !(window.AudioContext || window.webkitAudioContext)) return raw;
+      if(P.musicMode || (lvl !== 'forte' && lvl !== 'ia') || !(window.AudioContext || window.webkitAudioContext)) return raw;
       try{
         const ctx = new (window.AudioContext || window.webkitAudioContext)({ sampleRate: 48000, latencyHint: 'interactive' });
         const src = ctx.createMediaStreamSource(raw);
@@ -93,7 +103,12 @@
         const gate = ctx.createGain(); gate.gain.value = 1;
         const an = ctx.createAnalyser(); an.fftSize = 1024; an.smoothingTimeConstant = 0;
         const dst = ctx.createMediaStreamDestination();
-        src.connect(hp).connect(hum).connect(pres).connect(comp).connect(gate).connect(dst);
+        let head = src;
+        if(lvl === 'ia'){
+          try{ const rn = await this.rnnoise(ctx); src.connect(rn); head = rn; this.rnOk = true; }
+          catch(e){ this.rnOk = false; console.warn('RNNoise indisponível, usando o filtro Forte', e); if(window.App && App.toast && !this._rnWarned){ this._rnWarned = true; App.toast('Não deu para carregar a supressão por IA agora. Usando a Forte.', true); } }
+        }
+        head.connect(hp).connect(hum).connect(pres).connect(comp).connect(gate).connect(dst);
         hp.connect(an);
         const buf = new Float32Array(an.fftSize);
         let floor = -60, open = false, holdUntil = 0;

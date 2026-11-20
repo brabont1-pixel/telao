@@ -364,7 +364,7 @@ async function onDesktopGame(name){
   const cur = S.me.activity;
   if(name){
     if(GM.prev === undefined) GM.prev = S.manualAct || null;
-    GM.name = name; GM.sess = null;
+    GM.name = name; GM.sess = null; GM.since = Date.now();
     if(!(cur && cur.type === 'spotify' && App.actOf(S.me))) await setActivity({ type: 'playing', name, since: Date.now(), auto: true }, true);
     const ping = async () => { const { data } = await App.sb.rpc('game_ping', { p_session: GM.sess, p_game: GM.name }); if(data) GM.sess = data; };
     ping(); clearInterval(GM.timer); GM.timer = setInterval(ping, 60000);
@@ -374,6 +374,7 @@ async function onDesktopGame(name){
     GM.prev = undefined;
   }
 }
+App.gameNow = () => GM.name ? { name: GM.name, since: GM.since } : null;
 if(window.telaoDesktop && window.telaoDesktop.onGame) window.telaoDesktop.onGame(g => onDesktopGame(g));
 const _secConnG = secConnections;
 secConnections = function(box, back){

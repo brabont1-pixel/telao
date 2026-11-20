@@ -267,7 +267,7 @@ function playSound(id){
   if(Voice.deafened) return;
   try{
     if(!fxCtx) fxCtx = new (window.AudioContext || window.webkitAudioContext)();
-    const c = fxCtx, out = c.createGain(); out.gain.value = 0.35; out.connect(c.destination);
+    const c = fxCtx, out = c.createGain(); out.gain.value = 0.35 * ((P.sbVol ?? 0.6) / 0.6); out.connect(c.destination);
     const t = c.currentTime;
     const tone = (f, s, d, type='sine', v=1, f2) => { const o = c.createOscillator(), g = c.createGain(); o.type = type; o.frequency.setValueAtTime(f, t+s); if(f2) o.frequency.exponentialRampToValueAtTime(f2, t+s+d); g.gain.setValueAtTime(0.0001, t+s); g.gain.exponentialRampToValueAtTime(v, t+s+0.015); g.gain.exponentialRampToValueAtTime(0.0001, t+s+d); o.connect(g).connect(out); o.start(t+s); o.stop(t+s+d+0.05); };
     const noise = (s, d, v=1, hp=0) => { const b = c.createBuffer(1, c.sampleRate*d, c.sampleRate), x = b.getChannelData(0); for(let i=0;i<x.length;i++) x[i] = (Math.random()*2-1) * (1 - i/x.length); const n = c.createBufferSource(); n.buffer = b; const g = c.createGain(); g.gain.value = v; let node = n; if(hp){ const f = c.createBiquadFilter(); f.type = 'highpass'; f.frequency.value = hp; n.connect(f); node = f; } node.connect(g).connect(out); n.start(t+s); };
@@ -308,7 +308,8 @@ function activitiesMenu(anchor){
   el.innerHTML = `<div class="pphead">${ic('gamepad',18)} Atividades</div>
     <button class="actbig" id="acWT"><span class="ai">${ic('tv',26)}</span><div><b>Assistir juntos</b><small>Vídeo do YouTube sincronizado para todo mundo na chamada</small></div></button>
     <div class="actsec">${ic('dice',15)} Jogos <small>todo mundo da chamada</small></div>
-    <div class="gamegrid">${[['rabisco','🎨','Rabisco','desenhe e adivinhe'],['quiz','🧠','Quiz','10 perguntas'],['provavel','👀','Quem é mais provável','votação da galera'],['stop','✋','Stop','adedonha'],['quemsou','🤔','Quem sou eu?','descubra quem você é'],['truco','🃏','Truco','paulista, 2 ou 4']].filter(([k]) => k === 'rabisco' || k === 'quiz' || k === 'provavel' || (App.hasGame && App.hasGame(k))).map(([k,e,n,d]) => `<button data-newgame="${k}"><span>${e}</span><b>${n}</b><small>${d}</small></button>`).join('')}</div>
+    <div class="gamegrid">${[['rabisco','🎨','Rabisco','desenhe e adivinhe'],['quiz','🧠','Quiz','10 perguntas'],['provavel','👀','Quem é mais provável','votação da galera'],['stop','✋','Stop','adedonha'],['quemsou','🤔','Quem sou eu?','descubra quem você é'],['truco','🃏','Truco','paulista, 2 ou 4'],['forca','🪢','Forca','adivinhe a palavra'],['musica','🎵','Quiz de música','adivinhe a música'],['telefone','📞','Telefone sem fio','escreve, desenha, adivinha'],['naval','🚢','Batalha naval','2 capitães']].filter(([k]) => k === 'rabisco' || k === 'quiz' || k === 'provavel' || (App.hasGame && App.hasGame(k))).map(([k,e,n,d]) => `<button data-newgame="${k}"><span>${e}</span><b>${n}</b><small>${d}</small></button>`).join('')}</div>
+    <button class="actbig" id="acRl"><span class="ai">🎡</span><div><b>Roleta / sorteio</b><small>Gire uma roda ou sorteie os times; todo mundo vê ao mesmo tempo</small></div></button>
     <button class="actbig" id="acCap"><span class="ai">🗨️</span><div><b>Legendas ao vivo</b><small>Sua fala vira texto para todo mundo da chamada (acessibilidade)</small></div></button>
     <div class="actsec">${ic('music',15)} Soundboard <small>todos ouvem</small></div>
     <div class="sboard">${soundList().map(([id, e, n]) => `<button data-snd="${id}"><span>${e}</span>${n}</button>`).join('')}</div>
@@ -319,6 +320,7 @@ function activitiesMenu(anchor){
   el.style.top = Math.max(8, r.top - el.offsetHeight - 10) + 'px';
   el.querySelector('#acWT').onclick = () => { closeMenu(); wtPrompt(); };
   el.querySelector('#acCap').onclick = () => { closeMenu(); App.toggleCaptions(); };
+  el.querySelector('#acRl').onclick = () => { closeMenu(); App.roleta && App.roleta(); };
   el.querySelectorAll('[data-newgame]').forEach(b => b.onclick = () => { closeMenu(); App.gameNew && App.gameNew(b.dataset.newgame); });
   el.querySelectorAll('[data-snd]').forEach(b => b.onclick = () => {
     if(Date.now() - lastSound < 1500){ App.toast('Calma. Espere um pouquinho entre os sons'); return; }

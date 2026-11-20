@@ -259,10 +259,11 @@ function renderSettings(){
     if(App.hasPerm(s.id, 2)) nav.push(['overview','Visão geral']);
     if(App.hasPerm(s.id, 16)) nav.push(['roles','Cargos']);
     if(App.hasPerm(s.id, 1)) nav.push(['channels','Canais']);
-    nav.push(['emojis','Emojis'], ['tag','Tag do servidor'], ['members','Membros'], ['stats','Estatísticas'], ['boost', `<span style="display:inline-flex">${BOOST_SVG(16)}</span> Impulsos`]);
+    nav.push(['emojis','Emojis'], ['sounds','Sons'], ['tag','Tag do servidor'], ['members','Membros'], ['stats','Estatísticas'], ['boost', `<span style="display:inline-flex">${BOOST_SVG(16)}</span> Impulsos`]);
     if(App.hasPerm(s.id, 2)) nav.push(['invites','Convites']);
     if(App.hasPerm(s.id, 128) || App.hasPerm(s.id, 4)) nav.push(['bans','Banimentos']);
     if(App.hasPerm(s.id, 2) || App.hasPerm(s.id, 64)) nav.push(['safety','Segurança']);
+    if(App.hasPerm(s.id, 8) || App.hasPerm(s.id, 64)) nav.push(['reports', `Denúncias${App.reportCount && App.reportCount(s.id) ? ` <span class="navcount">${App.reportCount(s.id)}</span>` : ''}`]);
     if(App.hasPerm(s.id, 2)) nav.push(['community','Comunidade']);
     if(s.owner_id === S.me.id || App.hasPerm(s.id, 32)) nav.push(['backup','Backup']);
     if(s.owner_id === S.me.id) nav.push(['hr'], ['delete','Excluir servidor','danger']);
@@ -287,7 +288,7 @@ function renderSettings(){
   const back = isMobile() ? `<button class="btn sec sm mobileback" id="sBack">← Voltar</button>` : '';
   const fn = SET.kind === 'user'
     ? { account: secAccount, profile: secProfile, plus: secPlus, shop: secShop, connections: secConnections, security: secSecurity, privacy: secPrivacy, boosts: secMyBoosts, appearance: secAppearance, perf: secPerf, a11y: secA11y, lang: secLang, voice: secVoice, notif: secNotif, keys: secKeys, app: secApp, admin: secAdmin }[SET.sec]
-    : { overview: secSrvOverview, roles: secSrvRoles, channels: secSrvChannels, members: secSrvMembers, boost: secSrvBoost, bans: secSrvBans, safety: secSrvSafety, emojis: secSrvEmojis, tag: secSrvTag, community: secSrvCommunity, invites: secSrvInvites, stats: secSrvStats, backup: secSrvBackup }[SET.sec];
+    : { overview: secSrvOverview, roles: secSrvRoles, channels: secSrvChannels, members: secSrvMembers, boost: secSrvBoost, bans: secSrvBans, safety: secSrvSafety, emojis: secSrvEmojis, tag: secSrvTag, community: secSrvCommunity, invites: secSrvInvites, stats: secSrvStats, backup: secSrvBackup, sounds: secSrvSounds, reports: secSrvReports }[SET.sec];
   if(fn) fn(box, back);
   // vale também para seções que se redesenham depois de carregar (Loja, Estatísticas…)
   box.addEventListener('click', e => { if(e.target.closest('#sBack')){ e.preventDefault(); settingsBack(); } });
@@ -645,7 +646,7 @@ function secVoice(box, back){
     <small style="color:var(--mut)">A linha amarela no medidor é o limite: acima dela, seu avatar acende de verde.</small>
     <hr class="sdiv"><h3>Processamento de voz</h3>
     <div class="srow"><div class="t"><b>Supressão de ruído</b><small>Corta barulho de fundo: ventilador, teclado, rua, cachorro.</small></div></div>
-    <div class="nzlv">${[['off','Desligada','Som cru do microfone.'],['padrao','Padrão','Filtro do navegador.'],['forte','Forte','Filtro do navegador + isolamento de voz + portão que fecha o microfone no silêncio. Recomendado.']].map(([v, l, d]) => `<button class="vl ${Voice.noiseLevel() === v ? 'on' : ''}" data-nz="${v}"><b>${l}</b><small>${d}</small></button>`).join('')}</div>
+    <div class="nzlv">${[['off','Desligada','Som cru do microfone.'],['padrao','Padrão','Filtro do navegador.'],['forte','Forte','Filtro do navegador + isolamento de voz + portão que fecha o microfone no silêncio.'],['ia','IA ✨','Rede neural que apaga teclado, ventilador, ar-condicionado e cachorro, deixando só a voz. Melhor resultado; usa um pouco mais o processador.']].map(([v, l, d]) => `<button class="vl ${Voice.noiseLevel() === v ? 'on' : ''}" data-nz="${v}"><b>${l}</b><small>${d}</small></button>`).join('')}</div>
     ${row('Modo música', 'Desliga todos os filtros e manda o som em estéreo, para tocar instrumento ou mostrar uma música com qualidade. Use fone.', toggle('vMusic', !!P.musicMode))}
     ${row('Cancelamento de eco', 'Evita que seus amigos ouçam o próprio eco.', toggle('vEcho', P.echo))}
     ${row('Controle automático de ganho', 'Ajusta o volume do seu microfone sozinho.', toggle('vAgc', P.agc))}

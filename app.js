@@ -9,7 +9,7 @@ const esc = s => String(s ?? '').replace(/[&<>"']/g, c => ({'&':'&amp;','<':'&lt
 const COLORS = ['#5865f2','#eb459e','#3ba55c','#faa61a','#ed4245','#f47b67','#1abc9c','#9b59b6','#e67e22','#607d8b'];
 const ls = { get(k,d){ try{ const v=localStorage.getItem(k); return v==null?d:JSON.parse(v); }catch(e){ return d; } }, set(k,v){ try{ localStorage.setItem(k, JSON.stringify(v)); }catch(e){} } };
 
-const APP_VERSION = '6.26';
+const APP_VERSION = '6.27';
 const S = {
   me: null, profiles: new Map(), servers: [], channels: new Map(), members: new Map(),
   friends: [], dms: [], dmActivity: ls.get('telao-dmact', {}), online: new Set(),
@@ -601,7 +601,7 @@ function showAviso(pl){
 App.sendAviso = (text, reload) => S.avisoCh && S.avisoCh.send({ type:'broadcast', event:'aviso', payload:{ text, reload, from: S.me.id } });
 
 function trackOnline(){ if(S.onlineCh) S.onlineCh.track({ status: S.myStatus, at: Date.now() }).catch(()=>{}); }
-const isDnd = () => S.myStatus === 'dnd';
+const isDnd = () => S.myStatus === 'dnd' || !!(App.streamerOn && App.streamerOn());   // v6.27: modo streamer também silencia
 
 /* ---------------- notificações ---------------- */
 function notify(title, body, cid){
@@ -2221,7 +2221,7 @@ function playSound(id){
   if(Voice.deafened) return;
   try{
     if(!fxCtx) fxCtx = new (window.AudioContext || window.webkitAudioContext)();
-    const c = fxCtx, out = c.createGain(); out.gain.value = 0.35; out.connect(c.destination);
+    const c = fxCtx, out = c.createGain(); out.gain.value = 0.35 * ((P.sbVol ?? 0.6) / 0.6); out.connect(c.destination);
     const t = c.currentTime;
     const tone = (f, s, d, type='sine', v=1, f2) => { const o = c.createOscillator(), g = c.createGain(); o.type = type; o.frequency.setValueAtTime(f, t+s); if(f2) o.frequency.exponentialRampToValueAtTime(f2, t+s+d); g.gain.setValueAtTime(0.0001, t+s); g.gain.exponentialRampToValueAtTime(v, t+s+0.015); g.gain.exponentialRampToValueAtTime(0.0001, t+s+d); o.connect(g).connect(out); o.start(t+s); o.stop(t+s+d+0.05); };
     const noise = (s, d, v=1, hp=0) => { const b = c.createBuffer(1, c.sampleRate*d, c.sampleRate), x = b.getChannelData(0); for(let i=0;i<x.length;i++) x[i] = (Math.random()*2-1) * (1 - i/x.length); const n = c.createBufferSource(); n.buffer = b; const g = c.createGain(); g.gain.value = v; let node = n; if(hp){ const f = c.createBiquadFilter(); f.type = 'highpass'; f.frequency.value = hp; n.connect(f); node = f; } node.connect(g).connect(out); n.start(t+s); };
@@ -2262,7 +2262,8 @@ function activitiesMenu(anchor){
   el.innerHTML = `<div class="pphead">${ic('gamepad',18)} Atividades</div>
     <button class="actbig" id="acWT"><span class="ai">${ic('tv',26)}</span><div><b>Assistir juntos</b><small>Vídeo do YouTube sincronizado para todo mundo na chamada</small></div></button>
     <div class="actsec">${ic('dice',15)} Jogos <small>todo mundo da chamada</small></div>
-    <div class="gamegrid">${[['rabisco','🎨','Rabisco','desenhe e adivinhe'],['quiz','🧠','Quiz','10 perguntas'],['provavel','👀','Quem é mais provável','votação da galera'],['stop','✋','Stop','adedonha'],['quemsou','🤔','Quem sou eu?','descubra quem você é'],['truco','🃏','Truco','paulista, 2 ou 4']].filter(([k]) => k === 'rabisco' || k === 'quiz' || k === 'provavel' || (App.hasGame && App.hasGame(k))).map(([k,e,n,d]) => `<button data-newgame="${k}"><span>${e}</span><b>${n}</b><small>${d}</small></button>`).join('')}</div>
+    <div class="gamegrid">${[['rabisco','🎨','Rabisco','desenhe e adivinhe'],['quiz','🧠','Quiz','10 perguntas'],['provavel','👀','Quem é mais provável','votação da galera'],['stop','✋','Stop','adedonha'],['quemsou','🤔','Quem sou eu?','descubra quem você é'],['truco','🃏','Truco','paulista, 2 ou 4'],['forca','🪢','Forca','adivinhe a palavra'],['musica','🎵','Quiz de música','adivinhe a música'],['telefone','📞','Telefone sem fio','escreve, desenha, adivinha'],['naval','🚢','Batalha naval','2 capitães']].filter(([k]) => k === 'rabisco' || k === 'quiz' || k === 'provavel' || (App.hasGame && App.hasGame(k))).map(([k,e,n,d]) => `<button data-newgame="${k}"><span>${e}</span><b>${n}</b><small>${d}</small></button>`).join('')}</div>
+    <button class="actbig" id="acRl"><span class="ai">🎡</span><div><b>Roleta / sorteio</b><small>Gire uma roda ou sorteie os times; todo mundo vê ao mesmo tempo</small></div></button>
     <button class="actbig" id="acCap"><span class="ai">🗨️</span><div><b>Legendas ao vivo</b><small>Sua fala vira texto para todo mundo da chamada (acessibilidade)</small></div></button>
     <div class="actsec">${ic('music',15)} Soundboard <small>todos ouvem</small></div>
     <div class="sboard">${soundList().map(([id, e, n]) => `<button data-snd="${id}"><span>${e}</span>${n}</button>`).join('')}</div>
@@ -2273,6 +2274,7 @@ function activitiesMenu(anchor){
   el.style.top = Math.max(8, r.top - el.offsetHeight - 10) + 'px';
   el.querySelector('#acWT').onclick = () => { closeMenu(); wtPrompt(); };
   el.querySelector('#acCap').onclick = () => { closeMenu(); App.toggleCaptions(); };
+  el.querySelector('#acRl').onclick = () => { closeMenu(); App.roleta && App.roleta(); };
   el.querySelectorAll('[data-newgame]').forEach(b => b.onclick = () => { closeMenu(); App.gameNew && App.gameNew(b.dataset.newgame); });
   el.querySelectorAll('[data-snd]').forEach(b => b.onclick = () => {
     if(Date.now() - lastSound < 1500){ App.toast('Calma. Espere um pouquinho entre os sons'); return; }
@@ -3034,10 +3036,11 @@ function renderSettings(){
     if(App.hasPerm(s.id, 2)) nav.push(['overview','Visão geral']);
     if(App.hasPerm(s.id, 16)) nav.push(['roles','Cargos']);
     if(App.hasPerm(s.id, 1)) nav.push(['channels','Canais']);
-    nav.push(['emojis','Emojis'], ['tag','Tag do servidor'], ['members','Membros'], ['stats','Estatísticas'], ['boost', `<span style="display:inline-flex">${BOOST_SVG(16)}</span> Impulsos`]);
+    nav.push(['emojis','Emojis'], ['sounds','Sons'], ['tag','Tag do servidor'], ['members','Membros'], ['stats','Estatísticas'], ['boost', `<span style="display:inline-flex">${BOOST_SVG(16)}</span> Impulsos`]);
     if(App.hasPerm(s.id, 2)) nav.push(['invites','Convites']);
     if(App.hasPerm(s.id, 128) || App.hasPerm(s.id, 4)) nav.push(['bans','Banimentos']);
     if(App.hasPerm(s.id, 2) || App.hasPerm(s.id, 64)) nav.push(['safety','Segurança']);
+    if(App.hasPerm(s.id, 8) || App.hasPerm(s.id, 64)) nav.push(['reports', `Denúncias${App.reportCount && App.reportCount(s.id) ? ` <span class="navcount">${App.reportCount(s.id)}</span>` : ''}`]);
     if(App.hasPerm(s.id, 2)) nav.push(['community','Comunidade']);
     if(s.owner_id === S.me.id || App.hasPerm(s.id, 32)) nav.push(['backup','Backup']);
     if(s.owner_id === S.me.id) nav.push(['hr'], ['delete','Excluir servidor','danger']);
@@ -3062,7 +3065,7 @@ function renderSettings(){
   const back = isMobile() ? `<button class="btn sec sm mobileback" id="sBack">← Voltar</button>` : '';
   const fn = SET.kind === 'user'
     ? { account: secAccount, profile: secProfile, plus: secPlus, shop: secShop, connections: secConnections, security: secSecurity, privacy: secPrivacy, boosts: secMyBoosts, appearance: secAppearance, perf: secPerf, a11y: secA11y, lang: secLang, voice: secVoice, notif: secNotif, keys: secKeys, app: secApp, admin: secAdmin }[SET.sec]
-    : { overview: secSrvOverview, roles: secSrvRoles, channels: secSrvChannels, members: secSrvMembers, boost: secSrvBoost, bans: secSrvBans, safety: secSrvSafety, emojis: secSrvEmojis, tag: secSrvTag, community: secSrvCommunity, invites: secSrvInvites, stats: secSrvStats, backup: secSrvBackup }[SET.sec];
+    : { overview: secSrvOverview, roles: secSrvRoles, channels: secSrvChannels, members: secSrvMembers, boost: secSrvBoost, bans: secSrvBans, safety: secSrvSafety, emojis: secSrvEmojis, tag: secSrvTag, community: secSrvCommunity, invites: secSrvInvites, stats: secSrvStats, backup: secSrvBackup, sounds: secSrvSounds, reports: secSrvReports }[SET.sec];
   if(fn) fn(box, back);
   // vale também para seções que se redesenham depois de carregar (Loja, Estatísticas…)
   box.addEventListener('click', e => { if(e.target.closest('#sBack')){ e.preventDefault(); settingsBack(); } });
@@ -3420,7 +3423,7 @@ function secVoice(box, back){
     <small style="color:var(--mut)">A linha amarela no medidor é o limite: acima dela, seu avatar acende de verde.</small>
     <hr class="sdiv"><h3>Processamento de voz</h3>
     <div class="srow"><div class="t"><b>Supressão de ruído</b><small>Corta barulho de fundo: ventilador, teclado, rua, cachorro.</small></div></div>
-    <div class="nzlv">${[['off','Desligada','Som cru do microfone.'],['padrao','Padrão','Filtro do navegador.'],['forte','Forte','Filtro do navegador + isolamento de voz + portão que fecha o microfone no silêncio. Recomendado.']].map(([v, l, d]) => `<button class="vl ${Voice.noiseLevel() === v ? 'on' : ''}" data-nz="${v}"><b>${l}</b><small>${d}</small></button>`).join('')}</div>
+    <div class="nzlv">${[['off','Desligada','Som cru do microfone.'],['padrao','Padrão','Filtro do navegador.'],['forte','Forte','Filtro do navegador + isolamento de voz + portão que fecha o microfone no silêncio.'],['ia','IA ✨','Rede neural que apaga teclado, ventilador, ar-condicionado e cachorro, deixando só a voz. Melhor resultado; usa um pouco mais o processador.']].map(([v, l, d]) => `<button class="vl ${Voice.noiseLevel() === v ? 'on' : ''}" data-nz="${v}"><b>${l}</b><small>${d}</small></button>`).join('')}</div>
     ${row('Modo música', 'Desliga todos os filtros e manda o som em estéreo, para tocar instrumento ou mostrar uma música com qualidade. Use fone.', toggle('vMusic', !!P.musicMode))}
     ${row('Cancelamento de eco', 'Evita que seus amigos ouçam o próprio eco.', toggle('vEcho', P.echo))}
     ${row('Controle automático de ganho', 'Ajusta o volume do seu microfone sozinho.', toggle('vAgc', P.agc))}
@@ -5108,9 +5111,12 @@ async function spPoll(){
       const art = it.album ? (it.album.images || []).slice(-2)[0] : (it.images || [])[0];
       act = { type: 'spotify', id: it.id, uri: it.uri, track: it.name, artist: it.artists ? it.artists.map(a => a.name).join(', ') : (it.show && it.show.name) || '',
         album: it.album ? it.album.name : '', art: art ? art.url : null, url: it.external_urls && it.external_urls.spotify, start, end: start + (it.duration_ms || 0), playing: true };
+      // v6.27: jogando e ouvindo ao mesmo tempo
+      const g = (App.gameNow && App.gameNow()) || (S.manualAct && S.manualAct.type === 'playing' ? S.manualAct : null);
+      if(g) act.also = { type: 'playing', name: g.name, since: g.since || Date.now() };
     }
     const cur = S.me.activity && S.me.activity.type === 'spotify' ? S.me.activity : null;
-    const changed = act ? (!cur || cur.id !== act.id || Math.abs(cur.start - act.start) > 6000) : !!cur;
+    const changed = act ? (!cur || cur.id !== act.id || Math.abs(cur.start - act.start) > 6000 || ((cur.also && cur.also.name) || '') !== ((act.also && act.also.name) || '')) : !!cur;
     if(changed) await setActivity(act || S.manualAct || null, true);
   }catch(e){
     if(e.status === 429) return;
@@ -7400,6 +7406,7 @@ function renderGame(){
     const lb = G.lb[st.game] || [];
     body = `<div class="globby"><div class="gicon">${info.icon}</div><h2>${info.name}</h2><p>${info.desc}</p>
       <div class="gplayers">${st.players.map(u => `<span class="gpl">${avatar(prof(u), 'sm')}<span>${nm(u)}${u === st.host ? ' 👑' : ''}</span></span>`).join('')}</div>
+      ${GAME_EXT[st.game] && GAME_EXT[st.game].lobby ? GAME_EXT[st.game].lobby(st) : ''}
       <div class="gacts">${inGame ? '' : `<button class="btn" data-g="join">Entrar no jogo</button>`}
         ${amHost() ? `<button class="btn ok big" data-g="start" ${st.players.length < info.min ? 'disabled' : ''}>Começar (${st.players.length})</button><button class="btn sec" data-g="invite">Chamar todo mundo da call</button>` : `<span class="mut small">Esperando ${nm(st.host)} começar…</span>`}</div>
       ${st.players.length < info.min ? `<p class="mut small">Precisa de pelo menos ${info.min} pessoas.</p>` : ''}
@@ -9435,7 +9442,7 @@ async function onDesktopGame(name){
   const cur = S.me.activity;
   if(name){
     if(GM.prev === undefined) GM.prev = S.manualAct || null;
-    GM.name = name; GM.sess = null;
+    GM.name = name; GM.sess = null; GM.since = Date.now();
     if(!(cur && cur.type === 'spotify' && App.actOf(S.me))) await setActivity({ type: 'playing', name, since: Date.now(), auto: true }, true);
     const ping = async () => { const { data } = await App.sb.rpc('game_ping', { p_session: GM.sess, p_game: GM.name }); if(data) GM.sess = data; };
     ping(); clearInterval(GM.timer); GM.timer = setInterval(ping, 60000);
@@ -9445,6 +9452,7 @@ async function onDesktopGame(name){
     GM.prev = undefined;
   }
 }
+App.gameNow = () => GM.name ? { name: GM.name, since: GM.since } : null;
 if(window.telaoDesktop && window.telaoDesktop.onGame) window.telaoDesktop.onGame(g => onDesktopGame(g));
 const _secConnG = secConnections;
 secConnections = function(box, back){
@@ -10725,6 +10733,929 @@ const PhoneCam = (() => {
   return { open, stop: () => closeLink(true) };
 })();
 App.phoneCam = PhoneCam.open;
+/* =====================================================================
+   v6.27: STATUS NO PERFIL
+   - jogando E ouvindo ao mesmo tempo (dois cartões)
+   - tempo de jogo andando ("jogando há 1 h 05 min")
+   - "Entrar na call" / "Assistir a tela" quando a pessoa está numa chamada que eu posso entrar
+   ===================================================================== */
+const psAgo = t => { const m = Math.max(1, Math.floor((Date.now() - t) / 60000)); return m < 60 ? `${m} min` : `${Math.floor(m / 60)} h${m % 60 ? ' ' + String(m % 60).padStart(2, '0') + ' min' : ''}`; };
+function psWhereCall(uid){
+  for(const metas of S.vp.values()){
+    const m = metas.find(x => x.user_id === uid && x.voice);
+    if(m){ const ch = findChannel(m.voice); if(ch) return { ch, meta: m }; }
+  }
+  return null;
+}
+function psCanJoin(ch){
+  if(!ch || ch.kind === 'dm') return false;
+  return S.servers.some(s => s.id === ch.server_id) && (S.channels.get(ch.server_id) || []).some(c => c.id === ch.id);
+}
+const _profileCardPS = profileCard;
+profileCard = function(p, extra = ''){
+  let h = _profileCardPS(p, extra);
+  const a = App.actOf && App.actOf(p);
+  let add = '';
+  // segundo cartão: o jogo enquanto ouve música
+  if(a && a.type === 'spotify' && a.also && a.also.name)
+    add += `<h6>Jogando</h6><div class="actcard"><span class="nart">${ic('gamepad', 24)}</span><div class="at"><b>${esc(a.also.name)}</b><small class="mut" data-psince="${a.also.since || ''}">${a.also.since ? 'há ' + psAgo(a.also.since) : ''}</small></div></div>`;
+  // chamada
+  if(p.id !== S.me.id){
+    const w = psWhereCall(p.id);
+    if(w && psCanJoin(w.ch)){
+      const here = Voice.channel && Voice.channel.id === w.ch.id;
+      const s = S.servers.find(x => x.id === w.ch.server_id);
+      add += `<h6>Em chamada</h6><div class="pscall"><span class="pscic">${ic('volume', 18)}</span><div><b>${esc(w.ch.name)}</b><small>${esc(s ? s.name : '')}${w.meta.sharing ? ' · compartilhando a tela' : ''}</small></div></div>
+        <div class="actbtns">${here ? `<span class="mut small">Vocês estão na mesma chamada</span>` : `<button class="btn sm" data-psjoin="${w.ch.id}">${ic('phone', 15)} Entrar junto</button>`}
+        ${w.meta.sharing ? `<button class="btn sec sm" data-watch="${w.ch.id}" data-wsess="${esc(w.meta.session || '')}">${ic('screenUp', 15)} Assistir a tela</button>` : ''}</div>`;
+    }
+  }
+  if(!add) return h;
+  return h.replace(/<\/div><\/div>$/, add + '</div></div>');
+};
+// tempo andando nos cartões abertos (inclui o "há X" do cartão principal)
+setInterval(() => document.querySelectorAll('[data-psince]').forEach(e => { const t = +e.dataset.psince; if(t) e.textContent = 'há ' + psAgo(t); }), 30000);
+document.addEventListener('click', e => {
+  const b = e.target.closest('[data-psjoin]');
+  if(b){ e.preventDefault(); const ch = findChannel(b.dataset.psjoin); if(!ch) return; closeMenu(); document.querySelectorAll('.popout,.pcpop').forEach(x => x.remove());
+    go({ kind: 'server', sid: ch.server_id, cid: ch.id }); joinVoice(ch); return; }
+  const w = e.target.closest('.pcard2 [data-watch]');
+  if(w){ e.preventDefault(); e.stopPropagation(); watchLive(w.dataset.watch, w.dataset.wsess); }
+}, true);
+/* =====================================================================
+   v6.27: ROLETA / SORTEIO NA CALL
+   Quem gira escolhe o resultado (sorteio no PC dele) e manda para a call; todo mundo vê
+   a mesma roda girando e parando no mesmo lugar. Também sorteia times.
+   ===================================================================== */
+const RL_COLORS = ['#ff2e9a', '#b6ff2e', '#2ee6ff', '#a970ff', '#ffb02e', '#ff5c5c', '#2effa8', '#ffe14d', '#5c8cff', '#ff7ae0'];
+let rlLast = 0;
+function rlCallNames(){
+  if(!Voice.channel) return [];
+  return [...new Set(voiceUsers(Voice.channel).map(u => u.user_id))].map(id => prof(id).display_name);
+}
+function rlModal(){
+  if(!Voice.channel){ App.toast('Entre numa chamada para usar a roleta.', true); return; }
+  const presets = {
+    call: () => rlCallNames().join('\n'),
+    simnao: () => 'Sim\nNão',
+    moeda: () => 'Cara\nCoroa',
+    dez: () => Array.from({ length: 10 }, (_, i) => i + 1).join('\n'),
+    jogos: () => 'Valorant\nCS2\nMinecraft\nLoL\nFortnite\nRoblox',
+  };
+  modal(`<form id="rlF"><div class="mh"><h2>🎡 Roleta</h2><p>Gire e todo mundo na chamada vê o resultado ao mesmo tempo.</p></div>
+    <div class="mc">
+      <div class="rltabs"><button type="button" class="on" data-rlm="wheel">🎡 Roleta</button><button type="button" data-rlm="teams">👥 Sortear times</button></div>
+      <div id="rlWheel">
+        <div class="chips" style="margin-bottom:8px"><button type="button" class="chip" data-rlp="call">Quem está na call</button><button type="button" class="chip" data-rlp="simnao">Sim ou não</button><button type="button" class="chip" data-rlp="moeda">Cara ou coroa</button><button type="button" class="chip" data-rlp="dez">1 a 10</button><button type="button" class="chip" data-rlp="jogos">Jogos</button></div>
+        <label class="field"><span>Opções (uma por linha, até 24)</span><textarea class="inp" id="rlO" rows="6" maxlength="1200">${esc(presets.call())}</textarea></label>
+        <label class="field"><span>Pergunta (opcional)</span><input class="inp" id="rlQ" maxlength="80" placeholder="Quem paga a pizza?"></label>
+      </div>
+      <div id="rlTeams" class="hidden">
+        <p class="mut small">Divide quem está na call em times aleatórios.</p>
+        <label class="field"><span>Quantos times</span><select class="inp" id="rlN"><option>2</option><option>3</option><option>4</option></select></label>
+      </div>
+      <div class="err" id="rlE"></div></div>
+    <div class="mf"><button type="button" class="btn sec" data-close>Cancelar</button><button class="btn">🎡 Girar</button></div></form>`, m => {
+    let mode = 'wheel';
+    m.querySelectorAll('[data-rlm]').forEach(b => b.onclick = () => {
+      mode = b.dataset.rlm; m.querySelectorAll('[data-rlm]').forEach(x => x.classList.toggle('on', x === b));
+      m.querySelector('#rlWheel').classList.toggle('hidden', mode !== 'wheel'); m.querySelector('#rlTeams').classList.toggle('hidden', mode !== 'teams');
+    });
+    m.querySelectorAll('[data-rlp]').forEach(b => b.onclick = () => { m.querySelector('#rlO').value = presets[b.dataset.rlp](); });
+    m.querySelector('#rlF').onsubmit = e => {
+      e.preventDefault();
+      if(Date.now() - rlLast < 6000){ m.querySelector('#rlE').textContent = 'Espere a roda parar antes de girar de novo.'; return; }
+      if(mode === 'teams'){
+        const names = rlCallNames(), n = +m.querySelector('#rlN').value;
+        if(names.length < 2){ m.querySelector('#rlE').textContent = 'Precisa de pelo menos 2 pessoas na call.'; return; }
+        const sh = names.slice().sort(() => Math.random() - 0.5), teams = Array.from({ length: Math.min(n, names.length) }, () => []);
+        sh.forEach((x, i) => teams[i % teams.length].push(x));
+        closeModal(); rlLast = Date.now(); Voice.sendFx({ t: 'roleta', mode: 'teams', teams }); return;
+      }
+      const opts = m.querySelector('#rlO').value.split('\n').map(x => x.trim()).filter(Boolean).slice(0, 24).map(x => x.slice(0, 40));
+      if(opts.length < 2){ m.querySelector('#rlE').textContent = 'Coloque pelo menos 2 opções.'; return; }
+      const idx = Math.floor(Math.random() * opts.length), turns = 5 + Math.floor(Math.random() * 3), jitter = 0.15 + Math.random() * 0.7;
+      const q = m.querySelector('#rlQ').value.trim().slice(0, 80);
+      closeModal(); rlLast = Date.now();
+      Voice.sendFx({ t: 'roleta', mode: 'wheel', opts, idx, turns, jitter, q });
+    };
+  });
+}
+App.roleta = rlModal;
+function rlShow(pl){
+  document.getElementById('rlOv')?.remove();
+  const ov = document.createElement('div'); ov.id = 'rlOv'; ov.className = 'rlov';
+  const who = esc(prof(pl.uid).display_name);
+  if(pl.mode === 'teams'){
+    const teams = (pl.teams || []).slice(0, 4);
+    ov.innerHTML = `<div class="rlbox"><div class="rlhead">👥 <b>${who}</b> sorteou os times</div><div class="rlteams">${teams.map((t, i) => `<div class="rlteam" style="--tc:${RL_COLORS[i]};animation-delay:${i * 0.25}s"><h4>Time ${i + 1}</h4>${(t || []).slice(0, 20).map(n => `<span>${esc(String(n))}</span>`).join('')}</div>`).join('')}</div><button class="btn sec sm" id="rlX">Fechar</button></div>`;
+    document.body.appendChild(ov); ov.querySelector('#rlX').onclick = () => ov.remove();
+    if(App.sfx) App.sfx('ring');
+    setTimeout(() => ov.remove(), 15000); return;
+  }
+  const opts = (pl.opts || []).slice(0, 24).map(x => String(x).slice(0, 40)), n = opts.length;
+  if(n < 2) return;
+  const idx = Math.max(0, Math.min(n - 1, pl.idx | 0));
+  ov.innerHTML = `<div class="rlbox"><div class="rlhead">🎡 <b>${who}</b> girou a roleta${pl.q ? `: <i>${esc(String(pl.q))}</i>` : ''}</div>
+    <div class="rlwheel"><canvas width="560" height="560"></canvas><span class="rlptr"></span><span class="rlhub">🎲</span></div>
+    <div class="rlres" id="rlRes"></div><button class="btn sec sm" id="rlX">Fechar</button></div>`;
+  document.body.appendChild(ov); ov.querySelector('#rlX').onclick = () => ov.remove();
+  const cv = ov.querySelector('canvas'), x = cv.getContext('2d'), R = 270, C = 280, seg = Math.PI * 2 / n;
+  const draw = rot => {
+    x.clearRect(0, 0, 560, 560);
+    for(let i = 0; i < n; i++){
+      const a0 = rot + i * seg - Math.PI / 2;
+      x.beginPath(); x.moveTo(C, C); x.arc(C, C, R, a0, a0 + seg); x.closePath();
+      x.fillStyle = RL_COLORS[i % RL_COLORS.length]; if(n % RL_COLORS.length === 1 && i === n - 1) x.fillStyle = RL_COLORS[3]; x.fill();
+      x.strokeStyle = '#16121c'; x.lineWidth = 3; x.stroke();
+      x.save(); x.translate(C, C); x.rotate(a0 + seg / 2); x.textAlign = 'right'; x.fillStyle = '#16121c';
+      x.font = `800 ${n > 14 ? 16 : n > 8 ? 20 : 26}px system-ui,sans-serif`;
+      const t = opts[i].length > 18 ? opts[i].slice(0, 17) + '…' : opts[i];
+      x.fillText(t, R - 18, 8); x.restore();
+    }
+    x.beginPath(); x.arc(C, C, R, 0, Math.PI * 2); x.strokeStyle = 'rgba(255,255,255,.6)'; x.lineWidth = 6; x.stroke();
+  };
+  // ponteiro no topo: o centro da fatia idx tem que parar em -90°  → rot = -(idx + jitter) * seg
+  const target = Math.PI * 2 * (pl.turns || 6) - (idx + (pl.jitter ?? 0.5)) * seg;
+  const dur = 4800, t0 = performance.now(); let lastSeg = -1;
+  const step = now => {
+    if(!ov.isConnected) return;
+    const k = Math.min(1, (now - t0) / dur), e = 1 - Math.pow(1 - k, 4), rot = target * e;
+    draw(rot);
+    const cur = Math.floor(((-rot % (Math.PI * 2)) + Math.PI * 4) % (Math.PI * 2) / seg);
+    if(cur !== lastSeg){ lastSeg = cur; rlTick(); }
+    if(k < 1) requestAnimationFrame(step);
+    else { const r = ov.querySelector('#rlRes'); r.innerHTML = `🎉 <b>${esc(opts[idx])}</b>`; r.classList.add('on'); if(App.sfx) App.sfx('ring'); setTimeout(() => ov.isConnected && ov.remove(), 9000); }
+  };
+  requestAnimationFrame(step);
+}
+let rlCtx = null;
+function rlTick(){
+  if(Voice.deafened) return;
+  try{ rlCtx = rlCtx || new (window.AudioContext || window.webkitAudioContext)(); const o = rlCtx.createOscillator(), g = rlCtx.createGain(), t = rlCtx.currentTime;
+    o.type = 'square'; o.frequency.value = 900; g.gain.setValueAtTime(0.05, t); g.gain.exponentialRampToValueAtTime(0.0001, t + 0.04); o.connect(g).connect(rlCtx.destination); o.start(t); o.stop(t + 0.05); }catch(e){}
+}
+const _onFxRL = Voice.onFx;
+Voice.onFx = (pl, mine) => {
+  if(pl && pl.t === 'roleta'){ rlShow(pl); return; }
+  _onFxRL(pl, mine);
+};
+/* =====================================================================
+   v6.27: MAIS JOGOS NA CALL — Forca, Batalha naval, Quiz de música e Telefone sem fio
+   Mesmo esquema dos outros: quem abre é o anfitrião, guarda o estado e manda para a call.
+   - Batalha naval: os navios de cada capitão ficam só com o anfitrião (a tela mostra só os tiros).
+   - Telefone sem fio: cada um recebe em particular só o que tem que desenhar/adivinhar;
+     a sequência inteira só aparece no final.
+   - Quiz de música: trechos de 30 s da busca pública do iTunes (pelo /api/musica).
+   ===================================================================== */
+const K3 = App.G;
+const pres3 = () => K3.presentIds();
+const LETRAS = 'ABCDEFGHIJKLMNOPQRSTUVWXYZ'.split('');
+const plain = t => String(t || '').normalize('NFD').replace(/[̀-ͯ]/g, '').toUpperCase();
+
+/* ============================ FORCA ============================ */
+const FORCA_WORDS = {
+  'Animal': ['Capivara', 'Jacaré', 'Tamanduá', 'Hipopótamo', 'Ornitorrinco', 'Borboleta', 'Tartaruga', 'Golfinho', 'Pinguim', 'Camaleão', 'Escorpião', 'Gafanhoto', 'Rinoceronte', 'Lagartixa', 'Papagaio'],
+  'Comida': ['Brigadeiro', 'Feijoada', 'Coxinha', 'Pastel', 'Tapioca', 'Lasanha', 'Churrasco', 'Pamonha', 'Acarajé', 'Moqueca', 'Esfirra', 'Hambúrguer', 'Panqueca', 'Pipoca', 'Cuscuz'],
+  'Objeto': ['Guarda-chuva', 'Liquidificador', 'Ventilador', 'Travesseiro', 'Calculadora', 'Microfone', 'Geladeira', 'Escorregador', 'Abajur', 'Tesoura', 'Mochila', 'Controle remoto', 'Fone de ouvido', 'Teclado', 'Chinelo'],
+  'Profissão': ['Astronauta', 'Bombeiro', 'Veterinário', 'Encanador', 'Jornalista', 'Arquiteto', 'Programador', 'Cabeleireiro', 'Engenheiro', 'Motorista', 'Fotógrafo', 'Padeiro', 'Dentista', 'Eletricista', 'Professor'],
+  'Lugar': ['Biblioteca', 'Aeroporto', 'Rodoviária', 'Cachoeira', 'Shopping', 'Hospital', 'Academia', 'Supermercado', 'Floresta', 'Deserto', 'Fazenda', 'Padaria', 'Estádio', 'Cinema', 'Praia'],
+  'Jogo': ['Minecraft', 'Valorant', 'Fortnite', 'Roblox', 'Counter-Strike', 'League of Legends', 'Free Fire', 'Among Us', 'Rocket League', 'Pokémon', 'Tetris', 'Xadrez', 'Dominó', 'Truco', 'Uno'],
+  'Esporte': ['Futebol', 'Basquete', 'Vôlei', 'Natação', 'Skate', 'Surfe', 'Ciclismo', 'Handebol', 'Judô', 'Capoeira', 'Atletismo', 'Tênis de mesa', 'Ginástica', 'Boxe', 'Xadrez'],
+};
+const T_FORCA = 100000, T_FORCA_SHOW = 5500, FORCA_LIVES = 6;
+const forcaCd = new Map(), FCK = { on: false };
+const forcaDone = st => [...plain(st.word)].every(c => !/[A-Z]/.test(c) || st.guessed.includes(c));
+function forcaRound(st){
+  st.round = (st.round || 0) + 1;
+  if(st.round > st.rounds){ K3.endGame(); return; }
+  const cats = Object.keys(FORCA_WORDS), cat = K3.shuffle(cats)[0];
+  const used = st.usedW || [];
+  const w = K3.shuffle(FORCA_WORDS[cat].filter(x => !used.includes(x)))[0] || FORCA_WORDS[cat][0];
+  st.usedW = used.concat(w); st.cat = cat; st.word = w; st.guessed = []; st.wrong = []; st.lives = FORCA_LIVES; st.solver = null;
+  st.phase = 'play'; K3.setDeadline(T_FORCA); K3.push();
+}
+function forcaEnd(st, solver){ st.solver = solver || null; st.phase = 'show'; K3.setDeadline(T_FORCA_SHOW); K3.push(); }
+App.registerGame('forca', { name: 'Forca', icon: '🪢', desc: 'Todo mundo chuta letras na mesma palavra. Letra certa dá pontos para quem chutou; letra errada tira uma vida do grupo. Quem souber a palavra inteira ganha bônus.', min: 1 }, {
+  start(st){ st.rounds = 5; st.round = 0; st.usedW = []; forcaRound(st); },
+  act(st, uid, a){
+    if(st.phase !== 'play' || !st.players.includes(uid)) return;
+    const t = Date.now(), ck = uid + a.a;
+    if(t - (forcaCd.get(ck) || 0) < (a.a === 'fw' ? 2000 : 700)) return;
+    forcaCd.set(ck, t);
+    if(a.a === 'fl'){
+      const l = plain(a.l).slice(0, 1); if(!/[A-Z]/.test(l) || st.guessed.includes(l) || st.wrong.includes(l)) return;
+      const n = [...plain(st.word)].filter(c => c === l).length;
+      if(n){ st.guessed.push(l); st.scores[uid] = (st.scores[uid] || 0) + 10 * n; K3.feed({ uid, l, ok: true, n }); if(forcaDone(st)){ st.scores[uid] += 20; forcaEnd(st, uid); return; } }
+      else { st.wrong.push(l); st.lives--; st.scores[uid] = Math.max(0, (st.scores[uid] || 0) - 5); K3.feed({ uid, l }); if(st.lives <= 0){ forcaEnd(st); return; } }
+      K3.push();
+    } else if(a.a === 'fw'){
+      const g = plain(String(a.text || '').slice(0, 40)).replace(/[^A-Z]/g, ''), w = plain(st.word).replace(/[^A-Z]/g, '');
+      if(!g) return;
+      if(g === w){
+        const hidden = [...new Set([...w].filter(c => !st.guessed.includes(c)))].length;
+        st.scores[uid] = (st.scores[uid] || 0) + 30 + 10 * hidden; st.guessed = [...new Set(st.guessed.concat([...w]))];
+        K3.feed({ uid, w: st.word, ok: true }); forcaEnd(st, uid);
+      } else { st.lives--; st.scores[uid] = Math.max(0, (st.scores[uid] || 0) - 10); K3.feed({ uid, w: String(a.text).slice(0, 40) }); if(st.lives <= 0) forcaEnd(st); else K3.push(); }
+    }
+  },
+  tick(st){ if(st.phase === 'play') forcaEnd(st); else if(st.phase === 'show') forcaRound(st); },
+  render(st, inGame){
+    const show = st.phase === 'show', W = plain(st.word);
+    const masked = [...st.word].map((c, i) => /[A-Za-zÀ-ÿ]/.test(c) ? `<span class="fcl ${show || st.guessed.includes(W[i]) ? 'on' : ''}">${show || st.guessed.includes(W[i]) ? esc(c.toUpperCase()) : ''}</span>` : c === ' ' ? '<span class="fcsp"></span>' : `<span class="fcl on">${esc(c)}</span>`).join('');
+    const wr = FORCA_LIVES - st.lives;
+    const parts = ['<circle cx="140" cy="62" r="16"/>', '<line x1="140" y1="78" x2="140" y2="130"/>', '<line x1="140" y1="92" x2="118" y2="112"/>', '<line x1="140" y1="92" x2="162" y2="112"/>', '<line x1="140" y1="130" x2="122" y2="160"/>', '<line x1="140" y1="130" x2="158" y2="160"/>'];
+    const svg = `<svg viewBox="0 0 200 190" class="fcgal"><g stroke="#8a8798" stroke-width="5" stroke-linecap="round" fill="none"><line x1="30" y1="180" x2="120" y2="180"/><line x1="60" y1="180" x2="60" y2="20"/><line x1="60" y1="20" x2="140" y2="20"/><line x1="140" y1="20" x2="140" y2="46"/></g><g stroke="${st.lives <= 1 ? '#ff5c5c' : '#fff'}" stroke-width="5" stroke-linecap="round" fill="none">${parts.slice(0, wr).join('')}</g></svg>`;
+    const last = (st.feed || []).slice(-5).reverse();
+    return `<div class="gforca"><div class="gqn">Palavra ${st.round} de ${st.rounds} · categoria <b>${esc(st.cat)}</b></div>
+      <div class="fcwrap">${svg}<div class="fcright"><div class="fcword">${masked}</div>
+        <div class="fclives">${'❤️'.repeat(Math.max(0, st.lives))}${'🖤'.repeat(Math.max(0, wr))}</div>
+        ${show ? `<div class="fcres">${st.solver ? `🎉 <b>${K3.nm(st.solver)}</b> fechou a palavra!` : st.lives <= 0 ? '💀 Acabaram as vidas!' : '⏰ Acabou o tempo!'}</div>` : ''}</div></div>
+      ${!show && inGame ? `<div class="fckeys">${LETRAS.map(l => `<button class="fck ${st.guessed.includes(l) ? 'ok' : st.wrong.includes(l) ? 'no' : ''}" data-g="fl" data-l="${l}" ${st.guessed.includes(l) || st.wrong.includes(l) ? 'disabled' : ''}>${l}</button>`).join('')}</div>
+        <div class="qsgform"><input class="inp" id="fcW" maxlength="40" placeholder="Sabe a palavra? Chute inteira (errar custa 1 vida)" autocomplete="off"><button class="btn ok" data-g="fw">Chutar</button></div>` : ''}
+      <div class="gfeed">${last.map(f => f.w ? `<div class="gf ${f.ok ? 'ok' : ''}"><b>${K3.nm(f.uid)}</b> chutou “${esc(f.w)}” ${f.ok ? '✅' : '❌'}</div>` : `<div class="gf ${f.ok ? 'ok' : ''}"><b>${K3.nm(f.uid)}</b> ${f.ok ? `acertou o ${esc(f.l)} (${f.n}×)` : `errou o ${esc(f.l)}`}</div>`).join('')}</div>
+      ${K3.scoreList(st)}</div>`;
+  },
+  endExtra(st){ return st.word ? `<p class="mut">A última palavra era <b>${esc(st.word)}</b>.</p>` : ''; },
+  after(st, el){
+    const i = el.querySelector('#fcW'); if(i) i.onkeydown = e => { e.stopPropagation(); if(e.key === 'Enter' && i.value.trim()){ K3.act({ a: 'fw', text: i.value.trim() }); i.value = ''; } };
+    if(!FCK.on){ FCK.on = true; document.addEventListener('keydown', e => {
+      const s = K3.st; if(!s || s.game !== 'forca' || s.phase !== 'play' || !s.players.includes(S.me.id)) return;
+      if(e.target.closest('input,textarea,[contenteditable]') || e.ctrlKey || e.metaKey || e.altKey) return;
+      const l = e.key.length === 1 ? plain(e.key) : ''; if(/^[A-Z]$/.test(l) && !s.guessed.includes(l) && !s.wrong.includes(l)){ K3.act({ a: 'fl', l }); }
+    }); }
+  },
+  click(k, b){
+    if(k === 'fl'){ K3.act({ a: 'fl', l: b.dataset.l }); return true; }
+    if(k === 'fw'){ const i = K3.el && K3.el.querySelector('#fcW'); if(i && i.value.trim()){ K3.act({ a: 'fw', text: i.value.trim() }); i.value = ''; } return true; }
+  },
+});
+
+/* ============================ BATALHA NAVAL ============================ */
+const NV_N = 8, NV_SHIPS = [4, 3, 3, 2, 2], T_NV_PLACE = 60000, T_NV_SHOT = 30000;
+const NV = { boards: {}, gid: null, layout: null, layoutGid: null, ready: {}, sentTo: null };
+function nvRandom(){
+  for(let tries = 0; tries < 500; tries++){
+    const occ = new Set(), ships = [];
+    let ok = true;
+    for(const len of NV_SHIPS){
+      let placed = false;
+      for(let k = 0; k < 200 && !placed; k++){
+        const h = Math.random() < 0.5, r = Math.floor(Math.random() * (h ? NV_N : NV_N - len + 1)), c = Math.floor(Math.random() * (h ? NV_N - len + 1 : NV_N));
+        const cells = Array.from({ length: len }, (_, i) => h ? [r, c + i] : [r + i, c]);
+        // sem encostar em outro navio (nem na diagonal)
+        if(cells.some(([y, x]) => { for(let dy = -1; dy <= 1; dy++) for(let dx = -1; dx <= 1; dx++) if(occ.has((y + dy) + ',' + (x + dx))) return true; return false; })) continue;
+        cells.forEach(([y, x]) => occ.add(y + ',' + x)); ships.push([r, c, len, h ? 1 : 0]); placed = true;
+      }
+      if(!placed){ ok = false; break; }
+    }
+    if(ok) return ships;
+  }
+  return [[0, 0, 4, 1], [2, 0, 3, 1], [4, 0, 3, 1], [6, 0, 2, 1], [6, 4, 2, 1]];
+}
+const nvCells = s => Array.from({ length: s[2] }, (_, i) => s[3] ? [s[0], s[1] + i] : [s[0] + i, s[1]]);
+function nvValid(ships){
+  if(!Array.isArray(ships) || ships.length !== NV_SHIPS.length) return false;
+  const lens = ships.map(s => s && s[2]).sort().join(), want = NV_SHIPS.slice().sort().join(); if(lens !== want) return false;
+  const occ = new Set();
+  for(const s of ships){ for(const [y, x] of nvCells(s)){ if(!(y >= 0 && y < NV_N && x >= 0 && x < NV_N)) return false; const k = y + ',' + x; if(occ.has(k)) return false; occ.add(k); } }
+  return true;
+}
+const nvOpp = (st, uid) => st.cap[0] === uid ? st.cap[1] : st.cap[0];
+function nvFire(st, uid, r, c){
+  const tgt = nvOpp(st, uid), shots = st.shots[uid], k = r + ',' + c;
+  if(shots[k] || !(r >= 0 && r < NV_N && c >= 0 && c < NV_N)) return;
+  const board = NV.boards[tgt]; if(!board){ return; }
+  const ship = board.find(s => nvCells(s).some(([y, x]) => y === r && x === c));
+  shots[k] = ship ? 'h' : 'm';
+  if(ship){
+    const sunk = nvCells(ship).every(([y, x]) => shots[y + ',' + x] === 'h');
+    if(sunk){ st.sunk[tgt] = (st.sunk[tgt] || []).concat([ship]); K3.feed({ uid, sunk: ship[2] }); }
+    st.scores[uid] = (st.scores[uid] || 0) + (sunk ? 30 : 10);
+    if((st.sunk[tgt] || []).length === NV_SHIPS.length){ st.scores[uid] += 100; st.winner = uid; K3.endGame(); return; }
+  } else st.turn = tgt;
+  K3.setDeadline(T_NV_SHOT); K3.push();
+}
+function nvStartFire(st){
+  st.cap.forEach(u => { if(!NV.boards[u]) NV.boards[u] = nvRandom(); });
+  st.phase = 'fire'; st.turn = st.cap[Math.random() < 0.5 ? 0 : 1]; K3.setDeadline(T_NV_SHOT); K3.push();
+}
+App.registerGame('naval', { name: 'Batalha naval', icon: '🚢', desc: 'Dois capitães, cada um com 5 navios escondidos. Acertou, atira de novo. Quem afundar a frota inteira primeiro ganha. O resto da call assiste e torce.', min: 2 }, {
+  start(st){
+    st.cap = st.players.slice(0, 2); st.shots = { [st.cap[0]]: {}, [st.cap[1]]: {} }; st.sunk = {}; st.ready = {};
+    NV.boards = {}; NV.gid = st.id; st.phase = 'place'; K3.setDeadline(T_NV_PLACE); K3.push();
+  },
+  act(st, uid, a){
+    if(a.a === 'nvships' && st.cap.includes(uid) && nvValid(a.ships)){
+      if(NV.gid !== st.id){ NV.boards = {}; NV.gid = st.id; }
+      if(st.phase === 'place'){ NV.boards[uid] = a.ships.map(s => s.slice(0, 4).map(Number)); st.ready[uid] = true; if(st.cap.every(u => st.ready[u])) nvStartFire(st); else K3.push(); }
+      else if(st.phase === 'fire' && !NV.boards[uid]) NV.boards[uid] = a.ships.map(s => s.slice(0, 4).map(Number));   // anfitrião novo recebendo os navios de volta
+    } else if(a.a === 'nvfire' && st.phase === 'fire' && uid === st.turn) nvFire(st, uid, a.r | 0, a.c | 0);
+  },
+  tick(st){
+    if(st.phase === 'place') nvStartFire(st);
+    else if(st.phase === 'fire'){
+      if(!pres3().includes(st.turn)){ st.winner = nvOpp(st, st.turn); st.scores[st.winner] = (st.scores[st.winner] || 0) + 50; K3.endGame(); return; }
+      const free = []; for(let r = 0; r < NV_N; r++) for(let c = 0; c < NV_N; c++) if(!st.shots[st.turn][r + ',' + c]) free.push([r, c]);
+      const [r, c] = free[Math.floor(Math.random() * free.length)]; nvFire(st, st.turn, r, c);
+    }
+  },
+  render(st, inGame){
+    const me = S.me.id, cap = st.cap.includes(me);
+    if(cap && NV.layoutGid !== st.id){ NV.layout = nvRandom(); NV.layoutGid = st.id; NV.sentTo = null; }
+    const head = 'ABCDEFGH';
+    const grid = (opts) => {
+      let h = `<div class="nvgrid"><span></span>${[...Array(NV_N)].map((_, i) => `<span class="nvh">${i + 1}</span>`).join('')}`;
+      for(let r = 0; r < NV_N; r++){
+        h += `<span class="nvh">${head[r]}</span>`;
+        for(let c = 0; c < NV_N; c++) h += opts.cell(r, c);
+      }
+      return h + '</div>';
+    };
+    if(st.phase === 'place'){
+      if(!cap) return `<div class="gnaval"><h3>Os capitães estão posicionando os navios…</h3><div class="nvcaps">${st.cap.map(u => `<span>${avatar(prof(u), 'sm')} ${K3.nm(u)} ${st.ready[u] ? '✅' : '⏳'}</span>`).join('<b>vs</b>')}</div></div>`;
+      const occ = new Set(NV.layout.flatMap(s => nvCells(s).map(([y, x]) => y + ',' + x)));
+      return `<div class="gnaval"><h3>Posicione sua frota</h3><p class="mut small">5 navios (4, 3, 3, 2 e 2 casas). Sorteie até gostar e aperte Pronto.</p>
+        ${grid({ cell: (r, c) => `<span class="nvc ${occ.has(r + ',' + c) ? 'ship' : ''}"></span>` })}
+        <div class="gacts">${st.ready[me] ? '<span class="okc">Pronto! Esperando o outro capitão…</span>' : `<button class="btn sec" data-g="nvshuf">🎲 Sortear de novo</button><button class="btn ok" data-g="nvready">Pronto</button>`}</div></div>`;
+    }
+    // fogo
+    const myTurn = st.turn === me;
+    const shotGrid = (shooter, mine) => {
+      const target = nvOpp(st, shooter), sunkCells = new Set((st.sunk[target] || []).flatMap(s => nvCells(s).map(([y, x]) => y + ',' + x)));
+      const myShips = mine && NV.layout ? new Set(NV.layout.flatMap(s => nvCells(s).map(([y, x]) => y + ',' + x))) : null;
+      return grid({ cell: (r, c) => {
+        const k = r + ',' + c, s = st.shots[shooter][k];
+        const cls = `nvc ${myShips && myShips.has(k) ? 'ship' : ''} ${s === 'h' ? 'hit' : s === 'm' ? 'miss' : ''} ${sunkCells.has(k) ? 'sunk' : ''}`;
+        const can = !mine && myTurn && shooter === me && !s;
+        return `<button class="${cls}" ${can ? `data-g="nvfire" data-r="${r}" data-c="${c}"` : 'disabled'}>${s === 'h' ? '💥' : s === 'm' ? '•' : ''}</button>`;
+      } });
+    };
+    const left = (u) => NV_SHIPS.length - (st.sunk[u] || []).length;
+    const banner = `<div class="nvturn ${myTurn ? 'me' : ''}">${myTurn ? '🎯 Sua vez! Atire no mar inimigo' : `Vez de <b>${K3.nm(st.turn)}</b>`}</div>`;
+    if(cap){
+      const opp = nvOpp(st, me);
+      return `<div class="gnaval">${banner}<div class="nvboards">
+        <div><h4>Mar inimigo · ${K3.nm(opp)} <small>${left(opp)} navios</small></h4>${shotGrid(me, false)}</div>
+        <div><h4>Seu mar <small>${left(me)} navios</small></h4>${shotGrid(opp, true)}</div></div>${K3.scoreList({ ...st, players: st.cap })}</div>`;
+    }
+    return `<div class="gnaval">${banner}<div class="nvboards">${st.cap.map(u => `<div><h4>Tiros de ${K3.nm(u)} <small>${left(nvOpp(st, u))} navios inimigos</small></h4>${shotGrid(u, false)}</div>`).join('')}</div>${K3.scoreList({ ...st, players: st.cap })}</div>`;
+  },
+  endExtra(st){ return st.winner ? `<div class="qsright">🏆 <b>${K3.nm(st.winner)}</b> afundou a frota inteira!</div>` : ''; },
+  after(st){
+    // se o anfitrião mudou no meio da batalha, o capitão manda os navios de novo para ele
+    if(st.phase === 'fire' && st.cap.includes(S.me.id) && NV.layoutGid === st.id && NV.sentTo !== st.host){ NV.sentTo = st.host; K3.act({ a: 'nvships', ships: NV.layout }); }
+  },
+  click(k, b, st){
+    if(k === 'nvshuf'){ NV.layout = nvRandom(); K3.render(); return true; }
+    if(k === 'nvready'){ NV.sentTo = st.host; K3.act({ a: 'nvships', ships: NV.layout }); return true; }
+    if(k === 'nvfire'){ K3.act({ a: 'nvfire', r: +b.dataset.r, c: +b.dataset.c }); return true; }
+  },
+});
+
+/* ============================ QUIZ DE MÚSICA ============================ */
+const MQ_GENRES = [['pop', 'Pop gringo'], ['sertanejo', 'Sertanejo'], ['funk', 'Funk'], ['trap', 'Trap BR'], ['rap', 'Rap'], ['pagode', 'Pagode'], ['mpb', 'MPB'], ['rock', 'Rock'], ['anos2000', 'Anos 2000']];
+const T_MQ_LISTEN = 20000, T_MQ_SHOW = 6000, MQ_ROUNDS = 10;
+const MQ = { audio: null, playing: null, answers: null, picks: {} };
+function mqStop(){ if(MQ.audio){ try{ MQ.audio.pause(); }catch(e){} } MQ.playing = null; }
+function mqNext(st){
+  st.round = (st.round || 0) + 1;
+  if(st.round > st.rounds){ mqStop(); K3.endGame(); return; }
+  const pool = st.pool, t = pool[st.round - 1];
+  const others = K3.shuffle(pool.filter(x => K3.norm(x.title) !== K3.norm(t.title))).slice(0, 3);
+  const opts = K3.shuffle([t, ...others]);
+  st.q = { preview: t.preview, art: t.art, opts: opts.map(o => ({ t: o.title, a: o.artist })) };
+  MQ.answers = MQ.answers || {}; MQ.answers[st.id + ':' + st.round] = opts.indexOf(t);
+  st.q.k = (opts.indexOf(t) + st.round * 3) % 4;   // reserva, se o anfitrião mudar no meio
+  st.picks = {}; st.ci = null; st.phase = 'listen'; st.startAt = Date.now(); K3.setDeadline(T_MQ_LISTEN); K3.push();
+}
+const mqAns = st => { const v = MQ.answers && MQ.answers[st.id + ':' + st.round]; return v ?? ((st.q.k - st.round * 3) % 4 + 4) % 4; };
+function mqShow(st){ st.ci = mqAns(st); st.phase = 'show'; K3.setDeadline(T_MQ_SHOW); K3.push(); }
+App.registerGame('musica', { name: 'Quiz de música', icon: '🎵', desc: 'Toca um trecho e a galera adivinha a música. Quanto mais rápido, mais pontos.', min: 1 }, {
+  lobby(st){
+    const g = st.genre || 'pop';
+    return K3.amHost() ? `<div class="mqgen">${MQ_GENRES.map(([v, l]) => `<button class="chip ${g === v ? 'on' : ''}" data-g="mqgen" data-v="${v}">${l}</button>`).join('')}</div>`
+      : `<p class="mut small">Estilo: <b>${esc((MQ_GENRES.find(x => x[0] === g) || [0, 'Pop'])[1])}</b></p>`;
+  },
+  start(st){
+    st.genre = st.genre || 'pop'; st.phase = 'loading'; st.rounds = MQ_ROUNDS; st.round = 0; K3.push();
+    fetch('/api/musica?g=' + encodeURIComponent(st.genre)).then(r => r.json()).then(j => {
+      if(K3.st !== st || st.phase !== 'loading') return;
+      const tr = (j && j.tracks) || [];
+      if(tr.length < 8){ App.toast((j && j.error) || 'Não achei músicas agora. Tente outro estilo.', true); K3.endGame(); return; }
+      st.pool = K3.shuffle(tr).slice(0, 40); st.rounds = Math.min(MQ_ROUNDS, st.pool.length); mqNext(st);
+    }).catch(() => { if(K3.st === st){ App.toast('Não deu para buscar as músicas agora.', true); K3.endGame(); } });
+  },
+  act(st, uid, a){
+    if(a.a === 'mqpick' && st.phase === 'listen' && st.players.includes(uid) && !st.picks[uid] && a.round === st.round){
+      const i = a.i | 0, ok = i === mqAns(st);
+      const left = Math.max(0, st.dl - Date.now());
+      const pts = ok ? Math.max(100, Math.round(1000 * left / T_MQ_LISTEN)) : 0;
+      st.picks[uid] = { i, pts }; st.scores[uid] = (st.scores[uid] || 0) + pts;
+      if(st.players.filter(u => pres3().includes(u)).every(u => st.picks[u])) mqShow(st); else K3.push();
+    }
+  },
+  tick(st){ if(st.phase === 'listen') mqShow(st); else if(st.phase === 'show') mqNext(st); },
+  render(st, inGame){
+    if(st.phase === 'loading') return `<div class="gquiz"><div class="spin"></div><p class="mut">Escolhendo as músicas…</p></div>`;
+    const my = (st.picks || {})[S.me.id], show = st.phase === 'show';
+    return `<div class="gquiz gmus"><div class="gqn">Música ${st.round} de ${st.rounds}</div>
+      <div class="mqdisc ${show ? 'show' : 'spin2'}">${show && st.q.art ? `<img src="${esc(st.q.art)}" alt="">` : '🎵'}</div>
+      <h2>${show ? `${esc(st.q.opts[st.ci].t)} <small>${esc(st.q.opts[st.ci].a)}</small>` : 'Que música é essa?'}</h2>
+      <div class="gopts">${st.q.opts.map((o, i) => `<button class="gopt o${i} ${show && i === st.ci ? 'right' : ''} ${show && my && my.i === i && i !== st.ci ? 'wrong' : ''} ${my && my.i === i ? 'mine' : ''}" data-g="mqpick" data-i="${i}" ${my || show || !inGame ? 'disabled' : ''}><span class="gshape">${['▲', '◆', '●', '■'][i]}</span><span>${esc(o.t)}<small class="mqa">${esc(o.a)}</small></span></button>`).join('')}</div>
+      <div class="gqfoot">${show ? (my ? (my.pts ? `<b class="okc">Acertou! +${my.pts}</b>` : '<b class="nok">Errou</b>') : '<span class="mut">Você não respondeu</span>') : my ? '<span class="mut">Resposta enviada…</span>' : `<span class="mut">${Object.keys(st.picks || {}).length} de ${st.players.length} responderam · <a data-g="mqvol">volume</a></span>`}</div>
+      ${K3.scoreList(st)}</div>`;
+  },
+  after(st){
+    const key = st.id + ':' + st.round;
+    if(st.phase === 'listen' && st.q && MQ.playing !== key){
+      MQ.playing = key; MQ.audio = MQ.audio || new Audio(); MQ.audio.src = st.q.preview;
+      MQ.audio.volume = Math.max(0.05, Math.min(1, App.prefs.mqVol ?? 0.7));
+      if(App.prefs.outputId && MQ.audio.setSinkId) MQ.audio.setSinkId(App.prefs.outputId).catch(() => {});
+      const off = Math.max(0, (Date.now() - (st.startAt || Date.now())) / 1000);
+      MQ.audio.currentTime = Math.min(20, off); if(!Voice.deafened) MQ.audio.play().catch(() => {});
+    }
+    if(st.phase === 'end' || st.phase === 'lobby') mqStop();
+  },
+  click(k, b, st){
+    if(k === 'mqgen' && K3.amHost()){ st.genre = b.dataset.v; K3.push(); return true; }
+    if(k === 'mqpick'){ K3.act({ a: 'mqpick', i: +b.dataset.i, round: st.round }); return true; }
+    if(k === 'mqvol'){ const v = Math.round(((App.prefs.mqVol ?? 0.7) >= 0.9 ? 0.3 : (App.prefs.mqVol ?? 0.7) + 0.2) * 10) / 10; App.prefs.mqVol = v; savePrefs(); if(MQ.audio) MQ.audio.volume = v; App.toast(`Volume da música: ${Math.round(v * 100)}%`); return true; }
+  },
+});
+// sair da call ou fechar o jogo para a música
+const _leaveVoiceMQ = leaveVoice;
+leaveVoice = function(){ mqStop(); return _leaveVoiceMQ.apply(this, arguments); };
+setInterval(() => { const s = K3.st; if(MQ.playing && (!s || s.game !== 'musica' || s.phase === 'end')) mqStop(); }, 1000);
+
+/* ============================ TELEFONE SEM FIO ============================ */
+const T_TEL = { w: 50000, d: 90000, g: 45000 };
+const TEL = { chains: null, gid: null, prompt: null, promptKey: null, draft: {}, sent: {}, cv: null, cvKey: null, strokes: [], color: '#111111', size: 5, autoT: null };
+const telKind = k => k === 0 ? 'w' : k % 2 ? 'd' : 'g';
+function telHandler(st, c, k){ return st.tord[(c + k) % st.tord.length]; }
+function telChainOf(st, uid, k){ const j = st.tord.indexOf(uid); return j < 0 ? -1 : ((j - k) % st.tord.length + st.tord.length) % st.tord.length; }
+function telStep(st, k){
+  st.step = k; st.kind = telKind(k); st.done = []; st.phase = 'play';
+  K3.setDeadline(T_TEL[st.kind]); K3.push();
+  if(k > 0) telSendPrompts(st);
+  clearTimeout(TEL.resend); TEL.resend = setTimeout(() => { if(K3.st === st && st.step === k && st.phase === 'play') telSendPrompts(st, true); }, 2000);
+}
+function telSendPrompts(st, onlyMissing){
+  const k = st.step; if(k === 0) return;
+  st.tord.forEach((u, j) => {
+    if(onlyMissing && st.done.includes(u)) return;
+    const c = telChainOf(st, u, k), prev = TEL.chains[c][k - 1];
+    const pl = { gid: st.id, tel: { step: k, kind: st.kind, prompt: prev ? prev.v : null, by: prev ? prev.u : null } };
+    if(u === S.me.id) App.onGamePriv(pl); else sendToUser(u, 'game-priv', pl);
+  });
+}
+function telAdvance(st){
+  // quem não mandou: entra em branco
+  st.tord.forEach(u => {
+    const c = telChainOf(st, u, st.step);
+    if(!TEL.chains[c][st.step]) TEL.chains[c][st.step] = { u, k: st.kind, v: null };
+  });
+  if(st.step + 1 >= st.steps){ st.phase = 'reveal'; st.rc = 0; st.ri = 0; telShow(st); return; }
+  telStep(st, st.step + 1);
+}
+function telShow(st){ st.show = TEL.chains[st.rc].slice(0, st.ri + 1); st.dl = 0; K3.push(); }
+const _onGamePrivTel = App.onGamePriv;
+App.onGamePriv = pl => {
+  if(pl && pl.tel){
+    const st = K3.st; if(!st || pl.gid !== st.id) return;
+    TEL.prompt = pl.tel; TEL.promptKey = st.id + ':' + pl.tel.step; K3.render(); return;
+  }
+  if(_onGamePrivTel) _onGamePrivTel(pl);
+};
+function telCanvas(key){
+  if(TEL.cv && TEL.cvKey === key) return TEL.cv;
+  const cv = document.createElement('canvas'); cv.width = 640; cv.height = 440; cv.className = 'telcv';
+  TEL.cv = cv; TEL.cvKey = key; TEL.strokes = [];
+  const x = cv.getContext('2d');
+  const pos = e => { const r = cv.getBoundingClientRect(); return [(e.clientX - r.left) / r.width * cv.width, (e.clientY - r.top) / r.height * cv.height]; };
+  let cur = null;
+  cv.onpointerdown = e => { e.preventDefault(); cv.setPointerCapture(e.pointerId); cur = { c: TEL.color, w: TEL.size, pts: [pos(e)] }; TEL.strokes.push(cur); telRedraw(); };
+  cv.onpointermove = e => { if(!cur) return; cur.pts.push(pos(e)); telRedraw(); };
+  cv.onpointerup = cv.onpointercancel = () => { cur = null; };
+  telRedraw();
+  return cv;
+}
+function telRedraw(){
+  const cv = TEL.cv; if(!cv) return; const x = cv.getContext('2d');
+  x.fillStyle = '#fff'; x.fillRect(0, 0, cv.width, cv.height); x.lineCap = x.lineJoin = 'round';
+  TEL.strokes.forEach(s => { x.strokeStyle = s.c; x.lineWidth = s.w * 2; x.beginPath(); s.pts.forEach(([a, b], i) => i ? x.lineTo(a, b) : x.moveTo(a, b)); if(s.pts.length === 1) x.lineTo(s.pts[0][0] + 0.1, s.pts[0][1]); x.stroke(); });
+}
+function telExport(){
+  if(!TEL.cv) return null;
+  const small = document.createElement('canvas'); small.width = 400; small.height = 275;
+  small.getContext('2d').drawImage(TEL.cv, 0, 0, 400, 275);
+  let d = small.toDataURL('image/webp', 0.6); if(!/^data:image\/webp/.test(d)) d = small.toDataURL('image/jpeg', 0.6);
+  return d;
+}
+function telSubmit(st){
+  const key = st.id + ':' + st.step; if(TEL.sent[key]) return;
+  let v;
+  if(st.kind === 'd') v = TEL.strokes.length ? telExport() : null;
+  else v = String(TEL.draft[key] || '').trim().slice(0, 120) || null;
+  TEL.sent[key] = 1; K3.act({ a: 'tel', step: st.step, v });
+}
+App.registerGame('telefone', { name: 'Telefone sem fio', icon: '📞', desc: 'Cada um escreve uma frase, o próximo desenha, o outro adivinha o desenho, e assim vai. No fim todo mundo vê como a frase virou outra coisa.', min: 3 }, {
+  start(st){
+    st.tord = K3.shuffle(st.players); st.steps = Math.min(st.tord.length, 8);
+    TEL.chains = st.tord.map(() => []); TEL.gid = st.id; telStep(st, 0);
+  },
+  act(st, uid, a){
+    if(a.a === 'tel' && st.phase === 'play' && a.step === st.step && st.tord.includes(uid) && !st.done.includes(uid)){
+      if(TEL.gid !== st.id){ App.toast('Quem abriu o Telefone sem fio saiu, e a partida acabou.', true); K3.endGame(); return; }
+      let v = a.v;
+      if(st.kind === 'd'){ if(v && !(typeof v === 'string' && /^data:image\/(webp|jpeg|png);base64,/.test(v) && v.length < 120000)) v = null; }
+      else v = v ? String(v).slice(0, 120) : null;
+      const c = telChainOf(st, uid, st.step);
+      TEL.chains[c][st.step] = { u: uid, k: st.kind, v };
+      st.done.push(uid);
+      if(st.tord.filter(u => pres3().includes(u)).every(u => st.done.includes(u))) telAdvance(st); else K3.push();
+    } else if(a.a === 'telnext' && uid === st.host && st.phase === 'reveal'){
+      const ch = TEL.chains[st.rc];
+      if(st.ri < ch.length - 1){ st.ri++; telShow(st); }
+      else if(st.rc < TEL.chains.length - 1){ st.rc++; st.ri = 0; telShow(st); }
+      else { st.tord.forEach(u => st.scores[u] = (st.scores[u] || 0) + 10 * TEL.chains.flat().filter(x => x.u === u && x.v).length); K3.endGame(); }
+    }
+  },
+  tick(st){ if(st.phase === 'play'){ if(TEL.gid !== st.id){ App.toast('Quem abriu o Telefone sem fio saiu, e a partida acabou.', true); K3.endGame(); return; } telAdvance(st); } },
+  render(st, inGame){
+    const me = S.me.id, inT = (st.tord || []).includes(me);
+    if(st.phase === 'reveal'){
+      const owner = st.tord[st.rc];
+      return `<div class="gtel"><h3>A frase de <b>${K3.nm(owner)}</b> <small class="mut">(${st.rc + 1} de ${st.tord.length})</small></h3>
+        <div class="telchain">${(st.show || []).map((it, i) => `<div class="telit ${i === st.ri ? 'new' : ''}"><div class="telwho">${avatar(prof(it.u), 'xs')} <b>${K3.nm(it.u)}</b> ${it.k === 'w' ? 'escreveu' : it.k === 'd' ? 'desenhou' : 'achou que era'}</div>
+          ${it.k === 'd' ? (it.v ? `<img src="${esc(it.v)}" alt="desenho">` : '<div class="telblank">não desenhou 🙈</div>') : `<div class="teltxt">${it.v ? esc(it.v) : '<i>não respondeu</i>'}</div>`}</div>`).join('')}</div>
+        ${K3.amHost() ? `<div class="gacts"><button class="btn ok" data-g="telnext">${st.ri < TEL.chains[st.rc].length - 1 ? 'Mostrar o próximo ▶' : st.rc < st.tord.length - 1 ? 'Próxima frase ▶' : 'Terminar 🏁'}</button></div>` : `<p class="mut small">${K3.nm(st.host)} vai passando…</p>`}</div>`;
+    }
+    const key = st.id + ':' + st.step, sent = TEL.sent[key] || st.done.includes(me);
+    const prog = `<div class="telprog">${st.tord.map(u => `<span class="${st.done.includes(u) ? 'ok' : ''}" title="${esc(prof(u).display_name)}">${avatar(prof(u), 'xs')}</span>`).join('')}</div>`;
+    const stepTxt = `<div class="gqn">Etapa ${st.step + 1} de ${st.steps}</div>`;
+    if(!inT) return `<div class="gtel">${stepTxt}<h3>${st.kind === 'w' ? 'Todo mundo está escrevendo uma frase…' : st.kind === 'd' ? 'Todo mundo está desenhando…' : 'Todo mundo está adivinhando os desenhos…'}</h3>${prog}<p class="mut small">Você entrou depois; espere a próxima partida.</p></div>`;
+    if(sent) return `<div class="gtel">${stepTxt}<h3>Pronto! Esperando a galera…</h3>${prog}</div>`;
+    const pr = TEL.promptKey === key ? TEL.prompt : null;
+    if(st.kind === 'w') return `<div class="gtel">${stepTxt}<h3>✍️ Escreva uma frase para alguém desenhar</h3><p class="mut small">Algo engraçado ou difícil: “um gato pilotando um avião”, “o Gabriel perdendo no truco”…</p>
+      <div class="qsgform"><input class="inp" id="telW" maxlength="120" autocomplete="off" placeholder="Sua frase" value="${esc(TEL.draft[key] || '')}"><button class="btn ok" data-g="telok">Pronto</button></div>${prog}</div>`;
+    if(!pr) return `<div class="gtel">${stepTxt}<div class="spin"></div><p class="mut">Recebendo a sua vez…</p>${prog}</div>`;
+    if(st.kind === 'd') return `<div class="gtel">${stepTxt}<h3>🎨 Desenhe: <span class="telp">${pr.prompt ? esc(pr.prompt) : '(a pessoa não escreveu nada: desenhe o que quiser!)'}</span></h3>
+      <div id="telCvHost" class="telcvhost"></div>
+      <div class="gtools">${['#111111', '#ffffff', '#ff2e9a', '#e53935', '#fb8c00', '#fdd835', '#43a047', '#1e88e5', '#8e24aa', '#6d4c41'].map(c => `<button class="gcol ${TEL.color === c ? 'on' : ''}" data-g="telcol" data-c="${c}" style="--c:${c}" title="${c === '#ffffff' ? 'Borracha' : ''}"></button>`).join('')}
+        ${[3, 6, 12].map(z => `<button class="gsz ${TEL.size === z ? 'on' : ''}" data-g="telsz" data-s="${z}"><i style="width:${z + 2}px;height:${z + 2}px"></i></button>`).join('')}
+        <button class="btn sec sm" data-g="telundo">Desfazer</button><button class="btn sec sm" data-g="telclr">Limpar</button><span class="grow"></span><button class="btn ok" data-g="telok">Pronto</button></div>${prog}</div>`;
+    return `<div class="gtel">${stepTxt}<h3>🤔 O que é esse desenho?</h3>
+      ${pr.prompt ? `<img class="telimg" src="${esc(pr.prompt)}" alt="desenho">` : '<div class="telblank">a pessoa não desenhou 🙈 invente algo!</div>'}
+      <div class="qsgform"><input class="inp" id="telG" maxlength="120" autocomplete="off" placeholder="Descreva o desenho" value="${esc(TEL.draft[key] || '')}"><button class="btn ok" data-g="telok">Pronto</button></div>${prog}</div>`;
+  },
+  endExtra(){ return '<p class="mut">Pontos: 10 por cada etapa que você fez.</p>'; },
+  after(st, el){
+    if(st.phase !== 'play') return;
+    const key = st.id + ':' + st.step;
+    const host = el.querySelector('#telCvHost'); if(host){ host.appendChild(telCanvas(key)); }
+    el.querySelectorAll('#telW,#telG').forEach(i => {
+      i.oninput = () => { TEL.draft[key] = i.value; };
+      i.onkeydown = e => { e.stopPropagation(); if(e.key === 'Enter' && i.value.trim()){ TEL.draft[key] = i.value; telSubmit(st); } };
+    });
+    // manda sozinho o que tiver quando o tempo estiver acabando
+    if(TEL.autoKey !== key && st.tord.includes(S.me.id)){
+      TEL.autoKey = key; clearTimeout(TEL.autoT);
+      const ms = Math.max(0, (st.dl || Date.now()) - Date.now() - 1500);
+      TEL.autoT = setTimeout(() => { const s = K3.st; if(s && s.id === st.id && s.step === st.step && s.phase === 'play') telSubmit(s); }, ms);
+    }
+  },
+  click(k, b, st){
+    if(k === 'telok'){ const key = st.id + ':' + st.step; const i = K3.el && K3.el.querySelector('#telW,#telG'); if(i) TEL.draft[key] = i.value;
+      if(st.kind !== 'd' && !String(TEL.draft[key] || '').trim()){ App.toast('Escreva alguma coisa antes.', true); return true; }
+      if(st.kind === 'd' && !TEL.strokes.length){ App.toast('Desenhe alguma coisa antes.', true); return true; }
+      telSubmit(st); return true; }
+    if(k === 'telcol'){ TEL.color = b.dataset.c; K3.el.querySelectorAll('[data-g=telcol]').forEach(x => x.classList.toggle('on', x === b)); return true; }
+    if(k === 'telsz'){ TEL.size = +b.dataset.s; K3.el.querySelectorAll('[data-g=telsz]').forEach(x => x.classList.toggle('on', x === b)); return true; }
+    if(k === 'telundo'){ TEL.strokes.pop(); telRedraw(); return true; }
+    if(k === 'telclr'){ TEL.strokes = []; telRedraw(); return true; }
+    if(k === 'telnext'){ K3.act({ a: 'telnext' }); return true; }
+  },
+});
+/* =====================================================================
+   v6.27: SONS DO SERVIDOR (soundboard próprio de cada servidor)
+   Quem gerencia emojis sobe sons curtos (até 7 s / 1 MB). Na call, todo mundo toca pelo
+   painel de atividades. Cada um escolhe o volume (ou desliga) em Configurações → Voz e vídeo.
+   Proteção contra bagunça: cada pessoa só toca 1 som a cada 3 s, e quem recebe ignora se vier mais rápido.
+   ===================================================================== */
+S.ssounds = new Map();       // server_id -> [sons]
+const SSN_SQL = 'Para os sons do servidor, rode o supabase.sql novo (v6.27) no Supabase.';
+const ssnLast = new Map();   // uid -> último som recebido
+let ssnMine = 0;
+async function loadServerSounds(sid, force){
+  if(!sid) return [];
+  if(S.ssounds.has(sid) && !force) return S.ssounds.get(sid);
+  const { data, error } = await App.sb.from('server_sounds').select('*').eq('server_id', sid).order('created_at');
+  const list = error ? [] : (data || []);
+  S.ssounds.set(sid, list); return list;
+}
+App.loadServerSounds = loadServerSounds;
+function ssnPlay(snd){
+  if(Voice.deafened || P.sbOff) return;
+  const a = new Audio(snd.url); a.crossOrigin = 'anonymous';
+  a.volume = Math.max(0, Math.min(1, (P.sbVol ?? 0.6) * (snd.volume || 1)));
+  if(P.outputId && a.setSinkId) a.setSinkId(P.outputId).catch(() => {});
+  a.play().catch(() => {});
+  setTimeout(() => { try{ a.pause(); }catch(e){} }, 7500);
+}
+const _onFxSS = Voice.onFx;
+Voice.onFx = (pl, mine) => {
+  if(pl && pl.t === 'ssnd'){
+    const now = Date.now();
+    if(!mine && now - (ssnLast.get(pl.uid) || 0) < 2500) return;
+    ssnLast.set(pl.uid, now);
+    const sid = Voice.channel && Voice.channel.server_id; if(!sid) return;
+    loadServerSounds(sid).then(list => {
+      const snd = list.find(x => x.id === pl.id) || (S.ssounds.has(sid) ? null : undefined);
+      if(snd === null) return loadServerSounds(sid, true).then(l2 => { const s2 = l2.find(x => x.id === pl.id); if(s2){ ssnPlay(s2); floatReaction(s2.emoji || '🔊', pl.uid); } });
+      if(snd){ ssnPlay(snd); floatReaction(snd.emoji || '🔊', pl.uid); }
+    });
+    return;
+  }
+  // os sons de sempre também respeitam o "desligar soundboard"
+  if(pl && pl.t === 'sound' && P.sbOff) return;
+  _onFxSS(pl, mine);
+};
+// no painel de atividades, os sons deste servidor aparecem junto
+const _activitiesMenuSS = activitiesMenu;
+activitiesMenu = function(anchor){
+  _activitiesMenuSS(anchor);
+  const el = $('#menu'), sid = Voice.channel && Voice.channel.server_id;
+  if(!sid || !el.classList.contains('actpop')) return;
+  const sb = el.querySelector('.sboard'); if(!sb) return;
+  const box = document.createElement('div'); box.className = 'ssnwrap'; sb.after(box);
+  const draw = list => {
+    const can = App.hasPerm(sid, 512) || App.hasPerm(sid, 2);
+    box.innerHTML = list.length || can ? `<div class="actsec">🔊 Sons do servidor ${can ? `<button class="lnk" id="ssnAdd">+ adicionar</button>` : ''}</div>
+      <div class="sboard">${list.map(s => `<button data-ssn="${s.id}" title="${esc(s.name)}"><span>${esc(s.emoji || '🔊')}</span>${esc(s.name)}</button>`).join('') || '<small class="mut">Nenhum som ainda.</small>'}</div>` : '';
+    box.querySelectorAll('[data-ssn]').forEach(b => b.onclick = () => {
+      if(Date.now() - ssnMine < 3000){ App.toast('Calma. Espere um pouquinho entre os sons'); return; }
+      ssnMine = Date.now(); Voice.sendFx({ t: 'ssnd', id: b.dataset.ssn });
+    });
+    const add = box.querySelector('#ssnAdd'); if(add) add.onclick = () => { closeMenu(); const s = S.servers.find(x => x.id === sid); if(s){ openSettings('server', 'sounds', s); } };
+  };
+  draw(S.ssounds.get(sid) || []);
+  loadServerSounds(sid, true).then(l => { if(box.isConnected) draw(l); });
+};
+
+/* ---------- Configurações do servidor → Sons ---------- */
+function audioDur(file){
+  return new Promise(res => { const a = new Audio(); a.preload = 'metadata'; a.onloadedmetadata = () => res(a.duration); a.onerror = () => res(NaN); a.src = URL.createObjectURL(file); setTimeout(() => res(NaN), 5000); });
+}
+async function secSrvSounds(box, back){
+  const s = SET.server, can = App.hasPerm(s.id, 512) || App.hasPerm(s.id, 2);
+  box.innerHTML = `${back}<h2>Sons</h2><p class="mut">Sons curtos que qualquer pessoa na call pode tocar para todo mundo (painel de <b>Atividades</b> na chamada). Até 24 por servidor.</p><div class="spin" style="margin:20px 0"></div>`;
+  const { data, error } = await App.sb.from('server_sounds').select('*').eq('server_id', s.id).order('created_at');
+  if(error){ box.innerHTML = `${back}<h2>Sons</h2><div class="locked">${/server_sounds|schema cache|does not exist/i.test(error.message) ? SSN_SQL : esc(error.message)}</div>`; return; }
+  const list = data || []; S.ssounds.set(s.id, list);
+  box.innerHTML = `${back}<h2>Sons</h2><p class="mut">Sons curtos que qualquer pessoa na call pode tocar para todo mundo (painel de <b>Atividades</b> na chamada). <b>${list.length}/24</b></p>
+    ${can ? `<form class="ssnform" id="ssnF"><label class="btn sec"><input type="file" id="ssnFile" accept="audio/*" hidden>${ic('upload', 16)} <span id="ssnFn">Escolher áudio</span></label>
+      <input class="inp" id="ssnE" maxlength="8" placeholder="😂" style="width:64px;text-align:center">
+      <input class="inp" id="ssnN" maxlength="24" placeholder="Nome do som" style="flex:1;min-width:140px">
+      <button class="btn" id="ssnGo">${ic('plus', 16)} Adicionar</button></form><small class="mut">MP3, OGG, WAV ou M4A. Até 7 segundos e 1 MB.</small><div class="err" id="ssnErr"></div>` : '<p class="mut small">Só quem pode gerenciar emojis adiciona sons.</p>'}
+    <div class="ssnlist">${list.map(x => `<div class="ssnrow"><button class="ibtn" data-ssprev="${x.id}" data-tip="Ouvir">${ic('play', 16)}</button><span class="sse">${esc(x.emoji || '🔊')}</span><b>${esc(x.name)}</b><small class="mut">por ${esc(prof(x.created_by).display_name)}</small><span class="grow"></span>
+      ${can ? `<input type="range" class="range sm" min="10" max="100" value="${Math.round((x.volume || 1) * 100)}" data-ssvol="${x.id}" title="Volume do som"><button class="ibtn sm" data-ssdel="${x.id}" data-tip="Apagar">${ic('trash', 15)}</button>` : ''}</div>`).join('') || '<div class="empty">Nenhum som ainda.</div>'}</div>`;
+  box.querySelectorAll('[data-ssprev]').forEach(b => b.onclick = () => { const x = list.find(y => y.id === b.dataset.ssprev); if(x){ const a = new Audio(x.url); a.volume = (P.sbVol ?? 0.6) * (x.volume || 1); a.play().catch(() => {}); } });
+  if(!can) return;
+  let file = null;
+  box.querySelector('#ssnFile').onchange = async e => {
+    const f = e.target.files[0]; const err = box.querySelector('#ssnErr'); err.textContent = ''; file = null;
+    if(!f) return;
+    if(!/^audio\//.test(f.type)){ err.textContent = 'Escolha um arquivo de áudio.'; return; }
+    if(f.size > 1048576){ err.textContent = 'Passou de 1 MB. Corte o áudio ou use MP3.'; return; }
+    const d = await audioDur(f);
+    if(d > 7.5){ err.textContent = `O som tem ${Math.round(d)} s. O máximo é 7 s.`; return; }
+    file = f; box.querySelector('#ssnFn').textContent = f.name.slice(0, 28);
+    const n = box.querySelector('#ssnN'); if(!n.value) n.value = f.name.replace(/\.[^.]+$/, '').slice(0, 24);
+  };
+  box.querySelector('#ssnF').onsubmit = async e => {
+    e.preventDefault(); const err = box.querySelector('#ssnErr');
+    const name = box.querySelector('#ssnN').value.trim(), emoji = box.querySelector('#ssnE').value.trim() || null;
+    if(!file){ err.textContent = 'Escolha o áudio primeiro.'; return; }
+    if(!name){ err.textContent = 'Dê um nome.'; return; }
+    const b = box.querySelector('#ssnGo'); b.disabled = true; b.textContent = 'Enviando…';
+    try{
+      const meta = await uploadOne({ file });
+      const { error } = await App.sb.from('server_sounds').insert({ server_id: s.id, name, emoji, url: meta.url });
+      if(error) throw error;
+      App.toast('Som adicionado! 🔊'); renderSettings();
+    }catch(x){ b.disabled = false; b.innerHTML = `${ic('plus', 16)} Adicionar`; err.textContent = /schema cache|does not exist/i.test(x.message || '') ? SSN_SQL : (x.message || String(x)); }
+  };
+  box.querySelectorAll('[data-ssvol]').forEach(r => r.onchange = async () => {
+    await App.sb.from('server_sounds').update({ volume: +r.value / 100 }).eq('id', r.dataset.ssvol); loadServerSounds(s.id, true);
+  });
+  box.querySelectorAll('[data-ssdel]').forEach(b => b.onclick = async () => {
+    if(!(await confirmBox('Apagar som', 'Apagar este som do servidor?', 'Apagar'))) return;
+    const { error } = await App.sb.from('server_sounds').delete().eq('id', b.dataset.ssdel);
+    if(error){ App.toast(error.message, true); return; }
+    renderSettings();
+  });
+}
+// Configurações → Voz e vídeo: volume e desligar
+const _secVoiceSS = secVoice;
+secVoice = function(box, back){
+  _secVoiceSS.apply(this, arguments);
+  box.insertAdjacentHTML('beforeend', `<hr class="sdiv"><h3>Soundboard</h3>
+    ${row('Ouvir os sons da soundboard', 'Os sons que a galera toca na call (buzina, palmas e os sons do servidor).', toggle('sbOn', !P.sbOff))}
+    <div class="srow"><div class="t"><b>Volume da soundboard</b></div><input type="range" class="range" id="sbVol" min="0" max="100" value="${Math.round((P.sbVol ?? 0.6) * 100)}" style="max-width:220px"></div>`);
+  box.querySelector('#sbOn').onchange = e => { P.sbOff = !e.target.checked; savePrefs(); };
+  box.querySelector('#sbVol').onchange = e => { P.sbVol = +e.target.value / 100; savePrefs(); };
+};
+/* =====================================================================
+   v6.27: MODO STREAMER
+   Esconde o que não deve aparecer na live (e-mail, links e códigos de convite, prévia de DMs)
+   e silencia notificações. Liga sozinho quando você compartilha a tela (dá para desligar isso).
+   ===================================================================== */
+let stLast = null;
+App.streamerOn = () => !!P.streamer || (P.streamerAuto !== false && !!Voice.screenStream);
+function stApply(){
+  const on = App.streamerOn();
+  if(on === stLast) return; stLast = on;
+  document.body.classList.toggle('streamer', on);
+  let pill = document.getElementById('stPill');
+  if(on && !pill){
+    pill = document.createElement('button'); pill.id = 'stPill'; pill.className = 'stpill';
+    pill.innerHTML = `<span class="dot"></span>MODO STREAMER<small>${P.streamer ? 'desligar' : 'ligado porque você está transmitindo'}</small>`;
+    pill.onclick = () => { if(P.streamer){ P.streamer = false; savePrefs(); stApply(); } else stModal(); };
+    document.body.appendChild(pill);
+  } else if(!on && pill) pill.remove();
+}
+setInterval(stApply, 1000);
+App.toggleStreamer = () => { P.streamer = !P.streamer; savePrefs(); stLast = null; stApply(); App.toast(P.streamer ? 'Modo streamer ligado' : 'Modo streamer desligado'); };
+function stModal(){
+  modal(`<div class="mh"><h2>🎥 Modo streamer</h2><p>Ligou sozinho porque você está compartilhando a tela.</p></div>
+    <div class="mc"><p class="small">Enquanto estiver ligado: seu e-mail e os links e códigos de convite ficam borrados, e as notificações e o som de mensagem ficam em silêncio.</p></div>
+    <div class="mf"><button class="btn sec" id="stNo">Não ligar sozinho</button><button class="btn" data-close>Ok</button></div>`, m => {
+    m.querySelector('#stNo').onclick = () => { P.streamerAuto = false; savePrefs(); closeModal(); stLast = null; stApply(); App.toast('O modo streamer não vai mais ligar sozinho. Dá para mudar em Configurações → Privacidade.'); };
+  });
+}
+// atalho no menu do seu perfil (canto de baixo)
+const _secPrivacyST = secPrivacy;
+secPrivacy = function(box, back){
+  _secPrivacyST.apply(this, arguments);
+  box.insertAdjacentHTML('afterbegin', '');
+  const h2 = box.querySelector('h2');
+  const html = `<div class="stbox"><h3>🎥 Modo streamer</h3>
+    ${row('Modo streamer', 'Borra seu e-mail e os links e códigos de convite, e silencia notificações e o som de mensagem. Bom para live e para mostrar a tela.', toggle('stOn', !!P.streamer))}
+    ${row('Ligar sozinho quando eu compartilhar a tela', '', toggle('stAuto', P.streamerAuto !== false))}</div><hr class="sdiv">`;
+  if(h2) h2.insertAdjacentHTML('afterend', html); else box.insertAdjacentHTML('afterbegin', html);
+  box.querySelector('#stOn').onchange = e => { P.streamer = e.target.checked; savePrefs(); stLast = null; stApply(); };
+  box.querySelector('#stAuto').onchange = e => { P.streamerAuto = e.target.checked; savePrefs(); stLast = null; stApply(); };
+};
+const _selfMenuExtraST = App.selfMenuExtra;
+App.selfMenuExtra = () => (_selfMenuExtraST ? _selfMenuExtraST() : []).concat([{ label: P.streamer ? 'Desligar modo streamer' : 'Modo streamer', icon: ic('eyeOff', 18), onClick: () => App.toggleStreamer() }]);
+/* =====================================================================
+   v6.27: DENÚNCIAS
+   Menu da mensagem → Denunciar. A denúncia vai para quem modera o servidor (Gerenciar mensagens
+   ou Moderar membros) em Configurações do servidor → Denúncias. Em DM vai para o admin do Telão.
+   O banco guarda uma cópia da mensagem na hora, então apagar não some com a prova.
+   Quem foi denunciado não vê nada; quem denunciou não aparece para o denunciado.
+   ===================================================================== */
+const REP_REASONS = [['spam', '📢', 'Spam ou propaganda'], ['ofensa', '🤬', 'Ofensa ou discurso de ódio'], ['assedio', '😠', 'Assédio ou ameaça'], ['nsfw', '🔞', 'Conteúdo adulto ou chocante'], ['golpe', '🎣', 'Golpe, link falso ou phishing'], ['outro', '❓', 'Outra coisa']];
+const REP_SQL = 'Para denúncias, rode o supabase.sql novo (v6.27) no Supabase.';
+S.repCount = new Map();
+App.reportCount = sid => S.repCount.get(sid) || 0;
+const canModReports = sid => App.hasPerm(sid, 8) || App.hasPerm(sid, 64);
+
+const _msgMenuExtraRep = App.msgMenuExtra;
+App.msgMenuExtra = m => {
+  const out = _msgMenuExtraRep ? _msgMenuExtraRep(m) : [];
+  if(m.author_id !== S.me.id && m.author_id !== TELAO_BOT_ID && !String(m.id).startsWith('tmp-'))
+    out.push({ label: 'Denunciar mensagem', icon: ic('shield', 18), danger: true, onClick: () => reportModal(m) });
+  return out;
+};
+function reportModal(m){
+  const ch = findChannel(m.channel_id), dm = !ch || !ch.server_id;
+  modal(`<form id="rpF"><div class="mh"><h2>Denunciar mensagem</h2><p>${dm ? 'Vai para a equipe do Telão.' : 'Vai para quem modera este servidor.'} A pessoa não fica sabendo que foi você.</p></div>
+    <div class="mc"><div class="rpquote"><b>${esc(prof(m.author_id).display_name)}</b><span>${esc((m.content || '').slice(0, 200)) || '<i>anexo</i>'}</span></div>
+      <div class="rpreasons">${REP_REASONS.map(([v, e, l], i) => `<label><input type="radio" name="rpr" value="${v}" ${i === 0 ? 'checked' : ''}><span>${e}</span>${l}</label>`).join('')}</div>
+      <label class="field"><span>Detalhes (opcional)</span><textarea class="inp" id="rpD" rows="2" maxlength="500" placeholder="Conte o que aconteceu"></textarea></label>
+      <div class="err" id="rpE"></div></div>
+    <div class="mf"><button type="button" class="btn sec" data-close>Cancelar</button><button class="btn red" id="rpGo">Denunciar</button></div></form>`, el => {
+    el.querySelector('#rpF').onsubmit = async e => {
+      e.preventDefault();
+      const b = el.querySelector('#rpGo'); b.disabled = true;
+      const { error } = await App.sb.from('message_reports').insert({ message_id: m.id, reason: el.querySelector('input[name=rpr]:checked').value, details: el.querySelector('#rpD').value.trim() || null });
+      if(error){
+        b.disabled = false;
+        el.querySelector('#rpE').textContent = /duplicate|message_reports_once/i.test(error.message) ? 'Você já denunciou essa mensagem.' : /message_reports|schema cache|does not exist/i.test(error.message) ? REP_SQL : error.message;
+        return;
+      }
+      closeModal(); App.toast('Denúncia enviada. Obrigado por ajudar a manter o lugar legal 💚');
+    };
+  });
+}
+
+/* ---------- contador para moderadores ---------- */
+async function repRefresh(sid){
+  if(!sid || !canModReports(sid)) return;
+  const { count, error } = await App.sb.from('message_reports').select('id', { count: 'exact', head: true }).eq('server_id', sid).eq('status', 'open');
+  if(error) return;
+  const before = S.repCount.get(sid);
+  S.repCount.set(sid, count || 0);
+  if(before !== undefined && count > before){
+    const s = S.servers.find(x => x.id === sid);
+    App.toast(`🛡️ Nova denúncia em ${s ? s.name : 'um servidor'}. Veja em Configurações do servidor → Denúncias.`);
+  }
+  if(before !== count) renderSidebar();
+}
+const _goRep = go;
+go = async function(route){
+  const r = await _goRep.apply(this, arguments);
+  if(route && route.kind === 'server') repRefresh(route.sid);
+  return r;
+};
+setInterval(() => { if(S.route && S.route.kind === 'server') repRefresh(S.route.sid); }, 90000);
+
+/* ---------- fila de denúncias ---------- */
+function repGroup(rows){
+  const g = new Map();
+  rows.forEach(r => { const k = r.message_id || r.id; if(!g.has(k)) g.set(k, []); g.get(k).push(r); });
+  return [...g.values()];
+}
+function repCard(list, sid){
+  const r = list[0], a = prof(r.author_id), ch = findChannel(r.channel_id);
+  const reasons = [...new Set(list.map(x => x.reason))].map(v => { const x = REP_REASONS.find(y => y[0] === v); return x ? `<span class="rptag">${x[1]} ${x[2]}</span>` : ''; }).join('');
+  const atts = (Array.isArray(r.attachments) ? r.attachments : []).slice(0, 4);
+  const open = r.status === 'open';
+  const can8 = sid ? App.hasPerm(sid, 8) : S.me.is_admin, can64 = sid && App.hasPerm(sid, 64), can128 = sid && App.hasPerm(sid, 128);
+  return `<div class="rpcard ${open ? '' : 'done'}" data-rpid="${r.id}">
+    <div class="rptop">${avatar(a, 'sm')}<div><b>${esc(a.display_name)}</b><small>@${esc(a.username || '')}${ch && ch.server_id ? ' · #' + esc(ch.name) : ' · DM'} · ${new Date(r.created_at).toLocaleString('pt-BR', { day: '2-digit', month: '2-digit', hour: '2-digit', minute: '2-digit' })}</small></div><span class="grow"></span><span class="rpn">${list.length} ${list.length === 1 ? 'denúncia' : 'denúncias'}</span></div>
+    <div class="rpmsg">${esc(r.content || '') || '<i class="mut">sem texto</i>'}${atts.length ? `<div class="rpatt">${atts.map(x => /^image\//.test(x.type || '') ? `<img src="${esc(x.url)}" alt="">` : `<a href="${esc(x.url)}" target="_blank" rel="noopener">${esc(x.name || 'anexo')}</a>`).join('')}</div>` : ''}</div>
+    <div class="rpreas">${reasons}</div>
+    ${list.filter(x => x.details).map(x => `<div class="rpdet">“${esc(x.details)}”</div>`).join('')}
+    ${open ? `<div class="rpact">
+      ${r.message_id && ch ? `<button class="btn sec sm" data-rpgo="${r.id}">${ic('arrowLeft', 14)} Ver no chat</button>` : ''}
+      ${r.message_id && can8 ? `<button class="btn red sm" data-rpdel="${r.id}">${ic('trash', 14)} Apagar mensagem</button>` : ''}
+      ${can64 && r.author_id ? `<button class="btn sec sm" data-rpto="${r.id}">${ic('clock', 14)} Castigo</button>` : ''}
+      ${can128 && r.author_id ? `<button class="btn sec sm" data-rpban="${r.id}">${ic('slash', 14)} Banir</button>` : ''}
+      <span class="grow"></span>
+      <button class="btn sec sm" data-rpok="${r.id}">${ic('check', 14)} Resolvida</button><button class="btn sec sm" data-rpno="${r.id}">Ignorar</button></div>`
+    : `<div class="rpdone">${r.status === 'resolved' ? '✅ Resolvida' : '🙈 Ignorada'}${r.action ? ' · ' + esc(r.action) : ''}${r.resolved_by ? ' por ' + esc(prof(r.resolved_by).display_name) : ''}</div>`}
+  </div>`;
+}
+async function repRender(box, back, sid, title){
+  const tab = box.dataset.rptab || 'open';
+  let q = App.sb.from('message_reports').select('*').order('created_at', { ascending: false }).limit(150);
+  q = sid ? q.eq('server_id', sid) : q.is('server_id', null);
+  q = tab === 'open' ? q.eq('status', 'open') : q.neq('status', 'open');
+  const { data, error } = await q;
+  if(error){ box.innerHTML = `${back}<h2>${title}</h2><div class="locked">${/message_reports|schema cache|does not exist/i.test(error.message) ? REP_SQL : esc(error.message)}</div>`; return; }
+  const rows = data || [];
+  await ensureProfiles([...new Set(rows.flatMap(r => [r.author_id, r.resolved_by]).filter(Boolean))]);
+  const groups = repGroup(rows);
+  if(sid && tab === 'open'){ S.repCount.set(sid, rows.length); }
+  box.innerHTML = `${back}<h2>${title}</h2><p class="mut">Mensagens que a galera denunciou. Quem denunciou fica em segredo; a cópia da mensagem fica guardada mesmo se ela for apagada.</p>
+    <div class="rltabs" style="max-width:360px"><button class="${tab === 'open' ? 'on' : ''}" data-rpt="open">Abertas</button><button class="${tab !== 'open' ? 'on' : ''}" data-rpt="done">Resolvidas</button></div>
+    <div class="rplist">${groups.map(g => repCard(g, sid)).join('') || `<div class="empty">${tab === 'open' ? 'Nenhuma denúncia aberta. 🎉' : 'Nada por aqui ainda.'}</div>`}</div>`;
+  box.querySelectorAll('[data-rpt]').forEach(b => b.onclick = () => { box.dataset.rptab = b.dataset.rpt; repRender(box, back, sid, title); });
+  const find = id => rows.find(r => r.id === id);
+  const resolve = async (id, st, act) => {
+    const { error } = await App.sb.rpc('resolve_report', { p_id: id, p_status: st, p_action: act || null });
+    if(error){ App.toast(error.message, true); return false; }
+    return true;
+  };
+  const again = () => { repRender(box, back, sid, title); if(sid) repRefresh(sid); };
+  box.querySelectorAll('[data-rpok]').forEach(b => b.onclick = async () => { if(await resolve(b.dataset.rpok, 'resolved', 'resolvida')) again(); });
+  box.querySelectorAll('[data-rpno]').forEach(b => b.onclick = async () => { if(await resolve(b.dataset.rpno, 'dismissed', 'ignorada')) again(); });
+  box.querySelectorAll('[data-rpdel]').forEach(b => b.onclick = async () => {
+    const r = find(b.dataset.rpdel);
+    if(!(await confirmBox('Apagar mensagem', 'Apagar a mensagem denunciada do chat? A cópia continua aqui na denúncia.', 'Apagar'))) return;
+    if(!(await resolve(r.id, 'resolved', 'mensagem apagada'))) return;
+    const { error } = await App.sb.from('messages').delete().eq('id', r.message_id);
+    if(error) App.toast(error.message, true); else { App.onMsgDelete && App.onMsgDelete(r.message_id); App.toast('Mensagem apagada.'); }
+    again();
+  });
+  box.querySelectorAll('[data-rpgo]').forEach(b => b.onclick = () => {
+    const r = find(b.dataset.rpgo); closeSettings();
+    go({ kind: 'server', sid: r.server_id, cid: r.channel_id }).then(() => setTimeout(() => jumpTo(r.message_id), 400));
+  });
+  const srv = sid && S.servers.find(x => x.id === sid);
+  box.querySelectorAll('[data-rpto]').forEach(b => b.onclick = async () => { const r = find(b.dataset.rpto); await resolve(r.id, 'resolved', 'castigo'); timeoutModal(srv, r.author_id); again(); });
+  box.querySelectorAll('[data-rpban]').forEach(b => b.onclick = async () => { const r = find(b.dataset.rpban); await resolve(r.id, 'resolved', 'banido'); banModal(srv, r.author_id); again(); });
+}
+function secSrvReports(box, back){
+  box.innerHTML = `${back}<h2>Denúncias</h2><div class="spin" style="margin:20px 0"></div>`;
+  repRender(box, back, SET.server.id, 'Denúncias');
+}
+// admin do Telão: denúncias feitas em DMs
+const _secAdminRep = secAdmin;
+secAdmin = function(box, back){
+  _secAdminRep.apply(this, arguments);
+  if(!S.me.is_admin) return;
+  const wrap = document.createElement('div'); wrap.className = 'rpadmin';
+  box.appendChild(document.createElement('hr')).className = 'sdiv';
+  box.appendChild(wrap);
+  repRender(wrap, '', null, 'Denúncias em DMs');
+};
+// ganchos para os testes automáticos
+App._t = { get S(){ return S; }, get go(){ return go; }, get joinVoice(){ return joinVoice; }, get findChannel(){ return findChannel; }, get prof(){ return prof; }, get profileCard(){ return profileCard; },
+  get openSettings(){ return openSettings; }, get closeSettings(){ return closeSettings; }, get activitiesMenu(){ return activitiesMenu; }, get closeMenu(){ return closeMenu; } };
 /* ---------------- PWA ---------------- */
 window.addEventListener('beforeinstallprompt', e => {
   e.preventDefault(); if(window.telaoDesktop) return; S.installEvt = e;
