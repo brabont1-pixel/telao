@@ -9,7 +9,7 @@ const esc = s => String(s ?? '').replace(/[&<>"']/g, c => ({'&':'&amp;','<':'&lt
 const COLORS = ['#5865f2','#eb459e','#3ba55c','#faa61a','#ed4245','#f47b67','#1abc9c','#9b59b6','#e67e22','#607d8b'];
 const ls = { get(k,d){ try{ const v=localStorage.getItem(k); return v==null?d:JSON.parse(v); }catch(e){ return d; } }, set(k,v){ try{ localStorage.setItem(k, JSON.stringify(v)); }catch(e){} } };
 
-const APP_VERSION = '6.25';
+const APP_VERSION = '6.26';
 const S = {
   me: null, profiles: new Map(), servers: [], channels: new Map(), members: new Map(),
   friends: [], dms: [], dmActivity: ls.get('telao-dmact', {}), online: new Set(),
@@ -647,6 +647,12 @@ const LOGO = `<svg class="tlogo" viewBox="0 0 125 135" width="30" height="30" ar
 function serverIcon(s, size){
   return s.icon_url ? `<img src="${esc(s.icon_url)}" alt="" loading="lazy" decoding="async">` : esc(serverInitials(s.name));
 }
+// v6.26: dock horizontal — a rodinha do mouse anda para os lados
+document.addEventListener('wheel', e => {
+  const rail = e.target.closest && e.target.closest('#rail'); if(!rail || Math.abs(e.deltaX) > Math.abs(e.deltaY)) return;
+  if(getComputedStyle(rail).flexDirection !== 'row' || rail.scrollWidth <= rail.clientWidth) return;
+  rail.scrollLeft += e.deltaY; e.preventDefault();
+}, { passive: false });
 function renderRail(){
   const pend = S.friends.filter(f => f.status === 'pending' && f.incoming).length;
   const dmUnread = S.dms.filter(d => S.unread.has(d.id)).length + S.groups.filter(g => S.unread.has(g.id)).length;
@@ -733,7 +739,7 @@ function renderSidebar(){
   let h = s.description ? `<div class="srvdesc">${esc(s.description)}</div>` : '';
   channelGroups(s, list).forEach(({ title: g, cat, kind, chs }) => {
     const key = s.id + ':' + g, col = COLLAPSED.has(key);
-    h += `<div class="cat ${col?'col':''} ${cat ? 'real' : ''}" data-cat="${esc(key)}" data-catname="${esc(cat || '')}" data-catkind="${kind || ''}"><span>${ic('chevDown',12)} ${esc(g)}</span>${canCh?`<span class="catb"><button data-catmenu data-tip="Opções da categoria">${ic('dots',16)}</button><button data-new="${chs[0] ? chs[0].kind : (kind || 'text')}" data-newcat="${esc(cat || '')}" data-tip="Criar canal">${ic('plus',16)}</button></span>`:''}</div>`;
+    h += `<div class="cat ${col?'col':''} ${cat ? 'real' : ''}" data-cat="${esc(key)}" data-catname="${esc(cat || '')}" data-catkind="${kind || ''}"><span>${ic('chevDown',12)} ${esc(g)}${cat && ((S.cats && S.cats.get(s.id)) || []).some(x => x.name === cat && x.allowed_roles && x.allowed_roles.length) ? `<i class="catlock" data-tip="Categoria privada">${ic('lock',11)}</i>` : ''}</span>${canCh?`<span class="catb"><button data-catmenu data-tip="Opções da categoria">${ic('dots',16)}</button><button data-new="${chs[0] ? chs[0].kind : (kind || 'text')}" data-newcat="${esc(cat || '')}" data-tip="Criar canal">${ic('plus',16)}</button></span>`:''}</div>`;
     if(!chs.length && canCh && !col) h += `<div class="catempty" data-dropcat="${esc(cat || '')}">Nenhum canal. Arraste um canal para cá ou clique no +.</div>`;
     chs.forEach(c => {
       const on = S.route.cid === c.id, un = S.unread.has(c.id);
@@ -2379,12 +2385,16 @@ async function cameraSetup(){
   if(!Voice.channel){ App.toast('Entre numa chamada primeiro', true); return; }
   let fx;
   try{ fx = await Voice.openCamFx(); }
-  catch(e){ App.toast(Voice.camErrorText(e), true); return; }
+  catch(e){
+    // sem câmera no PC (ou travada): oferece o celular no lugar
+    if(App.phoneCam && e && /NotFound|Overconstrained|DevicesNotFound|NotReadable|TrackStart|Abort/.test(e.name || '')) return App.phoneCam(Voice.camErrorText(e).split('.')[0] + '. Use o celular como câmera:');
+    App.toast(Voice.camErrorText(e), true); return;
+  }
   let started = false;
   modal(`<div class="mh"><h2>${ic('video',22)} Sua câmera</h2><p>Escolha um efeito antes de aparecer. Dá para trocar durante a chamada também.</p></div>
     <div class="mc"><div class="campv"><video id="camPv" autoplay playsinline muted></video><span class="camst" id="camSt"></span></div>
       <div class="fxgrid" id="fxGrid">${CamFX.EFFECTS.map(e => `<button data-fx="${e.id}" class="${(P.camFx||'none')===e.id?'on':''}"><span>${e.ic}</span>${esc(e.nome)}${e.tag?`<i>${e.tag}</i>`:''}</button>`).join('')}</div></div>
-    <div class="mf"><button class="btn sec" id="camNo">Cancelar</button><button class="btn" id="camGo">${ic('video',16)} Ligar câmera</button></div>`, m => {
+    <div class="mf">${App.phoneCam ? `<button class="btn sec" id="camPhone" style="margin-right:auto">${ic('smartphone',16)} Usar o celular</button>` : ''}<button class="btn sec" id="camNo">Cancelar</button><button class="btn" id="camGo">${ic('video',16)} Ligar câmera</button></div>`, m => {
     m.querySelector('.mbox').classList.add('wide');
     const v = m.querySelector('#camPv'); v.srcObject = fx.stream; v.play().catch(()=>{});
     fx.onStatus(t => { const el = m.querySelector('#camSt'); if(el){ el.textContent = t; el.classList.toggle('hidden', !t); } });
@@ -2393,6 +2403,7 @@ async function cameraSetup(){
       m.querySelectorAll('[data-fx]').forEach(x => x.classList.toggle('on', x === b));
     });
     m.querySelector('#camNo').onclick = () => { closeModal(); };
+    const cp = m.querySelector('#camPhone'); if(cp) cp.onclick = () => { closeModal(); setTimeout(() => App.phoneCam(), 60); };
     m.querySelector('#camGo').onclick = () => { started = true; closeModal(); Voice.startCamera(fx); };
     const obs = new MutationObserver(() => { if($('#modal').classList.contains('hidden')){ obs.disconnect(); if(!started) fx.stop(); } });
     obs.observe($('#modal'), { attributes:true, attributeFilter:['class'] });
@@ -2872,7 +2883,8 @@ document.addEventListener('mouseover', e => {
   if(!tip){ tip = document.createElement('div'); tip.id = 'tipEl'; tip.className = 'tip'; document.body.appendChild(tip); }
   tip.innerHTML = esc(t.dataset.tip) + (t.dataset.tipsub ? `<small>${esc(t.dataset.tipsub)}</small>` : '');
   const r = t.getBoundingClientRect(), w = tip.offsetWidth;
-  if(t.dataset.tipside === 'r'){ tip.style.left = (r.right + 12) + 'px'; tip.style.top = (r.top + r.height/2 - tip.offsetHeight/2) + 'px'; return; }
+  const railHz = t.dataset.tipside === 'r' && t.closest('#rail') && getComputedStyle(t.closest('#rail')).flexDirection === 'row';
+  if(t.dataset.tipside === 'r' && !railHz){ tip.style.left = (r.right + 12) + 'px'; tip.style.top = (r.top + r.height/2 - tip.offsetHeight/2) + 'px'; return; }
   let top = r.top - tip.offsetHeight - 8; if(top < 4) top = r.bottom + 8;
   tip.style.left = Math.max(6, Math.min(innerWidth - w - 6, r.left + r.width/2 - w/2)) + 'px';
   tip.style.top = top + 'px';
@@ -5459,6 +5471,8 @@ function applyComposerRules(){
   const info = $('#cmpRule') || (() => { const d = document.createElement('div'); d.id = 'cmpRule'; d.className = 'cmprule'; form && form.parentNode.insertBefore(d, form); return d; })();
   const bits = [];
   if(c.readonly && !mod){ ta.disabled = true; ta.placeholder = 'Este canal é só para leitura.'; bits.push(`${ic('eye', 13)} Só leitura`); }
+  else if(c.category && !mod && S.catSend && S.catSend.get(c.server_id) && S.catSend.get(c.server_id).get(c.category) === false){
+    ta.disabled = true; ta.placeholder = 'Nesta categoria só alguns cargos podem escrever.'; bits.push(`${ic('lock', 13)} Só alguns cargos escrevem aqui`); }
   if(c.slowmode) bits.push(`${ic('clock', 13)} Modo lento: ${fmtSlow(c.slowmode)}${mod ? ' (moderadores não têm limite)' : ''}`);
   if(c.no_links) bits.push('Sem links');
   if(c.no_media){ bits.push('Sem arquivos'); const at = form && form.querySelector('#attBtn, [data-attach], .attbtn'); if(at && !mod) at.style.display = 'none'; }
@@ -7553,11 +7567,15 @@ renderSidebar = function(){
 /* =====================================================================
    v6.10: GERENCIAR CANAIS E CATEGORIAS + IMPULSOS ILIMITADOS DO DONO DO TELÃO
    ===================================================================== */
-S.cats = new Map(); // server_id -> [{ name, position }]
+S.cats = new Map(); // server_id -> [{ name, position, allowed_roles, send_roles }]
+S.catSend = new Map(); // server_id -> Map(categoria -> pode escrever)
 let catsRt = null;
 async function loadCats(sid){
-  const { data } = await App.sb.from('server_categories').select('name, position').eq('server_id', sid).order('position');
+  // permissões (v6.26): se o banco ainda não foi atualizado, lê do jeito antigo
+  let { data, error } = await App.sb.from('server_categories').select('name, position, allowed_roles, send_roles').eq('server_id', sid).order('position');
+  if(error) ({ data } = await App.sb.from('server_categories').select('name, position').eq('server_id', sid).order('position'));
   S.cats.set(sid, data || []);
+  try{ const r = await App.sb.rpc('my_category_access', { p_server: sid }); if(!r.error) S.catSend.set(sid, new Map((r.data || []).map(x => [x.name, x.can_send]))); }catch(e){}
   if(!catsRt) catsRt = App.sb.channel('cats-rt').on('postgres_changes', { event: '*', schema: 'public', table: 'server_categories' }, async p => {
     const sid2 = (p.new && p.new.server_id) || (p.old && p.old.server_id) || (S.route.kind === 'server' && S.route.sid);
     if(sid2 && S.channels.has(sid2)){ await loadCats(sid2); if(S.route.kind === 'server' && S.route.sid === sid2) renderSidebar(); }
@@ -7640,10 +7658,50 @@ function categoryMenu(s, el, x, y){
   if(cat){
     items.push({ label: 'Mover para cima', icon: ic('chevDown', 18).replace('<svg', '<svg style="transform:rotate(180deg)"'), onClick: () => moveCategory(s, cat, -1) },
       { label: 'Mover para baixo', icon: ic('chevDown', 18), onClick: () => moveCategory(s, cat, 1) },
+      { label: 'Permissões da categoria', icon: ic('lock', 18), onClick: () => categoryPermsModal(s, cat) },
       '-', { label: 'Excluir categoria', icon: ic('trash', 18), danger: true, onClick: () => deleteCategoryModal(s, cat) });
   }
   menu(x, y, items);
 }
+
+/* ---------- permissões da categoria (v6.26): quem vê e quem escreve ---------- */
+function categoryPermsModal(s, cat){
+  const info = (S.cats.get(s.id) || []).find(c => c.name === cat) || {};
+  if(!('allowed_roles' in info)){ App.toast('Para usar permissões nas categorias, rode o supabase.sql novo no Supabase (SQL Editor → Run).', true); return; }
+  const roles = (S.roles.get(s.id) || []).filter(r => r.name !== '@everyone').sort((a, b) => (b.position || 0) - (a.position || 0));
+  const view = new Set(info.allowed_roles || []), send = new Set(info.send_roles || []);
+  const chs = (S.channels.get(s.id) || []).filter(c => c.category === cat);
+  const pick = (id, set) => roles.length ? `<div class="rolepick" id="${id}">${roles.map(r => `<label class="rp"><input type="checkbox" value="${r.id}" ${set.has(r.id) ? 'checked' : ''}><i style="background:${esc(r.color || '#888')}"></i>${esc(r.name)}</label>`).join('')}</div>`
+    : `<p class="mut small" id="${id}">Este servidor ainda não tem cargos. Crie em Configurações do servidor → Cargos.</p>`;
+  modal(`<form id="cpF"><div class="mh"><h2>${ic('lock', 22)} Permissões de “${esc(cat)}”</h2><p>Vale para os ${chs.length} cana${chs.length === 1 ? 'l' : 'is'} da categoria. O dono e quem é Administrador sempre veem tudo.</p></div>
+    <div class="mc">
+      <div class="permblk">
+        ${row('Categoria privada', 'Só os cargos escolhidos veem a categoria, leem as mensagens e entram nas chamadas dela. Para os outros ela some.', toggle('cpPriv', view.size > 0))}
+        <div class="${view.size ? '' : 'hidden'}" id="cpViewW"><span class="permlbl">${ic('eye', 14)} Quem pode ver</span>${pick('cpView', view)}</div>
+      </div>
+      <div class="permblk">
+        ${row('Limitar quem escreve', 'Os outros continuam vendo os canais de texto, mas só leem. Moderadores sempre podem escrever.', toggle('cpSendOn', send.size > 0))}
+        <div class="${send.size ? '' : 'hidden'}" id="cpSendW"><span class="permlbl">${ic('edit', 14)} Quem pode escrever</span>${pick('cpSend', send)}</div>
+      </div>
+      <div class="err" id="cpE"></div>
+    </div>
+    <div class="mf"><button type="button" class="btn sec" data-close>Cancelar</button><button class="btn">Salvar permissões</button></div></form>`, m => {
+    const q = x => m.querySelector(x);
+    q('#cpPriv').onchange = e => q('#cpViewW').classList.toggle('hidden', !e.target.checked);
+    q('#cpSendOn').onchange = e => q('#cpSendW').classList.toggle('hidden', !e.target.checked);
+    q('#cpF').onsubmit = async e => {
+      e.preventDefault();
+      const ids = sel => [...m.querySelectorAll(sel + ' input:checked')].map(x => x.value);
+      const v = q('#cpPriv').checked ? ids('#cpView') : [], w = q('#cpSendOn').checked ? ids('#cpSend') : [];
+      if(q('#cpPriv').checked && !v.length){ q('#cpE').textContent = 'Escolha pelo menos um cargo que pode ver.'; return; }
+      if(q('#cpSendOn').checked && !w.length){ q('#cpE').textContent = 'Escolha pelo menos um cargo que pode escrever.'; return; }
+      const { error } = await App.sb.rpc('category_perms_save', { p_server: s.id, p_name: cat, p_view: v, p_send: w });
+      if(error){ q('#cpE').textContent = errMsg(error); return; }
+      closeModal(); await loadChannels(s.id); renderSidebar(); App.toast(v.length ? `“${cat}” agora é privada` : 'Permissões salvas');
+    };
+  });
+}
+App.categoryPermsModal = categoryPermsModal;
 
 /* ---------- canais: menu, mover, duplicar ---------- */
 let saveLayout = async function(s, groups){
@@ -8341,19 +8399,22 @@ function rdMove(x, y){
   const rail = $('#rail'), line = document.getElementById('railLine'); line.style.display = 'none';
   document.querySelectorAll('.rdrop').forEach(z => z.classList.remove('rdrop'));
   const rr = rail.getBoundingClientRect();
-  if(y < rr.top + 24) rail.scrollTop -= 8; else if(y > rr.bottom - 24) rail.scrollTop += 8;
-  if(x > rr.right + 40){ RD.target = null; return; }
+  const hz = getComputedStyle(rail).flexDirection === 'row';   // v6.26: no computador o dock é horizontal
+  if(hz){ if(x < rr.left + 24) rail.scrollLeft -= 10; else if(x > rr.right - 24) rail.scrollLeft += 10; }
+  else if(y < rr.top + 24) rail.scrollTop -= 8; else if(y > rr.bottom - 24) rail.scrollTop += 8;
+  if(hz ? y > rr.bottom + 40 : x > rr.right + 40){ RD.target = null; return; }
   const cand = [...rail.querySelectorAll('.ricon.srv[data-sid], .rfh')].filter(b => b.dataset.sid !== RD.sid && b.dataset.fid !== RD.fid && !(RD.fid && b.closest(`.rfold[data-fid="${RD.fid}"]`)));
   if(!cand.length){ RD.target = null; return; }
   // o ícone mais perto na vertical
   let best = null, bd = 1e9;
-  cand.forEach(b => { const r = b.getBoundingClientRect(), d = Math.abs(y - (r.top + r.height / 2)); if(d < bd){ bd = d; best = b; } });
-  const r = best.getBoundingClientRect(), rel = (y - r.top) / r.height;
+  cand.forEach(b => { const r = b.getBoundingClientRect(), d = hz ? Math.abs(x - (r.left + r.width / 2)) : Math.abs(y - (r.top + r.height / 2)); if(d < bd){ bd = d; best = b; } });
+  const r = best.getBoundingClientRect(), rel = hz ? (x - r.left) / r.width : (y - r.top) / r.height;
   const canJoin = !RD.fid && rel > 0.28 && rel < 0.72;
   if(canJoin){ best.classList.add('rdrop'); RD.target = { join: best.dataset.sid || null, fold: best.dataset.fid || null }; return; }
   const after = rel >= 0.5;
-  line.style.display = 'block'; line.style.left = (rr.left + 8) + 'px'; line.style.width = (rr.width - 16) + 'px';
-  line.style.top = ((after ? r.bottom + 4 : r.top - 6)) + 'px';
+  line.style.display = 'block';
+  if(hz){ line.style.top = (rr.top + 8) + 'px'; line.style.height = (rr.height - 16) + 'px'; line.style.width = '3px'; line.style.left = (after ? r.right + 3 : r.left - 6) + 'px'; }
+  else { line.style.left = (rr.left + 8) + 'px'; line.style.width = (rr.width - 16) + 'px'; line.style.height = '3px'; line.style.top = ((after ? r.bottom + 4 : r.top - 6)) + 'px'; }
   RD.target = { ref: best.dataset.sid || null, refFold: best.dataset.fid || null, after };
 }
 function rdDrop(){
@@ -9623,8 +9684,14 @@ function railTipShow(el){
   const tip = document.getElementById('tipEl'); if(!tip) return;
   tip.classList.add('rich'); tip.innerHTML = html;
   const r = el.getBoundingClientRect();
-  tip.style.left = (r.right + 12) + 'px';
-  tip.style.top = Math.max(8, Math.min(innerHeight - tip.offsetHeight - 8, r.top + r.height / 2 - tip.offsetHeight / 2)) + 'px';
+  const rail = document.getElementById('rail');
+  if(rail && getComputedStyle(rail).flexDirection === 'row'){   // v6.26: dock horizontal, o cartão abre embaixo
+    tip.style.left = Math.max(8, Math.min(innerWidth - tip.offsetWidth - 8, r.left + r.width / 2 - tip.offsetWidth / 2)) + 'px';
+    tip.style.top = (rail.getBoundingClientRect().bottom + 8) + 'px';
+  } else {
+    tip.style.left = (r.right + 12) + 'px';
+    tip.style.top = Math.max(8, Math.min(innerHeight - tip.offsetHeight - 8, r.top + r.height / 2 - tip.offsetHeight / 2)) + 'px';
+  }
 }
 // roda depois do tooltip comum (registrado antes) e troca o conteúdo
 document.addEventListener('mouseover', e => {
@@ -10536,6 +10603,128 @@ secPrivacy = function(box, back){
   })();
 };
 App.openSettings = openSettings;
+
+/* ---------------- celular como câmera ----------------
+   O PC mostra um QR code com um código secreto. O celular abre /cam, liga a câmera e as duas pontas
+   combinam a conexão por um canal do Supabase (só a "apresentação"). O vídeo vai direto do celular
+   para o PC (WebRTC), sem passar por servidor. Depois o Telão usa esse vídeo como a sua câmera. */
+const PhoneCam = (() => {
+  let ch = null, pc = null, token = null, renewTimer = null, tickTimer = null, expiresAt = 0, linked = false;
+  const TTL = 120000;
+
+  function loadQR(){
+    if(window.qrcode) return Promise.resolve();
+    return new Promise((ok, bad) => { const s = document.createElement('script'); s.src = '/qrcode.js'; s.onload = ok; s.onerror = bad; document.head.appendChild(s); });
+  }
+  function newToken(){
+    const b = new Uint8Array(18); crypto.getRandomValues(b);
+    return btoa(String.fromCharCode(...b)).replace(/\+/g, '-').replace(/\//g, '_').replace(/=+$/, '');
+  }
+  function qrSvg(text){
+    const q = qrcode(0, 'M'); q.addData(text); q.make();
+    const n = q.getModuleCount(), m = 2; let d = '';
+    for(let r = 0; r < n; r++) for(let c = 0; c < n; c++) if(q.isDark(r, c)) d += `M${c + m} ${r + m}h1v1h-1z`;
+    return `<svg viewBox="0 0 ${n + m * 2} ${n + m * 2}" shape-rendering="crispEdges" aria-label="QR code"><rect width="100%" height="100%" fill="#fff"/><path d="${d}" fill="#0b0b10"/></svg>`;
+  }
+  const send = msg => ch && ch.send({ type: 'broadcast', event: 'm', payload: Object.assign({ from: 'pc' }, msg) });
+
+  function closeLink(tellPhone){
+    clearTimeout(renewTimer); clearInterval(tickTimer);
+    if(tellPhone) try{ send({ t: 'bye' }); }catch(e){}
+    const c = ch, p = pc; ch = null; pc = null; linked = false;
+    try{ p && p.close(); }catch(e){}
+    if(c) setTimeout(() => { try{ App.sb.removeChannel(c); }catch(e){} }, 400);
+  }
+
+  function setStatus(m, text, kind){
+    const el = m.querySelector('#pcSt'); if(!el) return;
+    el.querySelector('em').textContent = text;
+    el.className = 'pcst ' + (kind || '');
+  }
+
+  async function freshCode(m){
+    closeLink(false);
+    token = newToken(); expiresAt = Date.now() + TTL;
+    const url = location.origin + '/cam#t=' + token;
+    const box = m.querySelector('#pcQr');
+    try{ await loadQR(); box.innerHTML = qrSvg(url); }
+    catch(e){ box.innerHTML = `<p class="pcqerr">Não carreguei o QR. Abra no celular:<br><b>${esc(url)}</b></p>`; }
+    m.querySelector('#pcLink').onclick = () => copy(url);
+    setStatus(m, 'Aguardando o celular…', 'wait');
+    ch = App.sb.channel('phonecam:' + token, { config: { broadcast: { self: false } } });
+    ch.on('broadcast', { event: 'm' }, ({ payload: msg }) => onMsg(m, msg)).subscribe();
+    renewTimer = setTimeout(() => { if(!linked && !m.isConnected) return; if(!linked) freshCode(m); }, TTL);
+    clearInterval(tickTimer);
+    tickTimer = setInterval(() => {
+      const left = Math.max(0, Math.round((expiresAt - Date.now()) / 1000));
+      const t = m.querySelector('#pcTtl'); if(t) t.textContent = linked ? 'Conectando direto pela sua rede…' : `Este código se renova em ${left} s`;
+    }, 500);
+  }
+
+  async function onMsg(m, msg){
+    if(!msg || msg.from !== 'phone') return;
+    if(msg.t === 'hello'){
+      if(linked){ if(pc && pc.connectionState !== 'connected') return; return; }
+      linked = true; clearTimeout(renewTimer);
+      setStatus(m, 'Celular encontrado. Conectando…', 'wait');
+      pc = new RTCPeerConnection({ iceServers: (window.TELAO_CONFIG && TELAO_CONFIG.ICE_SERVERS) || [] });
+      pc.addTransceiver('video', { direction: 'recvonly' });
+      pc.onicecandidate = e => { if(e.candidate) send({ candidate: e.candidate.toJSON() }); };
+      let started = false;
+      pc.ontrack = e => {
+        const stream = e.streams[0] || new MediaStream([e.track]);
+        const go = async () => {
+          if(started) return; started = true;
+          setStatus(m, 'Conectado!', 'ok');
+          const myPc = pc;
+          await Voice.startPhoneCamera(stream, () => { if(pc === myPc) closeLink(true); });
+          setTimeout(() => { if(!$('#modal').classList.contains('hidden') && $('#modal').querySelector('#pcQr')) closeModal(); }, 350);
+        };
+        if(pc.connectionState === 'connected') go(); else e.track.onunmute = go;
+      };
+      pc.onconnectionstatechange = () => {
+        const s = pc && pc.connectionState;
+        if(s === 'failed'){
+          App.toast('O celular não conseguiu conectar. Os dois precisam estar no mesmo Wi-Fi (ou configure um TURN).', true);
+          if(Voice.camIsPhone) Voice.stopCamera(); else { closeLink(true); if(m.isConnected) freshCode(m); }
+        }
+      };
+      const off = await pc.createOffer();
+      await pc.setLocalDescription(off);
+      send({ sdp: { type: pc.localDescription.type, sdp: pc.localDescription.sdp } });
+    } else if(msg.sdp && msg.sdp.type === 'answer' && pc){
+      try{ await pc.setRemoteDescription(msg.sdp); }catch(e){}
+    } else if(msg.candidate && pc){
+      try{ await pc.addIceCandidate(msg.candidate); }catch(e){}
+    } else if(msg.t === 'bye'){
+      if(Voice.camIsPhone){ App.toast('O celular parou de mandar a câmera.'); Voice.stopCamera(); }
+      else { closeLink(false); if(m.isConnected) freshCode(m); }
+    }
+  }
+
+  function open(note){
+    if(!Voice.channel){ App.toast('Entre numa chamada primeiro', true); return; }
+    if(!window.RTCPeerConnection){ App.toast('Seu navegador não faz conexão direta (WebRTC).', true); return; }
+    modal(`<div class="mh"><h2>${ic('smartphone', 22)} Usar celular como câmera</h2>
+        <p>${note ? esc(note) + ' ' : ''}Escaneie com o celular. A página abre no navegador dele, e o vídeo vem direto pela sua rede, sem passar por servidor nenhum.</p></div>
+      <div class="mc pcbody">
+        <div class="pcqrwrap"><div class="pcqr" id="pcQr"><div class="pcqload"></div></div><span class="pcscan"></span></div>
+        <div class="pcst wait" id="pcSt"><i></i><em>Gerando código…</em></div>
+        <small class="pcttl" id="pcTtl"></small>
+        <ol class="pcsteps"><li>Abra a câmera do celular e aponte para o código</li><li>Toque no link e depois em <b>Começar</b></li><li>Pronto: o celular vira a sua câmera na chamada</li></ol>
+      </div>
+      <div class="mf"><button class="btn sec" id="pcLink">${ic('link', 16)} Copiar link</button><button class="btn sec" id="pcNo">Cancelar</button></div>`, m => {
+      m.querySelector('.mbox').classList.add('pcmodal');
+      m.querySelector('#pcNo').onclick = () => closeModal();
+      freshCode(m.querySelector('.mbox') || m);
+      const modalEl = $('#modal');
+      const obs = new MutationObserver(() => { if(modalEl.classList.contains('hidden') || !modalEl.querySelector('#pcQr')){ obs.disconnect(); clearInterval(tickTimer); clearTimeout(renewTimer); if(!Voice.camIsPhone) closeLink(true); } });
+      obs.observe(modalEl, { attributes: true, attributeFilter: ['class'], childList: true });
+    });
+  }
+  return { open, stop: () => closeLink(true) };
+})();
+App.phoneCam = PhoneCam.open;
 /* ---------------- PWA ---------------- */
 window.addEventListener('beforeinstallprompt', e => {
   e.preventDefault(); if(window.telaoDesktop) return; S.installEvt = e;

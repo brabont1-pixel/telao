@@ -1,11 +1,15 @@
 /* =====================================================================
    v6.10: GERENCIAR CANAIS E CATEGORIAS + IMPULSOS ILIMITADOS DO DONO DO TELÃO
    ===================================================================== */
-S.cats = new Map(); // server_id -> [{ name, position }]
+S.cats = new Map(); // server_id -> [{ name, position, allowed_roles, send_roles }]
+S.catSend = new Map(); // server_id -> Map(categoria -> pode escrever)
 let catsRt = null;
 async function loadCats(sid){
-  const { data } = await App.sb.from('server_categories').select('name, position').eq('server_id', sid).order('position');
+  // permissões (v6.26): se o banco ainda não foi atualizado, lê do jeito antigo
+  let { data, error } = await App.sb.from('server_categories').select('name, position, allowed_roles, send_roles').eq('server_id', sid).order('position');
+  if(error) ({ data } = await App.sb.from('server_categories').select('name, position').eq('server_id', sid).order('position'));
   S.cats.set(sid, data || []);
+  try{ const r = await App.sb.rpc('my_category_access', { p_server: sid }); if(!r.error) S.catSend.set(sid, new Map((r.data || []).map(x => [x.name, x.can_send]))); }catch(e){}
   if(!catsRt) catsRt = App.sb.channel('cats-rt').on('postgres_changes', { event: '*', schema: 'public', table: 'server_categories' }, async p => {
     const sid2 = (p.new && p.new.server_id) || (p.old && p.old.server_id) || (S.route.kind === 'server' && S.route.sid);
     if(sid2 && S.channels.has(sid2)){ await loadCats(sid2); if(S.route.kind === 'server' && S.route.sid === sid2) renderSidebar(); }
@@ -88,10 +92,50 @@ function categoryMenu(s, el, x, y){
   if(cat){
     items.push({ label: 'Mover para cima', icon: ic('chevDown', 18).replace('<svg', '<svg style="transform:rotate(180deg)"'), onClick: () => moveCategory(s, cat, -1) },
       { label: 'Mover para baixo', icon: ic('chevDown', 18), onClick: () => moveCategory(s, cat, 1) },
+      { label: 'Permissões da categoria', icon: ic('lock', 18), onClick: () => categoryPermsModal(s, cat) },
       '-', { label: 'Excluir categoria', icon: ic('trash', 18), danger: true, onClick: () => deleteCategoryModal(s, cat) });
   }
   menu(x, y, items);
 }
+
+/* ---------- permissões da categoria (v6.26): quem vê e quem escreve ---------- */
+function categoryPermsModal(s, cat){
+  const info = (S.cats.get(s.id) || []).find(c => c.name === cat) || {};
+  if(!('allowed_roles' in info)){ App.toast('Para usar permissões nas categorias, rode o supabase.sql novo no Supabase (SQL Editor → Run).', true); return; }
+  const roles = (S.roles.get(s.id) || []).filter(r => r.name !== '@everyone').sort((a, b) => (b.position || 0) - (a.position || 0));
+  const view = new Set(info.allowed_roles || []), send = new Set(info.send_roles || []);
+  const chs = (S.channels.get(s.id) || []).filter(c => c.category === cat);
+  const pick = (id, set) => roles.length ? `<div class="rolepick" id="${id}">${roles.map(r => `<label class="rp"><input type="checkbox" value="${r.id}" ${set.has(r.id) ? 'checked' : ''}><i style="background:${esc(r.color || '#888')}"></i>${esc(r.name)}</label>`).join('')}</div>`
+    : `<p class="mut small" id="${id}">Este servidor ainda não tem cargos. Crie em Configurações do servidor → Cargos.</p>`;
+  modal(`<form id="cpF"><div class="mh"><h2>${ic('lock', 22)} Permissões de “${esc(cat)}”</h2><p>Vale para os ${chs.length} cana${chs.length === 1 ? 'l' : 'is'} da categoria. O dono e quem é Administrador sempre veem tudo.</p></div>
+    <div class="mc">
+      <div class="permblk">
+        ${row('Categoria privada', 'Só os cargos escolhidos veem a categoria, leem as mensagens e entram nas chamadas dela. Para os outros ela some.', toggle('cpPriv', view.size > 0))}
+        <div class="${view.size ? '' : 'hidden'}" id="cpViewW"><span class="permlbl">${ic('eye', 14)} Quem pode ver</span>${pick('cpView', view)}</div>
+      </div>
+      <div class="permblk">
+        ${row('Limitar quem escreve', 'Os outros continuam vendo os canais de texto, mas só leem. Moderadores sempre podem escrever.', toggle('cpSendOn', send.size > 0))}
+        <div class="${send.size ? '' : 'hidden'}" id="cpSendW"><span class="permlbl">${ic('edit', 14)} Quem pode escrever</span>${pick('cpSend', send)}</div>
+      </div>
+      <div class="err" id="cpE"></div>
+    </div>
+    <div class="mf"><button type="button" class="btn sec" data-close>Cancelar</button><button class="btn">Salvar permissões</button></div></form>`, m => {
+    const q = x => m.querySelector(x);
+    q('#cpPriv').onchange = e => q('#cpViewW').classList.toggle('hidden', !e.target.checked);
+    q('#cpSendOn').onchange = e => q('#cpSendW').classList.toggle('hidden', !e.target.checked);
+    q('#cpF').onsubmit = async e => {
+      e.preventDefault();
+      const ids = sel => [...m.querySelectorAll(sel + ' input:checked')].map(x => x.value);
+      const v = q('#cpPriv').checked ? ids('#cpView') : [], w = q('#cpSendOn').checked ? ids('#cpSend') : [];
+      if(q('#cpPriv').checked && !v.length){ q('#cpE').textContent = 'Escolha pelo menos um cargo que pode ver.'; return; }
+      if(q('#cpSendOn').checked && !w.length){ q('#cpE').textContent = 'Escolha pelo menos um cargo que pode escrever.'; return; }
+      const { error } = await App.sb.rpc('category_perms_save', { p_server: s.id, p_name: cat, p_view: v, p_send: w });
+      if(error){ q('#cpE').textContent = errMsg(error); return; }
+      closeModal(); await loadChannels(s.id); renderSidebar(); App.toast(v.length ? `“${cat}” agora é privada` : 'Permissões salvas');
+    };
+  });
+}
+App.categoryPermsModal = categoryPermsModal;
 
 /* ---------- canais: menu, mover, duplicar ---------- */
 let saveLayout = async function(s, groups){

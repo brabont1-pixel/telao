@@ -2651,6 +2651,89 @@ create policy "telao anexos apagar" on storage.objects for delete to authenticat
   using (bucket_id = 'attachments' and (storage.foldername(name))[1] = auth.uid()::text);
 
 -- =====================================================================
+-- v6.26: PERMISSÕES DAS CATEGORIAS (quem vê e quem escreve, por cargo)
+-- =====================================================================
+alter table public.server_categories add column if not exists allowed_roles uuid[];  -- quem vê (vazio = todo mundo)
+alter table public.server_categories add column if not exists send_roles uuid[];     -- quem escreve nos canais de texto (vazio = todo mundo que vê)
+
+-- a pessoa tem algum desses cargos? (lista vazia = libera; dono e administrador sempre passam)
+create or replace function public.role_match(sid uuid, roles uuid[]) returns boolean
+language sql stable security definer set search_path = public as $$
+  select roles is null or cardinality(roles) = 0
+      or exists (select 1 from servers s where s.id = sid and s.owner_id = auth.uid())
+      or exists (select 1 from member_roles mr join server_roles r on r.id = mr.role_id
+                 where mr.server_id = sid and mr.user_id = auth.uid() and (r.perms & 32) <> 0)
+      or exists (select 1 from member_roles mr where mr.server_id = sid and mr.user_id = auth.uid() and mr.role_id = any(roles));
+$$;
+
+-- ver o canal = ser do servidor + passar no cargo do canal + passar no cargo da categoria
+create or replace function public.can_view_channel(cid uuid) returns boolean
+language sql stable security definer set search_path = public as $$
+  select exists (
+    select 1 from channels c
+    where c.id = cid and (
+      auth.uid() in (c.dm_a, c.dm_b)
+      or (c.server_id is not null
+          and exists (select 1 from server_members m where m.server_id = c.server_id and m.user_id = auth.uid())
+          and public.role_match(c.server_id, c.allowed_roles)
+          and (c.category is null or public.role_match(c.server_id,
+                 (select sc.allowed_roles from server_categories sc where sc.server_id = c.server_id and sc.name = c.category))))
+    )
+  );
+$$;
+drop policy if exists "ver canais" on public.channels;
+create policy "ver canais" on public.channels for select to authenticated using (
+  (kind = 'dm' and auth.uid() in (dm_a, dm_b)) or (server_id is not null and public.can_view_channel(id)));
+
+-- categoria escondida: some da lista para quem não tem o cargo
+drop policy if exists "ver categorias" on public.server_categories;
+create policy "ver categorias" on public.server_categories for select to authenticated
+  using (public.is_member(server_id) and public.role_match(server_id, allowed_roles));
+
+-- escrever: se a categoria limita quem escreve, só esses cargos (moderação sempre pode)
+create or replace function public.message_category_rules() returns trigger
+language plpgsql security definer set search_path = public as $$
+declare c channels; roles uuid[];
+begin
+  select * into c from channels where id = new.channel_id;
+  if c.server_id is null or c.category is null then return new; end if;
+  if public.has_perm(c.server_id, 1) or public.has_perm(c.server_id, 8) then return new; end if;
+  select send_roles into roles from server_categories where server_id = c.server_id and name = c.category;
+  if not public.role_match(c.server_id, roles) then
+    raise exception 'Nesta categoria só alguns cargos podem escrever.';
+  end if;
+  return new;
+end $$;
+drop trigger if exists message_category_rules on public.messages;
+create trigger message_category_rules before insert on public.messages for each row execute function public.message_category_rules();
+
+-- salvar as permissões (só quem gerencia canais; cargos têm que ser do mesmo servidor)
+create or replace function public.category_perms_save(p_server uuid, p_name text, p_view uuid[], p_send uuid[]) returns void
+language plpgsql security definer set search_path = public as $$
+begin
+  if not public.has_perm(p_server, 1) then raise exception 'Você não pode gerenciar canais'; end if;
+  if exists (select 1 from unnest(coalesce(p_view, '{}') || coalesce(p_send, '{}')) r(id)
+             where not exists (select 1 from server_roles sr where sr.id = r.id and sr.server_id = p_server)) then
+    raise exception 'Cargo de outro servidor';
+  end if;
+  update server_categories
+     set allowed_roles = case when cardinality(p_view) > 0 then p_view else null end,
+         send_roles    = case when cardinality(p_send) > 0 then p_send else null end
+   where server_id = p_server and name = p_name;
+  if not found then raise exception 'Categoria não encontrada'; end if;
+end $$;
+grant execute on function public.category_perms_save(uuid, text, uuid[], uuid[]) to authenticated;
+grant execute on function public.role_match(uuid, uuid[]) to authenticated;
+
+-- quem escreve em cada categoria (o app usa para desligar a caixa de mensagem)
+create or replace function public.my_category_access(p_server uuid) returns table(name text, can_send boolean)
+language sql stable security definer set search_path = public as $$
+  select sc.name, (public.has_perm(p_server, 1) or public.has_perm(p_server, 8) or public.role_match(p_server, sc.send_roles))
+  from server_categories sc where sc.server_id = p_server and public.is_member(p_server) and public.role_match(p_server, sc.allowed_roles);
+$$;
+grant execute on function public.my_category_access(uuid) to authenticated;
+
+-- =====================================================================
 -- VIRAR ADMIN: troque o e-mail abaixo pelo SEU e rode só esta linha
 -- (ou deixe aqui: se o e-mail não existir, não acontece nada)
 -- =====================================================================

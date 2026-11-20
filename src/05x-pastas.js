@@ -124,19 +124,22 @@ function rdMove(x, y){
   const rail = $('#rail'), line = document.getElementById('railLine'); line.style.display = 'none';
   document.querySelectorAll('.rdrop').forEach(z => z.classList.remove('rdrop'));
   const rr = rail.getBoundingClientRect();
-  if(y < rr.top + 24) rail.scrollTop -= 8; else if(y > rr.bottom - 24) rail.scrollTop += 8;
-  if(x > rr.right + 40){ RD.target = null; return; }
+  const hz = getComputedStyle(rail).flexDirection === 'row';   // v6.26: no computador o dock é horizontal
+  if(hz){ if(x < rr.left + 24) rail.scrollLeft -= 10; else if(x > rr.right - 24) rail.scrollLeft += 10; }
+  else if(y < rr.top + 24) rail.scrollTop -= 8; else if(y > rr.bottom - 24) rail.scrollTop += 8;
+  if(hz ? y > rr.bottom + 40 : x > rr.right + 40){ RD.target = null; return; }
   const cand = [...rail.querySelectorAll('.ricon.srv[data-sid], .rfh')].filter(b => b.dataset.sid !== RD.sid && b.dataset.fid !== RD.fid && !(RD.fid && b.closest(`.rfold[data-fid="${RD.fid}"]`)));
   if(!cand.length){ RD.target = null; return; }
   // o ícone mais perto na vertical
   let best = null, bd = 1e9;
-  cand.forEach(b => { const r = b.getBoundingClientRect(), d = Math.abs(y - (r.top + r.height / 2)); if(d < bd){ bd = d; best = b; } });
-  const r = best.getBoundingClientRect(), rel = (y - r.top) / r.height;
+  cand.forEach(b => { const r = b.getBoundingClientRect(), d = hz ? Math.abs(x - (r.left + r.width / 2)) : Math.abs(y - (r.top + r.height / 2)); if(d < bd){ bd = d; best = b; } });
+  const r = best.getBoundingClientRect(), rel = hz ? (x - r.left) / r.width : (y - r.top) / r.height;
   const canJoin = !RD.fid && rel > 0.28 && rel < 0.72;
   if(canJoin){ best.classList.add('rdrop'); RD.target = { join: best.dataset.sid || null, fold: best.dataset.fid || null }; return; }
   const after = rel >= 0.5;
-  line.style.display = 'block'; line.style.left = (rr.left + 8) + 'px'; line.style.width = (rr.width - 16) + 'px';
-  line.style.top = ((after ? r.bottom + 4 : r.top - 6)) + 'px';
+  line.style.display = 'block';
+  if(hz){ line.style.top = (rr.top + 8) + 'px'; line.style.height = (rr.height - 16) + 'px'; line.style.width = '3px'; line.style.left = (after ? r.right + 3 : r.left - 6) + 'px'; }
+  else { line.style.left = (rr.left + 8) + 'px'; line.style.width = (rr.width - 16) + 'px'; line.style.height = '3px'; line.style.top = ((after ? r.bottom + 4 : r.top - 6)) + 'px'; }
   RD.target = { ref: best.dataset.sid || null, refFold: best.dataset.fid || null, after };
 }
 function rdDrop(){

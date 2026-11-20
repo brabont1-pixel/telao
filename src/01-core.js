@@ -9,7 +9,7 @@ const esc = s => String(s ?? '').replace(/[&<>"']/g, c => ({'&':'&amp;','<':'&lt
 const COLORS = ['#5865f2','#eb459e','#3ba55c','#faa61a','#ed4245','#f47b67','#1abc9c','#9b59b6','#e67e22','#607d8b'];
 const ls = { get(k,d){ try{ const v=localStorage.getItem(k); return v==null?d:JSON.parse(v); }catch(e){ return d; } }, set(k,v){ try{ localStorage.setItem(k, JSON.stringify(v)); }catch(e){} } };
 
-const APP_VERSION = '6.25';
+const APP_VERSION = '6.26';
 const S = {
   me: null, profiles: new Map(), servers: [], channels: new Map(), members: new Map(),
   friends: [], dms: [], dmActivity: ls.get('telao-dmact', {}), online: new Set(),
@@ -647,6 +647,12 @@ const LOGO = `<svg class="tlogo" viewBox="0 0 125 135" width="30" height="30" ar
 function serverIcon(s, size){
   return s.icon_url ? `<img src="${esc(s.icon_url)}" alt="" loading="lazy" decoding="async">` : esc(serverInitials(s.name));
 }
+// v6.26: dock horizontal — a rodinha do mouse anda para os lados
+document.addEventListener('wheel', e => {
+  const rail = e.target.closest && e.target.closest('#rail'); if(!rail || Math.abs(e.deltaX) > Math.abs(e.deltaY)) return;
+  if(getComputedStyle(rail).flexDirection !== 'row' || rail.scrollWidth <= rail.clientWidth) return;
+  rail.scrollLeft += e.deltaY; e.preventDefault();
+}, { passive: false });
 function renderRail(){
   const pend = S.friends.filter(f => f.status === 'pending' && f.incoming).length;
   const dmUnread = S.dms.filter(d => S.unread.has(d.id)).length + S.groups.filter(g => S.unread.has(g.id)).length;
@@ -733,7 +739,7 @@ function renderSidebar(){
   let h = s.description ? `<div class="srvdesc">${esc(s.description)}</div>` : '';
   channelGroups(s, list).forEach(({ title: g, cat, kind, chs }) => {
     const key = s.id + ':' + g, col = COLLAPSED.has(key);
-    h += `<div class="cat ${col?'col':''} ${cat ? 'real' : ''}" data-cat="${esc(key)}" data-catname="${esc(cat || '')}" data-catkind="${kind || ''}"><span>${ic('chevDown',12)} ${esc(g)}</span>${canCh?`<span class="catb"><button data-catmenu data-tip="Opções da categoria">${ic('dots',16)}</button><button data-new="${chs[0] ? chs[0].kind : (kind || 'text')}" data-newcat="${esc(cat || '')}" data-tip="Criar canal">${ic('plus',16)}</button></span>`:''}</div>`;
+    h += `<div class="cat ${col?'col':''} ${cat ? 'real' : ''}" data-cat="${esc(key)}" data-catname="${esc(cat || '')}" data-catkind="${kind || ''}"><span>${ic('chevDown',12)} ${esc(g)}${cat && ((S.cats && S.cats.get(s.id)) || []).some(x => x.name === cat && x.allowed_roles && x.allowed_roles.length) ? `<i class="catlock" data-tip="Categoria privada">${ic('lock',11)}</i>` : ''}</span>${canCh?`<span class="catb"><button data-catmenu data-tip="Opções da categoria">${ic('dots',16)}</button><button data-new="${chs[0] ? chs[0].kind : (kind || 'text')}" data-newcat="${esc(cat || '')}" data-tip="Criar canal">${ic('plus',16)}</button></span>`:''}</div>`;
     if(!chs.length && canCh && !col) h += `<div class="catempty" data-dropcat="${esc(cat || '')}">Nenhum canal. Arraste um canal para cá ou clique no +.</div>`;
     chs.forEach(c => {
       const on = S.route.cid === c.id, un = S.unread.has(c.id);

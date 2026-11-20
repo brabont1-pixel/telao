@@ -91,6 +91,8 @@ function applyComposerRules(){
   const info = $('#cmpRule') || (() => { const d = document.createElement('div'); d.id = 'cmpRule'; d.className = 'cmprule'; form && form.parentNode.insertBefore(d, form); return d; })();
   const bits = [];
   if(c.readonly && !mod){ ta.disabled = true; ta.placeholder = 'Este canal é só para leitura.'; bits.push(`${ic('eye', 13)} Só leitura`); }
+  else if(c.category && !mod && S.catSend && S.catSend.get(c.server_id) && S.catSend.get(c.server_id).get(c.category) === false){
+    ta.disabled = true; ta.placeholder = 'Nesta categoria só alguns cargos podem escrever.'; bits.push(`${ic('lock', 13)} Só alguns cargos escrevem aqui`); }
   if(c.slowmode) bits.push(`${ic('clock', 13)} Modo lento: ${fmtSlow(c.slowmode)}${mod ? ' (moderadores não têm limite)' : ''}`);
   if(c.no_links) bits.push('Sem links');
   if(c.no_media){ bits.push('Sem arquivos'); const at = form && form.querySelector('#attBtn, [data-attach], .attbtn'); if(at && !mod) at.style.display = 'none'; }

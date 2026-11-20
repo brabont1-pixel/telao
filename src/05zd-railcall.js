@@ -39,8 +39,14 @@ function railTipShow(el){
   const tip = document.getElementById('tipEl'); if(!tip) return;
   tip.classList.add('rich'); tip.innerHTML = html;
   const r = el.getBoundingClientRect();
-  tip.style.left = (r.right + 12) + 'px';
-  tip.style.top = Math.max(8, Math.min(innerHeight - tip.offsetHeight - 8, r.top + r.height / 2 - tip.offsetHeight / 2)) + 'px';
+  const rail = document.getElementById('rail');
+  if(rail && getComputedStyle(rail).flexDirection === 'row'){   // v6.26: dock horizontal, o cartão abre embaixo
+    tip.style.left = Math.max(8, Math.min(innerWidth - tip.offsetWidth - 8, r.left + r.width / 2 - tip.offsetWidth / 2)) + 'px';
+    tip.style.top = (rail.getBoundingClientRect().bottom + 8) + 'px';
+  } else {
+    tip.style.left = (r.right + 12) + 'px';
+    tip.style.top = Math.max(8, Math.min(innerHeight - tip.offsetHeight - 8, r.top + r.height / 2 - tip.offsetHeight / 2)) + 'px';
+  }
 }
 // roda depois do tooltip comum (registrado antes) e troca o conteúdo
 document.addEventListener('mouseover', e => {

@@ -108,7 +108,8 @@ document.addEventListener('mouseover', e => {
   if(!tip){ tip = document.createElement('div'); tip.id = 'tipEl'; tip.className = 'tip'; document.body.appendChild(tip); }
   tip.innerHTML = esc(t.dataset.tip) + (t.dataset.tipsub ? `<small>${esc(t.dataset.tipsub)}</small>` : '');
   const r = t.getBoundingClientRect(), w = tip.offsetWidth;
-  if(t.dataset.tipside === 'r'){ tip.style.left = (r.right + 12) + 'px'; tip.style.top = (r.top + r.height/2 - tip.offsetHeight/2) + 'px'; return; }
+  const railHz = t.dataset.tipside === 'r' && t.closest('#rail') && getComputedStyle(t.closest('#rail')).flexDirection === 'row';
+  if(t.dataset.tipside === 'r' && !railHz){ tip.style.left = (r.right + 12) + 'px'; tip.style.top = (r.top + r.height/2 - tip.offsetHeight/2) + 'px'; return; }
   let top = r.top - tip.offsetHeight - 8; if(top < 4) top = r.bottom + 8;
   tip.style.left = Math.max(6, Math.min(innerWidth - w - 6, r.left + r.width/2 - w/2)) + 'px';
   tip.style.top = top + 'px';

@@ -431,12 +431,16 @@ async function cameraSetup(){
   if(!Voice.channel){ App.toast('Entre numa chamada primeiro', true); return; }
   let fx;
   try{ fx = await Voice.openCamFx(); }
-  catch(e){ App.toast(Voice.camErrorText(e), true); return; }
+  catch(e){
+    // sem câmera no PC (ou travada): oferece o celular no lugar
+    if(App.phoneCam && e && /NotFound|Overconstrained|DevicesNotFound|NotReadable|TrackStart|Abort/.test(e.name || '')) return App.phoneCam(Voice.camErrorText(e).split('.')[0] + '. Use o celular como câmera:');
+    App.toast(Voice.camErrorText(e), true); return;
+  }
   let started = false;
   modal(`<div class="mh"><h2>${ic('video',22)} Sua câmera</h2><p>Escolha um efeito antes de aparecer. Dá para trocar durante a chamada também.</p></div>
     <div class="mc"><div class="campv"><video id="camPv" autoplay playsinline muted></video><span class="camst" id="camSt"></span></div>
       <div class="fxgrid" id="fxGrid">${CamFX.EFFECTS.map(e => `<button data-fx="${e.id}" class="${(P.camFx||'none')===e.id?'on':''}"><span>${e.ic}</span>${esc(e.nome)}${e.tag?`<i>${e.tag}</i>`:''}</button>`).join('')}</div></div>
-    <div class="mf"><button class="btn sec" id="camNo">Cancelar</button><button class="btn" id="camGo">${ic('video',16)} Ligar câmera</button></div>`, m => {
+    <div class="mf">${App.phoneCam ? `<button class="btn sec" id="camPhone" style="margin-right:auto">${ic('smartphone',16)} Usar o celular</button>` : ''}<button class="btn sec" id="camNo">Cancelar</button><button class="btn" id="camGo">${ic('video',16)} Ligar câmera</button></div>`, m => {
     m.querySelector('.mbox').classList.add('wide');
     const v = m.querySelector('#camPv'); v.srcObject = fx.stream; v.play().catch(()=>{});
     fx.onStatus(t => { const el = m.querySelector('#camSt'); if(el){ el.textContent = t; el.classList.toggle('hidden', !t); } });
@@ -445,6 +449,7 @@ async function cameraSetup(){
       m.querySelectorAll('[data-fx]').forEach(x => x.classList.toggle('on', x === b));
     });
     m.querySelector('#camNo').onclick = () => { closeModal(); };
+    const cp = m.querySelector('#camPhone'); if(cp) cp.onclick = () => { closeModal(); setTimeout(() => App.phoneCam(), 60); };
     m.querySelector('#camGo').onclick = () => { started = true; closeModal(); Voice.startCamera(fx); };
     const obs = new MutationObserver(() => { if($('#modal').classList.contains('hidden')){ obs.disconnect(); if(!started) fx.stop(); } });
     obs.observe($('#modal'), { attributes:true, attributeFilter:['class'] });

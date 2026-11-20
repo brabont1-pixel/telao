@@ -207,7 +207,7 @@
         await this.presenceCh.track({
           session: SESSION, user_id: me.id, voice: this.channel.id,
           muted: this.muted || this.forceMuted || !this.micStream, deafened: this.deafened || this.forceDeaf, smod: !!(this.forceMuted || this.forceDeaf),
-          sharing: !!this.screenStream, screen: this.screenStream ? this.screenStream.id : null,
+          sharing: !!this.screenStream, screen: this.screenStream ? this.screenStream.id : null, secho: !!(this.screenStream && this.screenEcho),
           camera: !!this.camStream, cam: this.camStream ? this.camStream.id : null,
           at: Date.now()
         });
@@ -391,7 +391,9 @@
     applyVolume(p){
       const info = this.infos.get(p.remote), uid = info && info.user_id;
       const voice = uid ? (this.userVolumes.get(uid) ?? 1) : 1;
-      const scr = (uid ? (this.screenVolumes.get(uid) ?? 1) : 1) * (this.ducking ? 0.25 : 1);
+      // anti-eco: se a tela dessa pessoa leva junto o som da chamada, abaixa enquanto EU falo (senão me ouço de volta)
+      const echoCut = info && info.secho && (this.selfEchoDuck || this.ducking) ? 0.06 : 1;
+      const scr = (uid ? (this.screenVolumes.get(uid) ?? 1) : 1) * (this.ducking ? 0.25 : 1) * echoCut;
       p.streams.forEach((s, id) => {
         const a = p.audioEls.get(id); if(!a) return;
         const isScreen = s.getVideoTracks().length > 0 || (info && info.screen === id);
@@ -450,15 +452,40 @@
       this.peers.forEach(p => { s.getTracks().forEach(t => p.screenSenders.push(p.pc.addTrack(t, s))); });
       const sup = navigator.mediaDevices.getSupportedConstraints ? navigator.mediaDevices.getSupportedConstraints() : {};
       const surface = (vt.getSettings && vt.getSettings().displaySurface) || '';
-      if(s.getAudioTracks().length && !sup.restrictOwnAudio && surface === 'monitor')
-        App.toast('Dica: seu navegador ainda não separa o som da chamada da tela inteira. Use fone de ouvido, ou compartilhe só uma aba/janela do jogo, para ninguém ouvir eco.');
+      this.screenEcho = await this.screenMayEcho(s, surface, sup);
+      if(this.screenEcho)
+        App.toast('Seu computador não consegue separar o som da chamada do som da tela (precisa do Windows 11). Para ninguém ouvir eco, quem assiste vai ouvir a tela mais baixa enquanto fala. Para som perfeito, compartilhe só uma aba.');
       else if(!s.getAudioTracks().length) App.toast('⚠️ Tela SEM áudio. Para mandar som: “Tela inteira” + “Compartilhar áudio do sistema”, ou uma aba + “Compartilhar áudio da aba”.', true);
       else App.toast('Compartilhando tela com áudio 🎧');
       this.track(); this.onChange();
     },
 
+    /* o som da tela inteira (ou do app do Windows) leva junto a voz da chamada, a não ser que o sistema
+       consiga tirar o som do próprio Telão (restrictOwnAudio). No Windows isso só existe a partir do Windows 11
+       (build 20348+); no Linux não existe. Aba do navegador não leva a chamada. */
+    async screenMayEcho(s, surface, sup){
+      const at = s.getAudioTracks()[0];
+      if(!at) return false;
+      const desktopApp = /Electron/i.test(navigator.userAgent) || !!window.telaoDesktop;
+      if(surface === 'browser' && !desktopApp) return false;
+      let osOk = true;
+      try{
+        const plat = (navigator.userAgentData && navigator.userAgentData.platform) || navigator.platform || '';
+        if(/linux|cros/i.test(plat)) osOk = false;
+        if(/win/i.test(plat) && navigator.userAgentData && navigator.userAgentData.getHighEntropyValues){
+          const v = await navigator.userAgentData.getHighEntropyValues(['platformVersion']);
+          if(parseInt(String(v.platformVersion || '0').split('.')[0], 10) < 13) osOk = false; // < 13 = Windows 10 ou mais antigo
+        }
+      }catch(e){}
+      if(!osOk) return true;
+      if(desktopApp) return false; // app do Windows 1.2+: tira o som do próprio Telão da captura
+      let st = {}; try{ st = at.getSettings ? at.getSettings() : {}; }catch(e){}
+      return !(sup.restrictOwnAudio && st.restrictOwnAudio !== false);
+    },
+
     stopScreen(silent){
       if(!this.screenStream) return;
+      this.screenEcho = false;
       this.screenStream.getTracks().forEach(t => t.stop());
       this.peers.forEach(p => { p.screenSenders.forEach(snd => { try{ p.pc.removeTrack(snd); }catch(e){} }); p.screenSenders = []; });
       this.screenStream = null;
@@ -554,6 +581,16 @@
       this.peers.forEach(p => { p.camSenders = fx.stream.getVideoTracks().map(t => p.pc.addTrack(t, fx.stream)); });
       App.sfx('cam'); this.track(); this.onChange();
     },
+    /* câmera vinda do celular (ver 05zj-celcam.js): entra como a câmera normal, com efeitos */
+    async startPhoneCamera(raw, onStop){
+      if(!this.channel){ onStop && onStop(); return; }
+      if(this.camStream) this.stopCamera(true);
+      const fx = window.CamFX ? CamFX.create(raw) : { stream: raw, source: raw, setEffect(){}, stop(){ raw.getTracks().forEach(t => t.stop()); }, onStatus(){} };
+      try{ await fx.setEffect(this.prefs().camFx || 'none'); }catch(e){}
+      this.camIsPhone = true; this._phoneStop = onStop;
+      await this.startCamera(fx);
+      App.toast('Câmera do celular ligada 📱');
+    },
     camErrorText(e){
       const n = e && e.name;
       if(n === 'NotAllowedError' || n === 'SecurityError') return 'A câmera está bloqueada. Clique no cadeado ao lado do endereço e permita a câmera (no app do Windows: Configurações do Windows → Privacidade → Câmera).';
@@ -565,6 +602,8 @@
     setCamEffect(id){ if(this.camFx) this.camFx.setEffect(id); },
     stopCamera(silent){
       if(!this.camStream) return;
+      const ps = this._phoneStop; this._phoneStop = null; this.camIsPhone = false;
+      if(ps) try{ ps(); }catch(e){}
       if(this.camFx){ this.camFx.stop(); this.camFx = null; } else this.camStream.getTracks().forEach(t => t.stop());
       this.peers.forEach(p => { (p.camSenders || []).forEach(snd => { try{ p.pc.removeTrack(snd); }catch(e){} }); p.camSenders = []; });
       this.camStream = null;
@@ -614,6 +653,11 @@
         if(talkingNow) this._duckUntil = Date.now() + 1000;
         const duck = talkingNow || Date.now() < (this._duckUntil || 0);
         if(duck !== this.ducking){ this.ducking = duck; this.peers.forEach(p => this.applyVolume(p)); }
+        // minha voz volta pela tela de quem não consegue separar o som: corta a tela enquanto falo e 1,6 s depois
+        // (o tempo da minha voz ir, tocar no PC dele e voltar pela transmissão)
+        if(this.speaking.has(SESSION)) this._selfUntil = Date.now() + 1600;
+        const selfDuck = Date.now() < (this._selfUntil || 0) && [...this.infos.values()].some(i => i.secho);
+        if(selfDuck !== this.selfEchoDuck){ this.selfEchoDuck = selfDuck; this.peers.forEach(p => this.applyVolume(p)); }
         if((this._tick = (this._tick||0) + 1) % 40 === 0){ this.syncPeers(); this.checkQuality(); }
       }, this.speakMs || 120);
     }
