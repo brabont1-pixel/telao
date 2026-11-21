@@ -65,6 +65,9 @@ renderSidebar = function(){
   const r = _renderSidebarPet.apply(this, arguments);
   if(S.route.kind !== 'server') return r;
   const sid = S.route.sid, body = $('#sbBody'); if(!body) return r;
+  const srv = S.servers.find(x => x.id === sid);
+  // v6.32: o bichinho é opcional (quem gerencia liga) e cada um pode esconder da própria lateral
+  if(!srv || !srv.pet_on || (P.petHidden || {})[sid]){ document.getElementById('sbPet')?.remove(); return r; }
   const put = () => {
     if(S.route.kind !== 'server' || S.route.sid !== sid) return;
     document.getElementById('sbPet')?.remove();
@@ -77,8 +80,23 @@ renderSidebar = function(){
   const c = S.pets.get(sid); if(!c || Date.now() - c._at > 60000) petLoad(sid).then(put);
   return r;
 };
+async function petSetOn(s, on){
+  const { error } = await App.sb.from('servers').update({ pet_on: on }).eq('id', s.id);
+  if(error){ App.toast(/pet_on|schema cache/i.test(error.message) ? 'Para ligar o bichinho, rode o supabase.sql novo (v6.32) no Supabase.' : error.message, true); return false; }
+  s.pet_on = on; renderSidebar(); return true;
+}
+App.petSetOn = petSetOn;
+function petActivate(s){
+  modal(`<div class="mh"><h2>🐾 Bichinho do servidor</h2><p>Um mascote que cresce com a galera conversando, ficando em call e fazendo carinho. Se o servidor fica parado, ele fica triste (mas nunca morre).</p></div>
+    <div class="mc"><div class="petbig">${petSvg({ xp: 400, species: 'slime', color: '#ff2e9a', last_active: new Date().toISOString() }, 140)}</div>
+      <p class="mut small" style="text-align:center">Fica na lateral do servidor para todo mundo. Dá para desligar quando quiser em Visão geral do servidor.</p></div>
+    <div class="mf"><button class="btn sec" data-close>Agora não</button><button class="btn" id="petOn">🐾 Ativar bichinho</button></div>`, m => {
+    m.querySelector('#petOn').onclick = async () => { if(await petSetOn(s, true)){ closeModal(); App.toast('Bichinho ativado! Ele nasceu como ovo 🥚'); petModal(s.id); } };
+  });
+}
 async function petModal(sid){
   const s = S.servers.find(x => x.id === sid); if(!s) return;
+  if(!s.pet_on){ if(App.hasPerm(sid, 2)) petActivate(s); else App.toast('O bichinho está desligado neste servidor.', true); return; }
   const p = await petLoad(sid, true);
   if(!p){ App.toast(PET_SQL, true); return; }
   await ensureProfiles((p.top || []).map(t => t.user_id));
@@ -96,7 +114,12 @@ async function petModal(sid){
         <div class="petsp">${Object.entries(PET_SPECIES).map(([k, n]) => `<button type="button" class="${p.species === k ? 'on' : ''}" data-psp="${k}">${petSvg({ ...p, species: k, xp: Math.max(p.xp, 400) }, 52)}<small>${n}</small></button>`).join('')}</div>
         <div class="colors" id="petC">${PET_COLORS.map(c => `<button type="button" data-pc="${c}" style="background:${c}" class="${p.color === c ? 'on' : ''}"></button>`).join('')}</div>
         <button class="btn sm" id="petSave">Salvar</button></details>` : ''}
+      <label class="pethide"><input type="checkbox" id="petHide" ${(P.petHidden || {})[sid] ? 'checked' : ''}> Esconder o bichinho da minha lateral</label>
+      ${can ? `<button class="btn sec sm" id="petOff" style="margin-top:8px">Desligar o bichinho do servidor</button>` : ''}
       <div class="gacts" style="justify-content:flex-end;margin-top:14px"><button class="btn" data-close>Fechar</button></div></div>`, m => {
+    m.querySelector('#petHide').onchange = e => { P.petHidden = { ...(P.petHidden || {}), [sid]: e.target.checked }; if(!e.target.checked) delete P.petHidden[sid]; savePrefs(); renderSidebar(); App.toast(e.target.checked ? 'Escondido da sua lateral. Dá para ver pelo menu do servidor.' : 'O bichinho voltou para a sua lateral.'); };
+    const off = m.querySelector('#petOff');
+    if(off) off.onclick = async () => { if(!(await confirmBox('Desligar o bichinho?', 'Ele some da lateral de todo mundo e para de crescer. Os pontos ficam guardados se ligar de novo.', 'Desligar'))) return; if(await petSetOn(s, false)){ App.toast('Bichinho desligado.'); } };
     const pb = m.querySelector('#petPet');
     pb.onclick = async () => {
       pb.disabled = true;
@@ -125,4 +148,12 @@ setInterval(() => {
   App.sb.rpc('pet_voice_tick', { p_server: ch.server_id }).then(({ data }) => { if(data) petLoad(ch.server_id, true).then(() => { if(S.route.kind === 'server' && S.route.sid === ch.server_id) renderSidebar(); }); }, () => {});
 }, 5 * 60 * 1000);
 const _srvMenuExtraPet = App.srvMenuExtra;
-App.srvMenuExtra = s => (_srvMenuExtraPet ? _srvMenuExtraPet(s) : []).concat([{ label: 'Bichinho do servidor', icon: ic('paw', 18), onClick: () => petModal(s.id) }]);
+App.srvMenuExtra = s => (_srvMenuExtraPet ? _srvMenuExtraPet(s) : []).concat(s.pet_on || App.hasPerm(s.id, 2) ? [{ label: s.pet_on ? 'Bichinho do servidor' : 'Ativar bichinho do servidor', icon: ic('paw', 18), onClick: () => petModal(s.id) }] : []);
+// Visão geral do servidor: ligar/desligar
+const _secSrvOverviewPet = secSrvOverview;
+secSrvOverview = function(box, back){
+  _secSrvOverviewPet.apply(this, arguments);
+  const s = SET.server; if(!App.hasPerm(s.id, 2)) return;
+  box.insertAdjacentHTML('beforeend', `<hr class="sdiv"><h3>🐾 Bichinho do servidor</h3>${row('Ativar o bichinho', 'Um mascote na lateral que cresce com a galera conversando, em call e fazendo carinho.', toggle('petOnT', !!s.pet_on))}`);
+  box.querySelector('#petOnT').onchange = async e => { if(!(await petSetOn(s, e.target.checked))) e.target.checked = !e.target.checked; else App.toast(e.target.checked ? 'Bichinho ativado! 🐾' : 'Bichinho desligado.'); };
+};

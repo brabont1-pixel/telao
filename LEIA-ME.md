@@ -500,3 +500,10 @@ O "Spotify direto" (com Ouvir junto) continua opcional e só aparece se você co
 - **🐾 Bichinho do servidor:** aparece na lateral do servidor. Cresce com mensagens (+1, até 40 por pessoa por dia), tempo em call (+5 a cada 5 min, até 60 por dia) e carinho (+5, uma vez por dia). Passa de ovo → filhote → jovem → adulto → lendário. Se o servidor fica parado ele fica triste e depois doente, mas nunca morre. Quem gerencia o servidor muda nome, espécie (slime, gatinho, dragãozinho, robô, fantasminha, patinho) e cor.
 - **🎵 Música do perfil:** Configurações → Perfil → Música do perfil. Busque e escolha um trecho de 30 s. Ele toca baixinho quando alguém abre o seu perfil, com botão de pausar. Dá para desligar a música dos outros ou mudar o volume ali mesmo.
 - **📊 Cartão de estatísticas:** no menu do seu perfil → **Meu cartão de estatísticas**. Mostra horas em call, mensagens, jogo mais jogado, servidor favorito e mais, num cartão de story (30 dias, 1 ano ou desde sempre; 5 cores). Dá para baixar, compartilhar ou mandar no chat.
+
+# Versão 6.32: bichinho opcional e trecho da música do perfil
+
+**Precisa rodar o `supabase.sql` novo no Supabase.**
+
+- **🐾 Bichinho opcional:** agora ele começa **desligado**. Quem gerencia o servidor liga pelo menu do servidor → **Ativar bichinho do servidor** (ou em Visão geral do servidor → Bichinho do servidor), e pode desligar do mesmo jeito; os pontos ficam guardados. Desligado, ele não aparece e não conta pontos. Cada pessoa também pode marcar **Esconder o bichinho da minha lateral** (só para ela).
+- **✂️ Trecho da música do perfil:** em Configurações → Perfil → Música do perfil, depois de escolher a música aparece o editor de trecho: arraste para escolher onde começa, escolha a duração (5, 10, 15, 20 ou 30 s), ouça e salve. Quem abre seu perfil ouve só esse pedaço, em loop.

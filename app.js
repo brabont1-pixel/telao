@@ -9,7 +9,7 @@ const esc = s => String(s ?? '').replace(/[&<>"']/g, c => ({'&':'&amp;','<':'&lt
 const COLORS = ['#5865f2','#eb459e','#3ba55c','#faa61a','#ed4245','#f47b67','#1abc9c','#9b59b6','#e67e22','#607d8b'];
 const ls = { get(k,d){ try{ const v=localStorage.getItem(k); return v==null?d:JSON.parse(v); }catch(e){ return d; } }, set(k,v){ try{ localStorage.setItem(k, JSON.stringify(v)); }catch(e){} } };
 
-const APP_VERSION = '6.31';
+const APP_VERSION = '6.32';
 const S = {
   me: null, profiles: new Map(), servers: [], channels: new Map(), members: new Map(),
   friends: [], dms: [], dmActivity: ls.get('telao-dmact', {}), online: new Set(),
@@ -12300,6 +12300,9 @@ renderSidebar = function(){
   const r = _renderSidebarPet.apply(this, arguments);
   if(S.route.kind !== 'server') return r;
   const sid = S.route.sid, body = $('#sbBody'); if(!body) return r;
+  const srv = S.servers.find(x => x.id === sid);
+  // v6.32: o bichinho é opcional (quem gerencia liga) e cada um pode esconder da própria lateral
+  if(!srv || !srv.pet_on || (P.petHidden || {})[sid]){ document.getElementById('sbPet')?.remove(); return r; }
   const put = () => {
     if(S.route.kind !== 'server' || S.route.sid !== sid) return;
     document.getElementById('sbPet')?.remove();
@@ -12312,8 +12315,23 @@ renderSidebar = function(){
   const c = S.pets.get(sid); if(!c || Date.now() - c._at > 60000) petLoad(sid).then(put);
   return r;
 };
+async function petSetOn(s, on){
+  const { error } = await App.sb.from('servers').update({ pet_on: on }).eq('id', s.id);
+  if(error){ App.toast(/pet_on|schema cache/i.test(error.message) ? 'Para ligar o bichinho, rode o supabase.sql novo (v6.32) no Supabase.' : error.message, true); return false; }
+  s.pet_on = on; renderSidebar(); return true;
+}
+App.petSetOn = petSetOn;
+function petActivate(s){
+  modal(`<div class="mh"><h2>🐾 Bichinho do servidor</h2><p>Um mascote que cresce com a galera conversando, ficando em call e fazendo carinho. Se o servidor fica parado, ele fica triste (mas nunca morre).</p></div>
+    <div class="mc"><div class="petbig">${petSvg({ xp: 400, species: 'slime', color: '#ff2e9a', last_active: new Date().toISOString() }, 140)}</div>
+      <p class="mut small" style="text-align:center">Fica na lateral do servidor para todo mundo. Dá para desligar quando quiser em Visão geral do servidor.</p></div>
+    <div class="mf"><button class="btn sec" data-close>Agora não</button><button class="btn" id="petOn">🐾 Ativar bichinho</button></div>`, m => {
+    m.querySelector('#petOn').onclick = async () => { if(await petSetOn(s, true)){ closeModal(); App.toast('Bichinho ativado! Ele nasceu como ovo 🥚'); petModal(s.id); } };
+  });
+}
 async function petModal(sid){
   const s = S.servers.find(x => x.id === sid); if(!s) return;
+  if(!s.pet_on){ if(App.hasPerm(sid, 2)) petActivate(s); else App.toast('O bichinho está desligado neste servidor.', true); return; }
   const p = await petLoad(sid, true);
   if(!p){ App.toast(PET_SQL, true); return; }
   await ensureProfiles((p.top || []).map(t => t.user_id));
@@ -12331,7 +12349,12 @@ async function petModal(sid){
         <div class="petsp">${Object.entries(PET_SPECIES).map(([k, n]) => `<button type="button" class="${p.species === k ? 'on' : ''}" data-psp="${k}">${petSvg({ ...p, species: k, xp: Math.max(p.xp, 400) }, 52)}<small>${n}</small></button>`).join('')}</div>
         <div class="colors" id="petC">${PET_COLORS.map(c => `<button type="button" data-pc="${c}" style="background:${c}" class="${p.color === c ? 'on' : ''}"></button>`).join('')}</div>
         <button class="btn sm" id="petSave">Salvar</button></details>` : ''}
+      <label class="pethide"><input type="checkbox" id="petHide" ${(P.petHidden || {})[sid] ? 'checked' : ''}> Esconder o bichinho da minha lateral</label>
+      ${can ? `<button class="btn sec sm" id="petOff" style="margin-top:8px">Desligar o bichinho do servidor</button>` : ''}
       <div class="gacts" style="justify-content:flex-end;margin-top:14px"><button class="btn" data-close>Fechar</button></div></div>`, m => {
+    m.querySelector('#petHide').onchange = e => { P.petHidden = { ...(P.petHidden || {}), [sid]: e.target.checked }; if(!e.target.checked) delete P.petHidden[sid]; savePrefs(); renderSidebar(); App.toast(e.target.checked ? 'Escondido da sua lateral. Dá para ver pelo menu do servidor.' : 'O bichinho voltou para a sua lateral.'); };
+    const off = m.querySelector('#petOff');
+    if(off) off.onclick = async () => { if(!(await confirmBox('Desligar o bichinho?', 'Ele some da lateral de todo mundo e para de crescer. Os pontos ficam guardados se ligar de novo.', 'Desligar'))) return; if(await petSetOn(s, false)){ App.toast('Bichinho desligado.'); } };
     const pb = m.querySelector('#petPet');
     pb.onclick = async () => {
       pb.disabled = true;
@@ -12360,7 +12383,15 @@ setInterval(() => {
   App.sb.rpc('pet_voice_tick', { p_server: ch.server_id }).then(({ data }) => { if(data) petLoad(ch.server_id, true).then(() => { if(S.route.kind === 'server' && S.route.sid === ch.server_id) renderSidebar(); }); }, () => {});
 }, 5 * 60 * 1000);
 const _srvMenuExtraPet = App.srvMenuExtra;
-App.srvMenuExtra = s => (_srvMenuExtraPet ? _srvMenuExtraPet(s) : []).concat([{ label: 'Bichinho do servidor', icon: ic('paw', 18), onClick: () => petModal(s.id) }]);
+App.srvMenuExtra = s => (_srvMenuExtraPet ? _srvMenuExtraPet(s) : []).concat(s.pet_on || App.hasPerm(s.id, 2) ? [{ label: s.pet_on ? 'Bichinho do servidor' : 'Ativar bichinho do servidor', icon: ic('paw', 18), onClick: () => petModal(s.id) }] : []);
+// Visão geral do servidor: ligar/desligar
+const _secSrvOverviewPet = secSrvOverview;
+secSrvOverview = function(box, back){
+  _secSrvOverviewPet.apply(this, arguments);
+  const s = SET.server; if(!App.hasPerm(s.id, 2)) return;
+  box.insertAdjacentHTML('beforeend', `<hr class="sdiv"><h3>🐾 Bichinho do servidor</h3>${row('Ativar o bichinho', 'Um mascote na lateral que cresce com a galera conversando, em call e fazendo carinho.', toggle('petOnT', !!s.pet_on))}`);
+  box.querySelector('#petOnT').onchange = async e => { if(!(await petSetOn(s, e.target.checked))) e.target.checked = !e.target.checked; else App.toast(e.target.checked ? 'Bichinho ativado! 🐾' : 'Bichinho desligado.'); };
+};
 /* =====================================================================
    v6.31: MÚSICA DO PERFIL
    Escolha uma música (trecho de 30 s da busca do iTunes). Quando alguém abre o seu perfil, ela
@@ -12372,9 +12403,16 @@ const PS = { audio: null, uid: null, fade: null };
 function psStop(){ if(PS.audio){ try{ PS.audio.pause(); }catch(e){} } PS.uid = null; clearInterval(PS.fade); document.querySelectorAll('.psong').forEach(x => x.classList.remove('playing')); }
 function psPlay(song, uid, auto){
   if(!song || !song.preview) return;
-  if(PS.uid === uid && PS.audio && !PS.audio.paused){ psStop(); return; }
+  if(PS.uid === uid && PS.audio && !PS.audio.paused && PS.song && PS.song.start === song.start && PS.song.len === song.len){ psStop(); return; }
   psStop();
-  PS.audio = PS.audio || new Audio(); PS.audio.src = song.preview; PS.uid = uid; PS.audio.loop = true;
+  if(!PS.audio){
+    PS.audio = new Audio();
+    // v6.32: toca só o trecho escolhido, em loop
+    PS.audio.addEventListener('timeupdate', () => { const z = PS.song; if(!z) return; const a = +z.start || 0, b = a + (+z.len || 30); if(PS.audio.currentTime >= b - 0.05 || PS.audio.currentTime < a - 0.5) PS.audio.currentTime = a; });
+    PS.audio.addEventListener('ended', () => { if(PS.song){ PS.audio.currentTime = +PS.song.start || 0; PS.audio.play().catch(() => {}); } });
+  }
+  PS.song = song; PS.audio.src = song.preview; PS.uid = uid; PS.audio.loop = false;
+  PS.audio.addEventListener('loadedmetadata', () => { try{ PS.audio.currentTime = +song.start || 0; }catch(e){} }, { once: true });
   const target = Math.max(0.05, Math.min(1, P.psVol ?? 0.25));
   PS.audio.volume = auto ? 0 : target;
   if(P.outputId && PS.audio.setSinkId) PS.audio.setSinkId(P.outputId).catch(() => {});
@@ -12389,7 +12427,7 @@ profileCard = function(p, extra = ''){
   const h = _profileCardPS2(p, extra);
   const s = p && p.theme_song;
   if(!s || !s.preview) return h;
-  const row = `<h6>Música do perfil</h6><div class="psong" data-psu="${p.id}" data-auto="${p.id !== S.me.id ? 1 : 0}">${s.art ? `<img src="${esc(s.art)}" alt="">` : '<span class="psart">🎵</span>'}<div><b>${esc(s.title || '')}</b><small>${esc(s.artist || '')}</small></div><button class="ibtn sm psbtn" data-psplay="${p.id}" data-tip="Tocar / pausar"><span class="pson">${ic('pause', 16)}</span><span class="psoff">${ic('play', 16)}</span></button><span class="pseq"><i></i><i></i><i></i></span></div>`;
+  const row = `<h6>Música do perfil</h6><div class="psong" data-psu="${p.id}" data-auto="${p.id !== S.me.id ? 1 : 0}">${s.art ? `<img src="${esc(s.art)}" alt="">` : '<span class="psart">🎵</span>'}<div><b>${esc(s.title || '')}</b><small>${esc(s.artist || '')}${s.len ? ` · trecho de ${s.len}s` : ''}</small></div><button class="ibtn sm psbtn" data-psplay="${p.id}" data-tip="Tocar / pausar"><span class="pson">${ic('pause', 16)}</span><span class="psoff">${ic('play', 16)}</span></button><span class="pseq"><i></i><i></i><i></i></span></div>`;
   return h.replace(/<\/div><\/div>$/, row + '</div></div>');
 };
 document.addEventListener('click', e => {
@@ -12414,7 +12452,12 @@ secProfile = function(box, back){
   _secProfilePS.apply(this, arguments);
   const cur = S.me.theme_song;
   box.insertAdjacentHTML('beforeend', `<hr class="sdiv"><h3>🎵 Música do perfil</h3><p class="mut small">Toca baixinho quando alguém abre o seu perfil (um trecho de 30 s).</p>
-    <div id="psCur">${cur && cur.preview ? `<div class="psong mine" data-psu="${S.me.id}">${cur.art ? `<img src="${esc(cur.art)}" alt="">` : '<span class="psart">🎵</span>'}<div><b>${esc(cur.title)}</b><small>${esc(cur.artist || '')}</small></div><button class="ibtn sm psbtn" data-psplay="${S.me.id}"><span class="pson">${ic('pause', 16)}</span><span class="psoff">${ic('play', 16)}</span></button><button class="btn sec sm" id="psRm">Tirar</button></div>` : ''}</div>
+    <div id="psCur">${cur && cur.preview ? `<div class="psong mine" data-psu="${S.me.id}">${cur.art ? `<img src="${esc(cur.art)}" alt="">` : '<span class="psart">🎵</span>'}<div><b>${esc(cur.title)}</b><small>${esc(cur.artist || '')}</small></div><button class="ibtn sm psbtn" data-psplay="${S.me.id}"><span class="pson">${ic('pause', 16)}</span><span class="psoff">${ic('play', 16)}</span></button><button class="btn sec sm" id="psRm">Tirar</button></div>
+      <div class="pstrim" id="psTrim"><b>✂️ Escolha o trecho que toca</b>
+        <div class="pswave" id="psWave"><div class="pswin" id="psWin"></div><div class="psplayhead" id="psHead"></div></div>
+        <div class="pstimes"><span>Começa em <b id="psSt">0s</b></span><span>Duração:</span>${[5, 10, 15, 20, 30].map(n => `<button type="button" class="chip ${(cur.len || 15) === n ? 'on' : ''}" data-pslen="${n}">${n}s</button>`).join('')}</div>
+        <input type="range" class="range" id="psStart" min="0" max="25" step="0.5" value="${+cur.start || 0}">
+        <div class="gacts"><button class="btn sec sm" id="psTry">${ic('play', 14)} Ouvir o trecho</button><button class="btn sm" id="psTrimSave">Salvar trecho</button></div></div>` : ''}</div>
     <div class="psearch"><input class="inp" id="psQ" maxlength="80" placeholder="Buscar música ou artista"><button class="btn sec" id="psGo">${ic('search', 16)} Buscar</button></div>
     <div class="psres" id="psRes"></div>
     ${row('Tocar a música do perfil dos outros', 'Quando você abre o perfil de alguém que escolheu uma música.', toggle('psAuto', P.psAuto !== false))}
@@ -12428,6 +12471,26 @@ secProfile = function(box, back){
     S.me = data; S.profiles.set(data.id, data); psStop(); renderSettings(); App.toast(song ? '🎵 Música do perfil escolhida!' : 'Música do perfil tirada.');
   };
   const rm = $b('#psRm'); if(rm) rm.onclick = () => save(null);
+  if(cur && cur.preview && $b('#psTrim')){
+    let st = +cur.start || 0, len = +cur.len || 15, dur = 30;
+    const draw = () => {
+      const maxSt = Math.max(0, dur - len); if(st > maxSt) st = maxSt;
+      $b('#psStart').max = maxSt; $b('#psStart').value = st;
+      $b('#psSt').textContent = st.toFixed(st % 1 ? 1 : 0) + 's';
+      const w = $b('#psWin'); w.style.left = (st / dur * 100) + '%'; w.style.width = (len / dur * 100) + '%';
+      $b('#psWave').style.setProperty('--n', Math.round(dur));
+    };
+    // barrinhas de "onda" decorativas
+    $b('#psWave').insertAdjacentHTML('afterbegin', Array.from({ length: 60 }, (_, i) => `<i style="height:${20 + Math.abs(Math.sin(i * 1.7) * 60 + Math.sin(i * .4) * 20)}%"></i>`).join(''));
+    const probe = new Audio(); probe.preload = 'metadata'; probe.src = cur.preview; probe.onloadedmetadata = () => { if(isFinite(probe.duration) && probe.duration > 5){ dur = Math.min(30, probe.duration); draw(); } };
+    $b('#psStart').oninput = e => { st = +e.target.value; draw(); };
+    box.querySelectorAll('[data-pslen]').forEach(b => b.onclick = () => { len = +b.dataset.pslen; box.querySelectorAll('[data-pslen]').forEach(x => x.classList.toggle('on', x === b)); draw(); });
+    $b('#psTry').onclick = () => { psStop(); psPlay({ ...cur, start: st, len }, 'trim', false); };
+    $b('#psTrimSave').onclick = () => save({ ...cur, start: st, len });
+    // cabeça de leitura
+    const head = $b('#psHead'); const tick = setInterval(() => { if(!head.isConnected){ clearInterval(tick); return; } if(PS.audio && !PS.audio.paused && (PS.uid === 'trim' || PS.uid === S.me.id)){ head.style.display = 'block'; head.style.left = (PS.audio.currentTime / dur * 100) + '%'; } else head.style.display = 'none'; }, 100);
+    draw();
+  }
   const search = async () => {
     const q = $b('#psQ').value.trim(); if(!q) return;
     const res = $b('#psRes'); res.innerHTML = '<div class="spin" style="margin:10px 0"></div>';
@@ -12436,7 +12499,7 @@ secProfile = function(box, back){
       const list = (j && j.tracks) || [];
       res.innerHTML = list.length ? list.slice(0, 10).map((t, i) => `<div class="psong"><img src="${esc(t.art || '')}" alt=""><div><b>${esc(t.title)}</b><small>${esc(t.artist)}</small></div><button class="ibtn sm" data-psprev="${i}" data-tip="Ouvir">${ic('play', 16)}</button><button class="btn sm" data-pspick="${i}">Escolher</button></div>`).join('') : '<p class="mut small">Não achei nada. Tente outro nome.</p>';
       res.querySelectorAll('[data-psprev]').forEach(b => b.onclick = () => psPlay(list[+b.dataset.psprev], 'prev' + b.dataset.psprev, false));
-      res.querySelectorAll('[data-pspick]').forEach(b => b.onclick = () => { const t = list[+b.dataset.pspick]; save({ title: t.title, artist: t.artist, preview: t.preview, art: t.art }); });
+      res.querySelectorAll('[data-pspick]').forEach(b => b.onclick = () => { const t = list[+b.dataset.pspick]; save({ title: t.title, artist: t.artist, preview: t.preview, art: t.art, start: 0, len: 15 }).then(() => setTimeout(() => { const tr = document.getElementById('psTrim'); if(tr) tr.scrollIntoView({ block: 'center', behavior: 'smooth' }); }, 200)); });
     }catch(e){ res.innerHTML = '<p class="err">Não deu para buscar agora.</p>'; }
   };
   $b('#psGo').onclick = search;

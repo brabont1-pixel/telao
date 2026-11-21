@@ -2752,6 +2752,7 @@ begin
 end $$;
 
 -- bichinho do servidor: cresce com a galera conversando, em call e fazendo carinho; definha se o servidor ficar parado
+alter table public.servers add column if not exists pet_on boolean not null default false;   -- v6.32: o bichinho é opcional
 create table if not exists public.server_pets (
   server_id uuid primary key references public.servers(id) on delete cascade,
   name text not null default 'Telinho' check (char_length(name) between 1 and 20),
@@ -2802,7 +2803,7 @@ create or replace function public.pet_on_message() returns trigger language plpg
 declare sid uuid;
 begin
   select server_id into sid from channels where id = new.channel_id;
-  if sid is not null and new.author_id <> public.telao_bot() then
+  if sid is not null and new.author_id <> public.telao_bot() and exists (select 1 from servers where id = sid and pet_on) then
     begin perform public.pet_add(sid, new.author_id, 'msg', 1); exception when others then null; end;
   end if;
   return new;
@@ -2814,6 +2815,7 @@ create or replace function public.pet_voice_tick(p_server uuid) returns int
 language plpgsql security definer set search_path = public as $$
 begin
   if not exists (select 1 from voice_sessions where user_id = auth.uid() and server_id = p_server and last_seen > now() - interval '3 minutes') then return 0; end if;
+  if not exists (select 1 from servers where id = p_server and pet_on) then return 0; end if;
   -- no máximo uma vez a cada 4 min
   insert into pet_contrib (server_id, user_id) values (p_server, auth.uid()) on conflict do nothing;
   if exists (select 1 from pet_contrib where server_id = p_server and user_id = auth.uid() and day = (now() at time zone 'America/Sao_Paulo')::date
@@ -2825,6 +2827,7 @@ create or replace function public.pet_pet(p_server uuid) returns int
 language plpgsql security definer set search_path = public as $$
 begin
   if not public.is_member(p_server) then raise exception 'Você não é deste servidor.'; end if;
+  if not exists (select 1 from servers where id = p_server and pet_on) then raise exception 'O bichinho está desligado neste servidor.'; end if;
   return public.pet_add(p_server, auth.uid(), 'pet', 5);
 end $$;
 create or replace function public.pet_get(p_server uuid) returns jsonb
@@ -2835,6 +2838,7 @@ begin
   insert into server_pets (server_id) values (p_server) on conflict do nothing;
   select * into p from server_pets where server_id = p_server;
   return to_jsonb(p) || jsonb_build_object(
+    'pet_on', (select pet_on from servers where id = p_server),
     'petted_today', coalesce((select petted from pet_contrib where server_id = p_server and user_id = auth.uid() and day = d), false),
     'today_xp', coalesce((select sum(msg_xp + voice_xp + case when petted then 5 else 0 end) from pet_contrib where server_id = p_server and day = d), 0),
     'top', (select coalesce(jsonb_agg(x), '[]'::jsonb) from (select user_id, sum(msg_xp + voice_xp + case when petted then 5 else 0 end)::int xp

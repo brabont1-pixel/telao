@@ -2337,3 +2337,11 @@ body.cinema.cineidle{cursor:none}
 .scprev{display:flex;justify-content:center;min-height:200px;align-items:center}
 .sccanvas{width:min(210px,60vw);aspect-ratio:9/16;height:auto;border-radius:16px;box-shadow:0 10px 40px rgba(0,0,0,.5)}
 .mf.wrapf{flex-wrap:wrap;justify-content:flex-end;row-gap:8px}
+.pethide{display:flex;gap:8px;align-items:center;margin-top:12px;font-size:13px;color:var(--txt2);cursor:pointer}
+/* v6.32: trecho da música do perfil */
+.pstrim{margin-top:10px;padding:12px;border-radius:12px;background:var(--bg1);border:1px solid var(--line);display:flex;flex-direction:column;gap:10px}
+.pswave{position:relative;height:56px;border-radius:10px;background:var(--bg0,#0d0b12);display:flex;align-items:center;gap:2px;padding:0 6px;overflow:hidden}
+.pswave i{flex:1;background:rgba(255,255,255,.18);border-radius:2px}
+.pswin{position:absolute;top:0;bottom:0;border-radius:8px;background:rgba(255,46,154,.25);border:2px solid var(--pink,#ff2e9a);pointer-events:none;transition:left .1s,width .15s}
+.psplayhead{position:absolute;top:0;bottom:0;width:2px;background:#fff;display:none;pointer-events:none}
+.pstimes{display:flex;align-items:center;gap:6px;flex-wrap:wrap;font-size:13px}.pstimes span:first-child{margin-right:auto}
