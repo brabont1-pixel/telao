@@ -778,7 +778,7 @@ function secKeys(box, back){
 function secApp(box, back){
   const ios = /iphone|ipad|ipod/i.test(navigator.userAgent);
   const standalone = matchMedia('(display-mode: standalone)').matches || navigator.standalone;
-  const desk = window.telaoDesktop, dl = (S.cfg || {}).desktop_url;
+  const desk = window.telaoDesktop, dl = (S.cfg || {}).desktop_url || 'https://github.com/brabont1-pixel/telao/releases/latest/download/Telao-Setup.exe';
   box.innerHTML = `${back}<h2>App e instalação</h2>
     <div class="dlcard"><span class="clogo">${ic('monitor', 24)}</span><div class="t"><b>Telão para Windows</b>
       <small>${desk ? 'Você está usando o app para Windows, versão ' + esc(desk.version) + '. Ele se atualiza sozinho.' : 'Programa de verdade: abre pelo menu Iniciar, fica na bandeja, avisa de mensagens e compartilha a tela com o som do PC.'}</small></div>

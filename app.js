@@ -9,7 +9,7 @@ const esc = s => String(s ?? '').replace(/[&<>"']/g, c => ({'&':'&amp;','<':'&lt
 const COLORS = ['#5865f2','#eb459e','#3ba55c','#faa61a','#ed4245','#f47b67','#1abc9c','#9b59b6','#e67e22','#607d8b'];
 const ls = { get(k,d){ try{ const v=localStorage.getItem(k); return v==null?d:JSON.parse(v); }catch(e){ return d; } }, set(k,v){ try{ localStorage.setItem(k, JSON.stringify(v)); }catch(e){} } };
 
-const APP_VERSION = '6.27';
+const APP_VERSION = '6.28';
 const S = {
   me: null, profiles: new Map(), servers: [], channels: new Map(), members: new Map(),
   friends: [], dms: [], dmActivity: ls.get('telao-dmact', {}), online: new Set(),
@@ -3555,7 +3555,7 @@ function secKeys(box, back){
 function secApp(box, back){
   const ios = /iphone|ipad|ipod/i.test(navigator.userAgent);
   const standalone = matchMedia('(display-mode: standalone)').matches || navigator.standalone;
-  const desk = window.telaoDesktop, dl = (S.cfg || {}).desktop_url;
+  const desk = window.telaoDesktop, dl = (S.cfg || {}).desktop_url || 'https://github.com/brabont1-pixel/telao/releases/latest/download/Telao-Setup.exe';
   box.innerHTML = `${back}<h2>App e instalação</h2>
     <div class="dlcard"><span class="clogo">${ic('monitor', 24)}</span><div class="t"><b>Telão para Windows</b>
       <small>${desk ? 'Você está usando o app para Windows, versão ' + esc(desk.version) + '. Ele se atualiza sozinho.' : 'Programa de verdade: abre pelo menu Iniciar, fica na bandeja, avisa de mensagens e compartilha a tela com o som do PC.'}</small></div>
@@ -11656,9 +11656,23 @@ secAdmin = function(box, back){
 // ganchos para os testes automáticos
 App._t = { get S(){ return S; }, get go(){ return go; }, get joinVoice(){ return joinVoice; }, get findChannel(){ return findChannel; }, get prof(){ return prof; }, get profileCard(){ return profileCard; },
   get openSettings(){ return openSettings; }, get closeSettings(){ return closeSettings; }, get activitiesMenu(){ return activitiesMenu; }, get closeMenu(){ return closeMenu; } };
-/* ---------------- PWA ---------------- */
+/* ---------------- PWA / app para Windows ----------------
+   v6.28: no Windows (navegador), a barrinha embaixo oferece o app de verdade para Windows,
+   não a instalação do navegador. Nos outros aparelhos continua a instalação como app. */
+const IS_WIN = /Windows/i.test(navigator.userAgent) && !/Mobile|Phone/i.test(navigator.userAgent);
+const WIN_DL = 'https://github.com/brabont1-pixel/telao/releases/latest/download/Telao-Setup.exe';
+const winDl = () => (S.cfg && S.cfg.desktop_url) || WIN_DL;
+function installBarWin(){
+  if(window.telaoDesktop || !IS_WIN || ls.get('telao-nowin', false)) return;
+  const bar = $('#install');
+  bar.innerHTML = `${ic('monitor', 18)}<span style="white-space:nowrap"><b>Telão</b> para Windows</span><a class="btn sm" id="installBtn" href="${esc(winDl())}" download style="margin-left:auto">${ic('download', 14)} Baixar</a><button class="ibtn sm" id="installX" aria-label="Fechar" data-tip="Não mostrar mais">${ic('x', 14)}</button>`;
+  bar.classList.remove('hidden'); bar.classList.add('win');
+  $('#installBtn').onclick = () => { App.toast('Baixando o instalador… Depois é só abrir o Telao-Setup.exe.'); };
+  $('#installX').onclick = () => { ls.set('telao-nowin', true); bar.classList.add('hidden'); };
+}
 window.addEventListener('beforeinstallprompt', e => {
   e.preventDefault(); if(window.telaoDesktop) return; S.installEvt = e;
+  if(IS_WIN) return;   // no Windows a barra é do app para Windows
   if(!ls.get('telao-noinstall', false)) $('#install').classList.remove('hidden');
 });
 async function doInstall(){
@@ -11667,8 +11681,9 @@ async function doInstall(){
   await S.installEvt.userChoice.catch(()=>{});
   S.installEvt = null; $('#install').classList.add('hidden'); closeModal();
 }
-$('#installBtn').onclick = doInstall;
-$('#install').oncontextmenu = e => { e.preventDefault(); ls.set('telao-noinstall', true); $('#install').classList.add('hidden'); };
+if(IS_WIN && !window.telaoDesktop) setTimeout(installBarWin, 1500);   // depois de carregar o link salvo pelo admin
+else $('#installBtn').onclick = doInstall;
+$('#install').oncontextmenu = e => { e.preventDefault(); ls.set(IS_WIN ? 'telao-nowin' : 'telao-noinstall', true); $('#install').classList.add('hidden'); };
 window.addEventListener('appinstalled', () => { $('#install').classList.add('hidden'); App.toast('Telão instalado'); });
 
 window.addEventListener('beforeunload', () => { try{ Voice.channel && Voice.leave(); }catch(e){} });
