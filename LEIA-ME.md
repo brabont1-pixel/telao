@@ -486,3 +486,17 @@ O "Spotify direto" (com Ouvir junto) continua opcional e só aparece se você co
 - **Perfil cortado:** o cartão de perfil (e qualquer menu alto) agora se ajusta quando a capa e as insígnias terminam de carregar: fica inteiro na tela e rola se for maior que a janela.
 - **Conversa abre no fim:** ao entrar numa DM ou canal, o chat fica grudado na última mensagem, mesmo enquanto imagens, vídeos, reações e cargos ainda estão carregando ou a janela muda de tamanho. Só solta quando você rola para cima.
 - **📌 Fixar conversa:** passe o mouse numa conversa da lista (ou clique com o botão direito → **Fixar conversa**) e clique no alfinete. As fixadas ficam no topo, separadas por uma linha, até 10. Fica salvo na sua conta.
+
+# Versão 6.31: rascunho, salvos, prévia de links, gravar a call, cinema, aniversários, bichinho, música do perfil e cartão
+
+**Precisa rodar o `supabase.sql` novo no Supabase.**
+
+- **✏️ Rascunho salvo:** o que você começou a escrever fica guardado em cada conversa (neste aparelho). A conversa ganha um ✏️ na lista até você mandar ou apagar.
+- **🔖 Mensagens salvas:** menu da mensagem → **Salvar mensagem**. Ficam no botão 🔖 no topo da conversa (e no menu do seu perfil), com atalho para ir até a mensagem. Só você vê, e a cópia fica guardada mesmo se apagarem a original (até 500).
+- **🔗 Prévia de links:** links de **TikTok, Instagram, Twitch e Spotify** viram cartões no chat (o Spotify já vem com player; os outros carregam o vídeo quando você clica). O YouTube agora mostra o título embaixo da miniatura. Títulos e capas vêm pelo `/api/oembed`.
+- **🔴 Gravar a call:** botão de gravar no painel da call. Grava o áudio de todo mundo (sua voz e a dos outros) num arquivo que fica só com você. Todos na call veem "🔴 Gravando" enquanto isso. No fim dá para ouvir, **baixar**, **mandar no chat** ou **transcrever** (Whisper, no próprio computador, com marcação de tempo). Para sozinha em 2 horas.
+- **🎬 Modo cinema melhor:** no botão de cinema da tela tem **Modo cinema para a call toda**. A tela ocupa tudo, as câmeras ficam pequenas embaixo, aparece uma barra de reações rápidas, e os controles somem quando o mouse fica parado. Esc sai só para quem apertou.
+- **🎂 Aniversários do servidor:** menu do servidor → **Aniversários**, com um calendário do ano e os próximos 30 dias (só de quem ativou "Mostrar meu aniversário"; o ano nunca aparece). No dia, a conta do Telão posta um parabéns no servidor com o botão **Dar parabéns**. Em Visão geral do servidor dá para escolher o canal ou desligar.
+- **🐾 Bichinho do servidor:** aparece na lateral do servidor. Cresce com mensagens (+1, até 40 por pessoa por dia), tempo em call (+5 a cada 5 min, até 60 por dia) e carinho (+5, uma vez por dia). Passa de ovo → filhote → jovem → adulto → lendário. Se o servidor fica parado ele fica triste e depois doente, mas nunca morre. Quem gerencia o servidor muda nome, espécie (slime, gatinho, dragãozinho, robô, fantasminha, patinho) e cor.
+- **🎵 Música do perfil:** Configurações → Perfil → Música do perfil. Busque e escolha um trecho de 30 s. Ele toca baixinho quando alguém abre o seu perfil, com botão de pausar. Dá para desligar a música dos outros ou mudar o volume ali mesmo.
+- **📊 Cartão de estatísticas:** no menu do seu perfil → **Meu cartão de estatísticas**. Mostra horas em call, mensagens, jogo mais jogado, servidor favorito e mais, num cartão de story (30 dias, 1 ano ou desde sempre; 5 cores). Dá para baixar, compartilhar ou mandar no chat.

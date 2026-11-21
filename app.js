@@ -9,7 +9,7 @@ const esc = s => String(s ?? '').replace(/[&<>"']/g, c => ({'&':'&amp;','<':'&lt
 const COLORS = ['#5865f2','#eb459e','#3ba55c','#faa61a','#ed4245','#f47b67','#1abc9c','#9b59b6','#e67e22','#607d8b'];
 const ls = { get(k,d){ try{ const v=localStorage.getItem(k); return v==null?d:JSON.parse(v); }catch(e){ return d; } }, set(k,v){ try{ localStorage.setItem(k, JSON.stringify(v)); }catch(e){} } };
 
-const APP_VERSION = '6.30';
+const APP_VERSION = '6.31';
 const S = {
   me: null, profiles: new Map(), servers: [], channels: new Map(), members: new Map(),
   friends: [], dms: [], dmActivity: ls.get('telao-dmact', {}), online: new Set(),
@@ -1319,8 +1319,8 @@ App.onReaction = p => {
 /* ---------- renderização ---------- */
 function attHtml(m){
   const at = m.attachments || []; if(!at.length) return '';
-  const imgs = at.filter(a => isImg(a) || isVid(a)), others = at.filter(a => !isImg(a) && !isVid(a) && a.type !== 'poll' && a.type !== 'gift' && a.type !== 'welcome' && a.type !== 'announce');
-  let h = at.filter(a => a.type === 'welcome').map(a => App.welcomeCardHtml ? App.welcomeCardHtml(a) : '').join('') + at.filter(a => a.type === 'announce').map(a => App.announceCardHtml ? App.announceCardHtml(a) : '').join('') + at.filter(a => a.type === 'poll').map(a => pollHtml(m, a)).join('') + at.filter(a => a.type === 'gift').map(a => App.giftCardHtml(a)).join('');
+  const imgs = at.filter(a => isImg(a) || isVid(a)), others = at.filter(a => !isImg(a) && !isVid(a) && a.type !== 'poll' && a.type !== 'gift' && a.type !== 'welcome' && a.type !== 'announce' && a.type !== 'bday');
+  let h = at.filter(a => a.type === 'welcome').map(a => App.welcomeCardHtml ? App.welcomeCardHtml(a) : '').join('') + at.filter(a => a.type === 'announce').map(a => App.announceCardHtml ? App.announceCardHtml(a) : '').join('') + at.filter(a => a.type === 'poll').map(a => pollHtml(m, a)).join('') + at.filter(a => a.type === 'gift').map(a => App.giftCardHtml(a)).join('') + at.filter(a => a.type === 'bday').map(a => App.bdayCardHtml ? App.bdayCardHtml(a, m) : '').join('');
   if(imgs.length){
     const n = Math.min(imgs.length, 4);
     h += `<div class="mgrid g${n}">` + imgs.map((a, i) => {
@@ -11804,6 +11804,727 @@ App.userMenuExtra = uid => {
   if(!d) return base;
   return [{ label: S.dmPins.has(d.id) ? 'Desafixar conversa' : 'Fixar conversa', icon: ic('pin', 18), onClick: () => togglePin(d.id) }].concat(base);
 };
+/* =====================================================================
+   v6.31: RASCUNHO SALVO e MENSAGENS SALVAS
+   - O que você começou a escrever fica guardado por conversa (neste aparelho) e a conversa
+     ganha um ✏️ na lista até você mandar ou apagar.
+   - Menu da mensagem → Salvar mensagem. Ficam na aba "Salvos" (botão 🔖 no topo da conversa
+     e no menu do seu perfil). O banco guarda uma cópia: se apagarem a original, a sua fica.
+   ===================================================================== */
+const DRAFTS = ls.get('telao-drafts', {});
+const draftSave = () => ls.set('telao-drafts', DRAFTS);
+function draftSync(){
+  const ta = document.getElementById('cmp'); if(!ta || !ta.dataset.dcid) return;
+  const id = ta.dataset.dcid, v = ta.value;
+  if(v.trim()) DRAFTS[id] = { t: v.slice(0, 4000), at: Date.now() }; else delete DRAFTS[id];
+  draftSave();
+}
+App.hasDraft = id => !!DRAFTS[id];
+document.addEventListener('input', e => { if(e.target && e.target.id === 'cmp'){ const had = !!DRAFTS[e.target.dataset.dcid]; draftSync(); if(had !== !!DRAFTS[e.target.dataset.dcid]) draftMarks(); } });
+window.addEventListener('beforeunload', draftSync);
+document.addEventListener('visibilitychange', () => { if(document.hidden) draftSync(); });
+const _renderMainDr = renderMain;
+renderMain = function(){
+  draftSync();   // guarda o que estava escrito na conversa que você está deixando
+  const r = _renderMainDr.apply(this, arguments);
+  const ta = document.getElementById('cmp');
+  if(ta && M.cid && ta.dataset.dcid !== M.cid){
+    ta.dataset.dcid = M.cid;
+    const d = DRAFTS[M.cid];
+    if(d && !ta.value){ ta.value = d.t; ta.dispatchEvent(new Event('input', { bubbles: true })); }
+  }
+  savedHeadBtn();
+  draftMarks();
+  return r;
+};
+// depois de mandar, o campo fica vazio: apaga o rascunho
+document.addEventListener('keyup', e => { if(e.target && e.target.id === 'cmp' && e.key === 'Enter' && !e.shiftKey) setTimeout(() => { draftSync(); draftMarks(); }, 50); });
+document.addEventListener('click', e => { if(e.target.closest && e.target.closest('#cSend')) setTimeout(() => { draftSync(); draftMarks(); }, 80); }, true);
+function draftMarks(){
+  document.querySelectorAll('.drafti').forEach(x => x.remove());
+  document.querySelectorAll('.ch[data-cid], .dmitem[data-dm]').forEach(el => {
+    const id = el.dataset.cid || el.dataset.dm;
+    if(!DRAFTS[id] || id === M.cid) return;
+    const nm = el.querySelector('.nm'); if(nm) nm.insertAdjacentHTML('afterend', `<span class="drafti" data-tip="Rascunho: ${esc(DRAFTS[id].t.slice(0, 60))}">✏️</span>`);
+  });
+}
+const _renderSidebarDr = renderSidebar;
+renderSidebar = function(){ const r = _renderSidebarDr.apply(this, arguments); draftMarks(); return r; };
+
+/* ---------- mensagens salvas ---------- */
+S.saved = new Set();
+const SAVED_SQL = 'Para salvar mensagens, rode o supabase.sql novo (v6.31) no Supabase.';
+async function loadSaved(){
+  const { data, error } = await App.sb.from('saved_messages').select('message_id').eq('user_id', S.me.id);
+  if(!error) S.saved = new Set((data || []).map(r => r.message_id));
+}
+const _loadDmsSv = loadDms;
+loadDms = async function(){ const r = await _loadDmsSv.apply(this, arguments); try{ await loadSaved(); }catch(e){} return r; };
+async function toggleSaved(m){
+  if(S.saved.has(m.id)){
+    const { error } = await App.sb.from('saved_messages').delete().eq('user_id', S.me.id).eq('message_id', m.id);
+    if(error){ App.toast(error.message, true); return; }
+    S.saved.delete(m.id); App.toast('Tirada dos salvos.'); return;
+  }
+  const { error } = await App.sb.from('saved_messages').insert({ message_id: m.id });
+  if(error && !/duplicate/i.test(error.message)){ App.toast(/saved_messages|schema cache|does not exist/i.test(error.message) ? SAVED_SQL : error.message, true); return; }
+  S.saved.add(m.id); App.toast('🔖 Mensagem salva. Veja em Salvos (🔖 no topo da conversa).');
+}
+const _msgMenuExtraSv = App.msgMenuExtra;
+App.msgMenuExtra = m => {
+  const out = _msgMenuExtraSv ? _msgMenuExtraSv(m) : [];
+  if(!String(m.id).startsWith('tmp-')) out.unshift({ label: S.saved.has(m.id) ? 'Tirar dos salvos' : 'Salvar mensagem', icon: ic('bookmark', 18), onClick: () => toggleSaved(m) });
+  return out;
+};
+function savedHeadBtn(){
+  const pins = document.getElementById('hPins');
+  if(!pins || document.getElementById('hSaved')) return;
+  pins.insertAdjacentHTML('afterend', headBtns([['hSaved', 'bookmark', 'Mensagens salvas']]));
+  document.getElementById('hSaved').onclick = e => savedPanel(e.currentTarget);
+}
+async function savedPanel(anchor){
+  const r = anchor ? anchor.getBoundingClientRect() : { right: innerWidth - 20, bottom: 70 };
+  const el = $('#menu'); el.className = 'menu panelpop';
+  el.innerHTML = `<div class="pphead">${ic('bookmark', 18)} Mensagens salvas <span class="mut small" style="margin-left:auto">só você vê</span></div><div class="ppbody"><div class="spin" style="margin:20px auto"></div></div>`;
+  openPanel(el, r);
+  const { data, error } = await App.sb.from('saved_messages').select('*').eq('user_id', S.me.id).order('saved_at', { ascending: false }).limit(200);
+  const body = el.querySelector('.ppbody'); if(!body) return;
+  if(error){ body.innerHTML = `<div class="empty">${/saved_messages|schema cache|does not exist/i.test(error.message) ? SAVED_SQL : esc(error.message)}</div>`; return; }
+  await ensureProfiles([...new Set((data || []).map(x => x.author_id).filter(Boolean))]);
+  const where = cid => { const c = findChannel(cid); if(!c) return ''; if(c.kind === 'dm') return 'DM com ' + esc(prof(dmOther(c)).display_name); if(c.kind === 'group') return esc(groupName(c)); const s = S.servers.find(x => x.id === c.server_id); return `#${esc(c.name)}${s ? ' · ' + esc(s.name) : ''}`; };
+  body.innerHTML = (data || []).length ? data.map(m => `<div class="ppit svit" data-svgo="${m.message_id}" data-svc="${m.channel_id || ''}">${avatar(prof(m.author_id), 'sm')}<div><b>${esc(prof(m.author_id).display_name)}</b> <small>${m.msg_at ? fmtTime(m.msg_at) : ''} · ${where(m.channel_id)}</small>
+      <div class="ppct">${m.content ? richText(m.content.slice(0, 400)) : ''}${(m.attachments || []).filter(a => a && a.url && /^image\//.test(a.type || '')).slice(0, 2).map(a => `<img class="svimg" src="${esc(a.url)}" alt="">`).join('')}${!m.content && !(m.attachments || []).length ? '<i class="mut">sem texto</i>' : ''}</div></div>
+      <button class="ibtn sm svx" data-svdel="${m.message_id}" data-tip="Tirar dos salvos">${ic('x', 14)}</button></div>`).join('')
+    : `<div class="empty">${ic('bookmark', 36)}<br>Nada salvo ainda.<br><small>Clique com o botão direito numa mensagem → Salvar mensagem.</small></div>`;
+  body.querySelectorAll('[data-svdel]').forEach(b => b.onclick = async e => {
+    e.stopPropagation();
+    const { error } = await App.sb.from('saved_messages').delete().eq('user_id', S.me.id).eq('message_id', b.dataset.svdel);
+    if(error){ App.toast(error.message, true); return; }
+    S.saved.delete(b.dataset.svdel); b.closest('.svit').remove();
+  });
+  body.querySelectorAll('[data-svgo]').forEach(it => it.onclick = async () => {
+    const c = findChannel(it.dataset.svc); closeMenu();
+    if(!c){ App.toast('Você não tem mais acesso a essa conversa, mas a cópia continua aqui.', true); return; }
+    if(c.kind === 'dm' || c.kind === 'group') await go({ kind: 'home', dm: c.id }); else await go({ kind: 'server', sid: c.server_id, cid: c.id });
+    setTimeout(() => jumpTo(it.dataset.svgo), 500);
+  });
+}
+App.savedPanel = savedPanel;
+const _selfMenuExtraSv = App.selfMenuExtra;
+App.selfMenuExtra = () => (_selfMenuExtraSv ? _selfMenuExtraSv() : []).concat([{ label: 'Mensagens salvas', icon: ic('bookmark', 18), onClick: () => savedPanel(null) }]);
+/* =====================================================================
+   v6.31: PRÉVIA DE LINKS BONITA — YouTube (com título), TikTok, Instagram, Twitch e Spotify.
+   O cartão aparece no chat; o player só carrega quando você clica (mais leve e mais privado).
+   Título e capa vêm do /api/oembed (YouTube, TikTok, Spotify).
+   ===================================================================== */
+const LK_CACHE = new Map();
+const LK_RES = [
+  { k: 'spotify', re: /https:\/\/open\.spotify\.com\/(?:intl-[a-z-]+\/)?(track|album|playlist|episode|show|artist)\/([A-Za-z0-9]{10,40})/i },
+  { k: 'tiktok', re: /https:\/\/(?:www\.|m\.)?tiktok\.com\/@[\w.-]+\/(?:video|photo)\/(\d{8,25})/i },
+  { k: 'tiktoks', re: /https:\/\/(?:vm|vt)\.tiktok\.com\/([A-Za-z0-9]{5,20})\/?/i },
+  { k: 'insta', re: /https:\/\/(?:www\.)?instagram\.com\/(?:[\w.]+\/)?(p|reel|reels|tv)\/([A-Za-z0-9_-]{5,40})/i },
+  { k: 'twclip', re: /https:\/\/(?:clips\.twitch\.tv\/|(?:www\.)?twitch\.tv\/[\w]+\/clip\/)([A-Za-z0-9_-]{5,100})/i },
+  { k: 'twvod', re: /https:\/\/(?:www\.)?twitch\.tv\/videos\/(\d{5,15})/i },
+  { k: 'twitch', re: /https:\/\/(?:www\.)?twitch\.tv\/([A-Za-z0-9_]{3,25})\/?(?:[?#\s]|$)/i },
+];
+const LK_BRAND = {
+  spotify: ['#1db954', 'Spotify', 'music'], tiktok: ['#ff0050', 'TikTok', 'play'], tiktoks: ['#ff0050', 'TikTok', 'play'], insta: ['#e1306c', 'Instagram', 'image'],
+  twitch: ['#9146ff', 'Twitch', 'monitor'], twclip: ['#9146ff', 'Clipe da Twitch', 'play'], twvod: ['#9146ff', 'Vídeo da Twitch', 'play'], yt: ['#ff0000', 'YouTube', 'play'],
+};
+function lkFind(text){
+  const out = [], seen = new Set();
+  const urls = String(text || '').match(/https:\/\/[^\s<>"']+/g) || [];
+  urls.forEach(u => {
+    for(const r of LK_RES){ const m = u.match(r.re); if(m){ const key = r.k + ':' + m.slice(1).join('/'); if(!seen.has(key)){ seen.add(key); out.push({ k: r.k, m, url: u }); } break; } }
+  });
+  return out.slice(0, 2);
+}
+function lkMeta(url){
+  if(LK_CACHE.has(url)) return LK_CACHE.get(url);
+  const p = fetch('/api/oembed?url=' + encodeURIComponent(url)).then(r => r.ok ? r.json() : null).catch(() => null);
+  LK_CACHE.set(url, p); return p;
+}
+function lkCard(it){
+  const [color, label, icon] = LK_BRAND[it.k];
+  const id = 'lk' + Math.random().toString(36).slice(2, 9);
+  let player = '', body = '';
+  if(it.k === 'spotify'){
+    const type = it.m[1].toLowerCase(), tall = !['track', 'episode'].includes(type);
+    return `<div class="lkc lksp ${tall ? 'tall' : ''}" style="--lk:${color}"><iframe src="https://open.spotify.com/embed/${type}/${it.m[2]}?utm_source=telao" loading="lazy" allow="autoplay; clipboard-write; encrypted-media; fullscreen; picture-in-picture" title="Spotify"></iframe></div>`;
+  }
+  const host = location.hostname || 'localhost';
+  if(it.k === 'tiktok') player = `https://www.tiktok.com/embed/v2/${it.m[1]}`;
+  else if(it.k === 'insta') player = `https://www.instagram.com/${it.m[1] === 'reels' ? 'reel' : it.m[1]}/${it.m[2]}/embed/captioned/`;
+  else if(it.k === 'twitch') player = `https://player.twitch.tv/?channel=${it.m[1]}&parent=${host}&muted=false`;
+  else if(it.k === 'twclip') player = `https://clips.twitch.tv/embed?clip=${it.m[1]}&parent=${host}`;
+  else if(it.k === 'twvod') player = `https://player.twitch.tv/?video=${it.m[1]}&parent=${host}`;
+  const vertical = it.k === 'tiktok' || it.k === 'tiktoks' || it.k === 'insta';
+  const sub = it.k === 'twitch' ? `twitch.tv/${esc(it.m[1])} · ao vivo ou canal` : it.k === 'insta' ? (it.m[1] === 'p' ? 'Post' : 'Reel') : '';
+  return `<div class="lkc ${vertical ? 'vert' : 'wide'}" id="${id}" style="--lk:${color}" data-lkurl="${esc(it.url)}" data-lkplayer="${esc(player)}" data-lkk="${it.k}">
+    <div class="lkhead"><span class="lkic">${ic(icon, 14)}</span><b>${label}</b><a href="${esc(it.url)}" target="_blank" rel="noopener noreferrer" class="lkopen" data-tip="Abrir no site">${ic('link', 13)}</a></div>
+    <div class="lkthumb">${player ? `<span class="lkplay">${ic('play', 28)}</span>` : ''}<span class="lkph">${ic(icon, 36)}</span></div>
+    <div class="lkinfo"><b class="lkt">${it.k === 'twitch' ? esc(it.m[1]) : ''}</b><small class="lka">${sub}</small></div></div>`;
+}
+const _embedsHtmlLk = embedsHtml;
+embedsHtml = function(m){
+  const base = _embedsHtmlLk.apply(this, arguments);
+  const items = lkFind(m.content);
+  return base + items.map(lkCard).join('');
+};
+// títulos e capas chegam depois
+function lkHydrate(root){
+  (root || document).querySelectorAll('.lkc[data-lkurl]:not([data-lkdone])').forEach(c => {
+    c.dataset.lkdone = '1';
+    const k = c.dataset.lkk; if(!['tiktok', 'tiktoks'].includes(k)) return;
+    lkMeta(c.dataset.lkurl).then(j => {
+      if(!j || !c.isConnected) return;
+      if(j.thumb){ const t = c.querySelector('.lkthumb'); t.style.backgroundImage = `url("${String(j.thumb).replace(/"/g, '')}")`; t.classList.add('img'); }
+      if(j.title) c.querySelector('.lkt').textContent = j.title;
+      if(j.author) c.querySelector('.lka').textContent = '@' + j.author.replace(/^@/, '');
+      if(k === 'tiktoks' && j.id){ c.dataset.lkplayer = 'https://www.tiktok.com/embed/v2/' + j.id; if(!c.querySelector('.lkplay')) c.querySelector('.lkthumb').insertAdjacentHTML('afterbegin', `<span class="lkplay">${ic('play', 28)}</span>`); }
+    });
+  });
+  // título do YouTube embaixo da miniatura
+  (root || document).querySelectorAll('.yt[data-yt]:not([data-lkdone])').forEach(y => {
+    y.dataset.lkdone = '1';
+    lkMeta('https://www.youtube.com/watch?v=' + y.dataset.yt).then(j => {
+      if(!j || !j.title || !y.isConnected || y.nextElementSibling && y.nextElementSibling.classList.contains('ytt')) return;
+      y.insertAdjacentHTML('afterend', `<div class="ytt"><b>${esc(j.title)}</b>${j.author ? `<small>${esc(j.author)}</small>` : ''}</div>`);
+    });
+  });
+}
+new MutationObserver(() => { if(document.querySelector('.lkc[data-lkurl]:not([data-lkdone]), .yt[data-yt]:not([data-lkdone])')) lkHydrate(); }).observe(document.body, { childList: true, subtree: true });
+document.addEventListener('click', e => {
+  const c = e.target.closest('.lkc[data-lkplayer]'); if(!c || e.target.closest('.lkopen')) return;
+  const src = c.dataset.lkplayer; if(!src) { window.open(c.dataset.lkurl, '_blank', 'noopener'); return; }
+  e.preventDefault();
+  const th = c.querySelector('.lkthumb'); if(!th || th.querySelector('iframe')) return;
+  th.innerHTML = `<iframe src="${esc(src)}" allow="autoplay; encrypted-media; picture-in-picture; fullscreen; clipboard-write" allowfullscreen title="${esc(c.dataset.lkk)}"></iframe>`;
+  th.classList.add('on'); c.classList.add('playing');
+});
+App._lkFind = lkFind;
+/* =====================================================================
+   v6.31: GRAVAR A CALL e MODO CINEMA PARA TODOS
+   - Gravar: junta a sua voz e o som de todo mundo da call num arquivo de áudio (fica só no seu PC).
+     Todo mundo na call vê "🔴 Gravando" enquanto estiver gravando. No fim dá para ouvir, baixar,
+     mandar no chat ou transcrever (Whisper, no próprio computador).
+   - Cinema: quem está vendo uma tela pode pôr a call toda em modo cinema: a tela ocupa tudo,
+     as câmeras ficam pequenas embaixo e tem botões de reação rápida. Esc sai (só para você).
+   ===================================================================== */
+const CR = { on: false, ac: null, dest: null, rec: null, chunks: [], ids: new Set(), poll: null, beat: null, t0: 0, timer: null, others: new Map() };
+const CR_MAX = 2 * 3600 * 1000;
+function crAdd(stream){
+  if(!stream || CR.ids.has(stream.id) || !stream.getAudioTracks().length) return;
+  try{ const src = CR.ac.createMediaStreamSource(new MediaStream(stream.getAudioTracks())); src.connect(CR.dest); CR.ids.add(stream.id); }catch(e){}
+}
+function crScan(){
+  if(!CR.on) return;
+  if(Voice.micStream) crAdd(Voice.micStream);
+  Voice.peers.forEach(p => p.streams.forEach(s => crAdd(s)));
+}
+async function crStart(){
+  if(!Voice.channel){ App.toast('Entre numa chamada para gravar.', true); return; }
+  if(CR.on) return;
+  if(!(await confirmBox('Gravar a call?', 'Grava o áudio de todo mundo nesta chamada (a sua voz e a dos outros). <b>Todos na call vão ver que está gravando.</b> O arquivo fica só com você.', 'Começar a gravar'))) return;
+  if(!Voice.channel) return;
+  CR.ac = new (window.AudioContext || window.webkitAudioContext)();
+  CR.dest = CR.ac.createMediaStreamDestination(); CR.ids = new Set(); CR.chunks = [];
+  const mime = ['audio/webm;codecs=opus', 'audio/ogg;codecs=opus', 'audio/webm', 'audio/mp4'].find(t => { try{ return MediaRecorder.isTypeSupported(t); }catch(e){ return false; } }) || '';
+  try{ CR.rec = new MediaRecorder(CR.dest.stream, mime ? { mimeType: mime, audioBitsPerSecond: 64000 } : {}); }
+  catch(e){ App.toast('Não deu para gravar neste navegador: ' + (e.message || e), true); return; }
+  CR.on = true; CR.t0 = Date.now(); CR.mime = CR.rec.mimeType || mime || 'audio/webm';
+  crScan(); CR.poll = setInterval(crScan, 2000);
+  CR.rec.ondataavailable = e => e.data && e.data.size && CR.chunks.push(e.data);
+  CR.rec.onstop = crDone;
+  CR.rec.start(1000);
+  const beat = () => Voice.sendFx({ t: 'callrec', on: true });
+  beat(); CR.beat = setInterval(beat, 8000);
+  CR.timer = setInterval(() => { crPill(); if(Date.now() - CR.t0 > CR_MAX){ App.toast('A gravação chegou a 2 horas e parou sozinha.'); crStop(); } }, 1000);
+  crPill(); App.sfx && App.sfx('screen');
+}
+function crStop(){
+  if(!CR.on) return;
+  CR.on = false; clearInterval(CR.poll); clearInterval(CR.beat); clearInterval(CR.timer);
+  try{ Voice.sendFx({ t: 'callrec', on: false }); }catch(e){}
+  try{ CR.rec.state !== 'inactive' ? CR.rec.stop() : crDone(); }catch(e){ crDone(); }
+  crPill();
+}
+App.callRecToggle = () => CR.on ? crStop() : crStart();
+const crFmt = ms => { const s = Math.floor(ms / 1000); return `${Math.floor(s / 3600) ? Math.floor(s / 3600) + ':' : ''}${String(Math.floor(s / 60) % 60).padStart(Math.floor(s / 3600) ? 2 : 1, '0')}:${String(s % 60).padStart(2, '0')}`; };
+function crPill(){
+  let el = document.getElementById('crPill');
+  const others = [...CR.others.entries()].filter(([, t]) => Date.now() - t < 20000).map(([u]) => u);
+  if(!CR.on && !others.length){ el && el.remove(); return; }
+  if(!el){ el = document.createElement('div'); el.id = 'crPill'; el.className = 'crpill'; document.body.appendChild(el); }
+  el.innerHTML = CR.on ? `<span class="dot"></span><b>Gravando a call</b> ${crFmt(Date.now() - CR.t0)}<button class="btn sm red" id="crStopB">${ic('stop', 13)} Parar</button>`
+    : `<span class="dot"></span><b>${others.map(u => esc(prof(u).display_name)).join(', ')}</b> ${others.length > 1 ? 'estão' : 'está'} gravando a call`;
+  const b = el.querySelector('#crStopB'); if(b) b.onclick = crStop;
+}
+setInterval(() => { if(CR.others.size){ [...CR.others].forEach(([u, t]) => { if(Date.now() - t > 20000) CR.others.delete(u); }); crPill(); } }, 5000);
+async function crDone(){
+  try{ CR.ac && CR.ac.close(); }catch(e){}
+  const blob = new Blob(CR.chunks, { type: CR.mime.split(';')[0] }); CR.chunks = [];
+  if(!blob.size){ App.toast('A gravação saiu vazia.', true); return; }
+  const dur = Date.now() - CR.t0, url = URL.createObjectURL(blob);
+  const ext = /ogg/.test(blob.type) ? 'ogg' : /mp4/.test(blob.type) ? 'm4a' : 'webm';
+  const fname = `call-telao-${new Date(CR.t0).toLocaleString('pt-BR').replace(/[/:, ]+/g, '-')}.${ext}`;
+  modal(`<div class="mh"><h2>🎙️ Gravação da call</h2><p>${crFmt(dur)} · ${(blob.size / 1048576).toFixed(1)} MB · fica só no seu computador até você mandar.</p></div>
+    <div class="mc"><audio controls src="${url}" style="width:100%"></audio>
+      <div class="crtx hidden" id="crTx"></div></div>
+    <div class="mf wrapf"><button class="btn sec" data-close>Fechar</button><button class="btn sec" id="crTr">${ic('edit', 16)} Transcrever</button><button class="btn sec" id="crSend">${ic('send', 16)} Mandar no chat</button><a class="btn" href="${url}" download="${fname}">${ic('download', 16)} Baixar</a></div>`, m => {
+    m.querySelector('#crSend').onclick = async e => {
+      const b = e.currentTarget; const cid = M.cid || (Voice.channel && Voice.channel.id);
+      if(!cid){ App.toast('Abra uma conversa para mandar.', true); return; }
+      b.disabled = true; b.textContent = 'Enviando…';
+      try{ const meta = await uploadOne({ file: new File([blob], fname, { type: blob.type }) });
+        const { error } = await App.sb.from('messages').insert({ channel_id: cid, content: '🎙️ Gravação da call', attachments: [meta] }); if(error) throw error;
+        App.toast('Gravação enviada!'); b.textContent = 'Enviado ✓';
+      }catch(x){ b.disabled = false; b.innerHTML = `${ic('send', 16)} Mandar no chat`; App.toast('Não deu para enviar: ' + (x.message || x) + '. Baixe o arquivo e mande de outro jeito se for grande.', true); }
+    };
+    m.querySelector('#crTr').onclick = e => crTranscribe(blob, m, e.currentTarget);
+  });
+}
+async function crTranscribe(blob, m, btn){
+  const box = m.querySelector('#crTx'); box.classList.remove('hidden'); btn.disabled = true;
+  const say = t => box.innerHTML = `<div class="spin" style="margin:6px 0"></div><small class="mut">${t}</small>`;
+  try{
+    say('Preparando o reconhecimento de voz…');
+    await whisperPipe(p => say(`Baixando o reconhecimento de voz ${p}% (só na primeira vez)…`));
+    say('Lendo o áudio…');
+    const ab = await blob.arrayBuffer();
+    const tmp = new (window.AudioContext || window.webkitAudioContext)();
+    const buf = await tmp.decodeAudioData(ab); tmp.close();
+    const off = new OfflineAudioContext(1, Math.ceil(buf.duration * 16000), 16000);
+    const src = off.createBufferSource(); src.buffer = buf; src.connect(off.destination); src.start();
+    const pcm = (await off.startRendering()).getChannelData(0);
+    say(`Transcrevendo ${crFmt(buf.duration * 1000)} de áudio… (pode levar alguns minutos)`);
+    const lang = ({ en: 'english', es: 'spanish' })[P.lang] || 'portuguese';
+    const out = await TRX.pipe(pcm, { language: lang, task: 'transcribe', chunk_length_s: 30, stride_length_s: 5, return_timestamps: true });
+    const chunks = (out && out.chunks) || [];
+    const text = chunks.length ? chunks.map(c => `[${crFmt(((c.timestamp && c.timestamp[0]) || 0) * 1000)}] ${String(c.text || '').trim()}`).filter(l => l.replace(/^\[[^\]]+\]\s*/, '')).join('\n') : String((out && out.text) || '').trim();
+    if(!text){ box.innerHTML = '<small class="mut">Não entendi nada no áudio.</small>'; btn.disabled = false; return; }
+    const turl = URL.createObjectURL(new Blob([text], { type: 'text/plain;charset=utf-8' }));
+    box.innerHTML = `<div class="crtxt">${esc(text).replace(/\n/g, '<br>')}</div><div class="gacts"><button class="btn sec sm" id="crCopy">${ic('copy', 14)} Copiar</button><a class="btn sec sm" href="${turl}" download="transcricao-call.txt">${ic('download', 14)} Baixar .txt</a></div>`;
+    box.querySelector('#crCopy').onclick = () => copy(text);
+  }catch(x){ box.innerHTML = `<small class="err">Não deu para transcrever: ${esc(x.message || String(x))}</small>`; btn.disabled = false; }
+}
+const _onFxCR = Voice.onFx;
+Voice.onFx = (pl, mine) => {
+  if(pl && pl.t === 'callrec'){
+    if(!mine){ if(pl.on){ if(!CR.others.has(pl.uid)) App.toast(`🔴 ${prof(pl.uid).display_name} começou a gravar a call.`); CR.others.set(pl.uid, Date.now()); } else { CR.others.delete(pl.uid); App.toast(`${prof(pl.uid).display_name} parou de gravar a call.`); } crPill(); }
+    return;
+  }
+  if(pl && pl.t === 'cine'){ cineRemote(pl, mine); return; }
+  _onFxCR(pl, mine);
+};
+const _leaveVoiceCR = leaveVoice;
+leaveVoice = function(){ if(CR.on) crStop(); CR.others.clear(); crPill(); if(document.body.classList.contains('cinema')) cineExit(); return _leaveVoiceCR.apply(this, arguments); };
+
+/* ---------- modo cinema ---------- */
+function cineEnter(){ document.body.classList.add('cinema'); cineIdle(); renderStage(); }
+function cineExit(){ document.body.classList.remove('cinema', 'cineidle'); renderStage(); }
+function cineRemote(pl, mine){
+  if(pl.on){
+    if(pl.session) S.focus = 's:' + pl.session;
+    if(!mine) App.toast(`🎬 ${prof(pl.uid).display_name} ligou o modo cinema. Esc para sair.`);
+    cineEnter();
+  } else if(!mine && document.body.classList.contains('cinema')){ cineExit(); }
+}
+let cineT = null;
+function cineIdle(){
+  document.body.classList.remove('cineidle'); clearTimeout(cineT);
+  if(document.body.classList.contains('cinema')) cineT = setTimeout(() => document.body.classList.add('cineidle'), 3000);
+}
+document.addEventListener('mousemove', () => { if(document.body.classList.contains('cinema')) cineIdle(); }, { passive: true });
+document.addEventListener('keydown', e => { if(e.key === 'Escape' && document.body.classList.contains('cinema')) setTimeout(() => { document.body.classList.remove('cineidle'); renderStage(); }, 0); });
+function cineMenu(btn){
+  const r = btn.getBoundingClientRect(), on = document.body.classList.contains('cinema');
+  const f = S.focus && S.focus.startsWith('s:') ? S.focus.slice(2) : null;
+  menu(r.left - 160, r.bottom + 6, on ? [{ label: 'Sair do modo cinema', icon: ic('x', 18), onClick: cineExit }]
+    : [{ label: 'Modo cinema só para mim', icon: ic('film', 18), onClick: cineEnter },
+       ...(f ? [{ label: 'Modo cinema para a call toda', icon: ic('users', 18), onClick: () => Voice.sendFx({ t: 'cine', on: true, session: f }) }] : [])]);
+}
+const _renderStageCR = renderStage;
+renderStage = function(){
+  _renderStageCR.apply(this, arguments);
+  const cb = document.getElementById('stCine'); if(cb) cb.onclick = e => { e.stopPropagation(); cineMenu(cb); };
+  const stage = document.querySelector('#stageWrap .stage');
+  if(!stage) return;
+  // gravação: botão no painel da call
+  const bar = stage.querySelector('.stagebar .sbg:nth-child(2)');
+  if(bar && !bar.querySelector('#sbCallRec') && window.MediaRecorder){
+    bar.insertAdjacentHTML('beforeend', `<button class="cbtn ${CR.on ? 'rec' : ''}" id="sbCallRec" data-tip="${CR.on ? 'Parar de gravar a call' : 'Gravar a call'}" data-tipsub="áudio de todo mundo">${ic('record', 22)}</button>`);
+    bar.querySelector('#sbCallRec').onclick = () => { App.callRecToggle(); setTimeout(renderStage, 300); };
+  }
+  if(document.body.classList.contains('cinema') && stage.querySelector('#focusBox') && !stage.querySelector('#cineRx')){
+    // a tela que estava em foco sumiu (parou de transmitir): sai do cinema
+    stage.insertAdjacentHTML('beforeend', `<div class="cinerx" id="cineRx">${['😂', '🔥', '😮', '👏', '❤️', '💀'].map(e => `<button data-cfx="${e}">${e}</button>`).join('')}<button class="cinex" id="cineX" data-tip="Sair do cinema (Esc)">${ic('x', 16)}</button></div>`);
+    stage.querySelectorAll('[data-cfx]').forEach(b => b.onclick = () => Voice.sendFx({ t: 'react', e: b.dataset.cfx }));
+    stage.querySelector('#cineX').onclick = cineExit;
+  }
+  if(document.body.classList.contains('cinema') && !stage.querySelector('#focusBox') && S._cineWasFocus) cineExit();
+  S._cineWasFocus = !!stage.querySelector('#focusBox');
+};
+/* =====================================================================
+   v6.31: ANIVERSÁRIOS DO SERVIDOR
+   - Calendário com todo mundo que ativou "Mostrar meu aniversário" (só dia e mês, nunca o ano).
+   - No dia, a conta oficial do Telão posta um parabéns no servidor (uma vez por pessoa por ano),
+     com o botão "Dar parabéns". Quem gerencia o servidor escolhe o canal ou desliga.
+   ===================================================================== */
+const BD_SQL = 'Para os aniversários do servidor, rode o supabase.sql novo (v6.31) no Supabase.';
+const MESES = ['janeiro', 'fevereiro', 'março', 'abril', 'maio', 'junho', 'julho', 'agosto', 'setembro', 'outubro', 'novembro', 'dezembro'];
+App.bdayCardHtml = (a, m) => {
+  const p = prof(a.user_id);
+  return `<div class="bdcard"><div class="bdconf">🎉</div>${avatar(p, 'lg')}<div class="bdt"><small>ANIVERSÁRIO</small><b>Hoje é aniversário de ${esc(p.display_name || a.name || '')}!</b><span>🎂 Manda um parabéns aí</span></div>
+    ${a.user_id !== S.me.id ? `<button class="btn sm" data-bdgo="${esc(p.username || '')}">🎉 Dar parabéns</button>` : '<span class="bdme">É você! 🥳</span>'}</div>`;
+};
+document.addEventListener('click', e => {
+  const b = e.target.closest('[data-bdgo]'); if(!b) return;
+  const ta = document.getElementById('cmp'); if(!ta) return;
+  ta.value = `Parabéns @${b.dataset.bdgo}! 🎂🎉 ${['Muitos anos de vida!', 'Tudo de bom pra você!', 'Feliz aniversário!'][Math.floor(Math.random() * 3)]}`;
+  ta.focus(); ta.dispatchEvent(new Event('input', { bubbles: true }));
+});
+// ao abrir um servidor (uma vez por dia por servidor), confere se tem aniversariante
+const _goBd = go;
+go = async function(route){
+  const r = await _goBd.apply(this, arguments);
+  if(route && route.kind === 'server'){
+    const k = 'telao-bdann-' + route.sid, today = new Date().toLocaleDateString('en-CA', { timeZone: 'America/Sao_Paulo' });
+    if(ls.get(k, '') !== today){ ls.set(k, today); App.sb.rpc('server_bday_announce', { p_server: route.sid }).then(() => {}, () => {}); }
+  }
+  return r;
+};
+async function bdCalendar(s){
+  modal(`<div class="mh"><h2>🎂 Aniversários · ${esc(s.name)}</h2><p>Só aparece quem ativou "Mostrar meu aniversário" no perfil. O ano nunca aparece.</p></div><div class="mc" id="bdBody"><div class="spin" style="margin:20px auto"></div></div>
+    <div class="mf"><button class="btn sec" id="bdMine">${ic('cake', 16)} Mostrar o meu</button><button class="btn" data-close>Fechar</button></div>`, async m => {
+    m.querySelector('#bdMine').onclick = () => { closeModal(); openSettings('user', 'profile'); };
+    const { data, error } = await App.sb.rpc('server_bday_calendar', { p_server: s.id });
+    const body = m.querySelector('#bdBody'); if(!body) return;
+    if(error){ body.innerHTML = `<div class="locked">${/server_bday_calendar|schema cache|does not exist/i.test(error.message) ? BD_SQL : esc(error.message)}</div>`; return; }
+    const rows = data || []; await ensureProfiles(rows.map(r => r.user_id));
+    if(!rows.length){ body.innerHTML = `<div class="empty">${ic('cake', 36)}<br>Ninguém mostrou o aniversário ainda.<br><small>Ative em Configurações → Perfil → Mostrar meu aniversário.</small></div>`; return; }
+    const now = new Date(new Date().toLocaleString('en-US', { timeZone: 'America/Sao_Paulo' }));
+    const nextOf = r => { let d = new Date(now.getFullYear(), r.month - 1, r.day); if(d < new Date(now.getFullYear(), now.getMonth(), now.getDate())) d = new Date(now.getFullYear() + 1, r.month - 1, r.day); return d; };
+    const daysTo = r => Math.round((nextOf(r) - new Date(now.getFullYear(), now.getMonth(), now.getDate())) / 86400000);
+    const soon = rows.map(r => ({ ...r, dt: daysTo(r) })).filter(r => r.dt <= 30).sort((a, b) => a.dt - b.dt);
+    const person = r => `<div class="bdp ${r.dt === 0 ? 'today' : ''}">${avatar(prof(r.user_id), 'sm')}<span>${esc(prof(r.user_id).display_name)}</span><small>${r.day}/${String(r.month).padStart(2, '0')}${r.dt === 0 ? ' · hoje! 🎉' : r.dt === 1 ? ' · amanhã' : r.dt != null && r.dt <= 30 ? ` · em ${r.dt} dias` : ''}</small></div>`;
+    body.innerHTML = `${soon.length ? `<h3>Próximos 30 dias</h3><div class="bdlist">${soon.map(person).join('')}</div>` : ''}
+      <h3>O ano todo</h3><div class="bdmonths">${MESES.map((mn, i) => { const ps = rows.filter(r => r.month === i + 1).map(r => ({ ...r, dt: daysTo(r) }));
+        return `<div class="bdm ${i === now.getMonth() ? 'cur' : ''}"><b>${mn}</b>${ps.length ? ps.map(person).join('') : '<small class="mut">—</small>'}</div>`; }).join('')}</div>`;
+  });
+}
+App.bdCalendar = bdCalendar;
+const _srvMenuExtraBd = App.srvMenuExtra;
+App.srvMenuExtra = s => (_srvMenuExtraBd ? _srvMenuExtraBd(s) : []).concat([{ label: 'Aniversários', icon: ic('cake', 18), onClick: () => bdCalendar(s) }]);
+// Visão geral do servidor: parabéns automático
+const _secSrvOverviewBd = secSrvOverview;
+secSrvOverview = function(box, back){
+  _secSrvOverviewBd.apply(this, arguments);
+  const s = SET.server; if(!App.hasPerm(s.id, 2)) return;
+  const texts = (S.channels.get(s.id) || []).filter(c => c.kind === 'text').sort((a, b) => a.position - b.position);
+  box.insertAdjacentHTML('beforeend', `<hr class="sdiv"><h3>🎂 Aniversários</h3>
+    ${row('Parabéns automático no dia', 'A conta do Telão posta um parabéns quando é aniversário de alguém do servidor (de quem ativou mostrar o aniversário).', toggle('bdOn', s.bday_on !== false))}
+    <div class="srow"><div class="t"><b>Canal do parabéns</b><small>Se não escolher, vai no primeiro canal de texto.</small></div><select class="inp" id="bdCh" style="max-width:220px"><option value="">Primeiro canal de texto</option>${texts.map(c => `<option value="${c.id}" ${s.bday_channel === c.id ? 'selected' : ''}>#${esc(c.name)}</option>`).join('')}</select></div>`);
+  const save = async patch => {
+    const { error } = await App.sb.from('servers').update(patch).eq('id', s.id);
+    if(error){ App.toast(/bday_|schema cache/i.test(error.message) ? BD_SQL : error.message, true); return; }
+    Object.assign(s, patch); App.toast('Salvo.');
+  };
+  box.querySelector('#bdOn').onchange = e => save({ bday_on: e.target.checked });
+  box.querySelector('#bdCh').onchange = e => save({ bday_channel: e.target.value || null });
+};
+/* =====================================================================
+   v6.31: BICHINHO DO SERVIDOR
+   Cada servidor tem um mascote que cresce com a galera: mensagem (+1, até 40 por pessoa por dia),
+   tempo em call (+5 a cada 5 min, até 60 por dia) e carinho (+5, uma vez por dia por pessoa).
+   Se o servidor fica parado ele fica triste e depois doente — mas não morre: volta quando a galera volta.
+   Fases: ovo → filhote → jovem → adulto → lendário. Quem gerencia o servidor escolhe nome, espécie e cor.
+   ===================================================================== */
+const PET_SQL = 'Para o bichinho do servidor, rode o supabase.sql novo (v6.31) no Supabase.';
+const PET_STAGES = [[0, 'Ovo'], [60, 'Filhote'], [400, 'Jovem'], [1500, 'Adulto'], [5000, 'Lendário']];
+const PET_SPECIES = { slime: 'Slime', gato: 'Gatinho', dragao: 'Dragãozinho', robo: 'Robô', fantasma: 'Fantasminha', pato: 'Patinho' };
+const PET_COLORS = ['#ff2e9a', '#b6ff2e', '#2ee6ff', '#a970ff', '#ffb02e', '#ff5c5c', '#2effa8', '#ffe14d', '#5c8cff', '#f0f0f0'];
+S.pets = new Map();
+const petStage = xp => { let i = 0; PET_STAGES.forEach(([min], k) => { if(xp >= min) i = k; }); return i; };
+const petNext = xp => { const i = petStage(xp); return i >= PET_STAGES.length - 1 ? null : PET_STAGES[i + 1][0]; };
+function petMood(p){
+  const h = (Date.now() - new Date(p.last_active).getTime()) / 3600000;
+  if(h < 6) return { k: 'feliz', t: 'feliz', e: '😊' };
+  if(h < 24) return { k: 'ok', t: 'de boa', e: '🙂' };
+  if(h < 72) return { k: 'triste', t: 'com saudade da galera', e: '😢' };
+  return { k: 'doente', t: 'doente de tanto esperar', e: '🤒' };
+}
+function petSvg(p, size = 64){
+  const st = petStage(p.xp), mood = petMood(p).k, c = p.color || '#ff2e9a', sp = p.species || 'slime';
+  const dark = 'rgba(0,0,0,.55)';
+  if(st === 0){
+    const crack = p.xp > 30 ? '<path d="M34 38l6 5 5-6 6 6 5-5" stroke="#16121c" stroke-width="2.5" fill="none" stroke-linecap="round" stroke-linejoin="round"/>' : '';
+    return `<svg viewBox="0 0 100 100" width="${size}" height="${size}" class="petsvg st0"><ellipse cx="50" cy="90" rx="22" ry="5" fill="rgba(0,0,0,.25)"/><ellipse cx="50" cy="55" rx="26" ry="33" fill="#fff6e8"/><circle cx="40" cy="45" r="5" fill="${c}"/><circle cx="60" cy="62" r="6" fill="${c}"/><circle cx="58" cy="38" r="3.5" fill="${c}"/>${crack}</svg>`;
+  }
+  const scale = [0, .72, .84, .94, 1][st];
+  const sick = mood === 'doente', sad = mood === 'triste' || sick;
+  const body = sick ? `color-mix(in srgb, ${c} 55%, #8a9a6a)` : c;
+  let ears = '', extra = '', bodyShape = `<ellipse cx="50" cy="60" rx="30" ry="27" fill="${body}"/>`;
+  if(sp === 'gato') ears = `<path d="M26 44 L30 22 L42 36 Z" fill="${body}"/><path d="M74 44 L70 22 L58 36 Z" fill="${body}"/><path d="M30 29 L33 36 L37 34Z" fill="#ffb3d1"/><path d="M70 29 L67 36 L63 34Z" fill="#ffb3d1"/>`, extra = `<path d="M78 72 q14 -4 12 -18" stroke="${body}" stroke-width="6" fill="none" stroke-linecap="round"/>`;
+  if(sp === 'dragao') ears = `<path d="M33 38 L28 20 L40 33Z" fill="#ffe14d"/><path d="M67 38 L72 20 L60 33Z" fill="#ffe14d"/>`, extra = `<path d="M20 56 q-14 -14 -6 -24 q6 10 14 12Z" fill="${body}" opacity=".85"/><path d="M80 56 q14 -14 6 -24 q-6 10 -14 12Z" fill="${body}" opacity=".85"/>`;
+  if(sp === 'robo') bodyShape = `<rect x="22" y="36" width="56" height="50" rx="12" fill="${body}"/>`, ears = `<line x1="50" y1="36" x2="50" y2="22" stroke="#bbb" stroke-width="3"/><circle cx="50" cy="20" r="5" fill="${sad ? '#888' : '#ff5c5c'}"/>`;
+  if(sp === 'fantasma') bodyShape = `<path d="M22 60 q0 -30 28 -30 q28 0 28 30 v24 l-7 -6 -7 6 -7 -6 -7 6 -7 -6 -7 6 -7 -6 -7 6z" fill="${body}"/>`;
+  if(sp === 'pato') extra = `<ellipse cx="50" cy="66" rx="9" ry="5" fill="#ffb02e"/>`, ears = `<path d="M46 34 q4 -10 10 -4" stroke="${body}" stroke-width="4" fill="none" stroke-linecap="round"/>`;
+  if(sp === 'slime') bodyShape = `<path d="M18 84 q-2 -40 32 -48 q34 8 32 48 q-8 4 -16 0 q-8 4 -16 0 q-8 4 -16 0 q-8 4 -16 0z" fill="${body}"/><ellipse cx="38" cy="50" rx="6" ry="4" fill="#fff" opacity=".35"/>`;
+  const eyeY = sp === 'pato' ? 55 : 58;
+  const eyes = sick ? `<path d="M36 ${eyeY - 4} l8 8 M44 ${eyeY - 4} l-8 8 M56 ${eyeY - 4} l8 8 M64 ${eyeY - 4} l-8 8" stroke="${dark}" stroke-width="3" stroke-linecap="round"/>`
+    : `<circle cx="40" cy="${eyeY}" r="${sad ? 4 : 5.5}" fill="#16121c"/><circle cx="60" cy="${eyeY}" r="${sad ? 4 : 5.5}" fill="#16121c"/><circle cx="41.8" cy="${eyeY - 2}" r="1.8" fill="#fff"/><circle cx="61.8" cy="${eyeY - 2}" r="1.8" fill="#fff"/>${sad ? `<path d="M34 ${eyeY - 9} l10 3 M66 ${eyeY - 9} l-10 3" stroke="${dark}" stroke-width="2.5" stroke-linecap="round"/>` : ''}`;
+  const mouth = sp === 'pato' ? '' : sad ? `<path d="M43 74 q7 -6 14 0" stroke="${dark}" stroke-width="3" fill="none" stroke-linecap="round"/>` : `<path d="M42 70 q8 8 16 0" stroke="${dark}" stroke-width="3" fill="none" stroke-linecap="round"/>`;
+  const cheeks = sad ? '' : `<ellipse cx="31" cy="67" rx="5" ry="3" fill="#ff7ab8" opacity=".6"/><ellipse cx="69" cy="67" rx="5" ry="3" fill="#ff7ab8" opacity=".6"/>`;
+  const tear = mood === 'triste' ? `<path d="M37 64 q-3 6 0 8 q3 -2 0 -8z" fill="#7cc8ff"/>` : '';
+  const crown = st >= 4 ? `<path d="M36 30 l4 -12 6 8 4 -10 4 10 6 -8 4 12z" fill="#ffd24d" stroke="#c9961a" stroke-width="1.5"/>` : st === 3 ? `<path d="M40 34 q10 -10 20 0" stroke="#ffd24d" stroke-width="4" fill="none"/>` : '';
+  const sparkle = st >= 4 && !sad ? `<text x="80" y="28" font-size="14">✨</text>` : '';
+  return `<svg viewBox="0 0 100 100" width="${size}" height="${size}" class="petsvg ${sad ? 'sad' : 'happy'}"><ellipse cx="50" cy="92" rx="${24 * scale}" ry="5" fill="rgba(0,0,0,.25)"/>
+    <g transform="translate(50 92) scale(${scale}) translate(-50 -92)">${extra}${ears}${bodyShape}${eyes}${mouth}${cheeks}${tear}${crown}</g>${sparkle}</svg>`;
+}
+async function petLoad(sid, force){
+  if(!sid) return null;
+  const c = S.pets.get(sid); if(c && !force && Date.now() - c._at < 60000) return c;
+  const { data, error } = await App.sb.rpc('pet_get', { p_server: sid });
+  if(error){ S.pets.set(sid, { _err: error.message, _at: Date.now() }); return null; }
+  data._at = Date.now(); S.pets.set(sid, data); return data;
+}
+function petRow(sid){
+  const p = S.pets.get(sid); if(!p || p._err) return '';
+  const st = petStage(p.xp), nx = petNext(p.xp), mood = petMood(p);
+  const pct = nx ? Math.round((p.xp - PET_STAGES[st][0]) / (nx - PET_STAGES[st][0]) * 100) : 100;
+  return `<button class="petrow mood-${mood.k}" id="sbPet"><span class="petmini">${petSvg(p, 40)}</span><span class="t"><b>${esc(p.name)} <small>${PET_STAGES[st][1]}</small></b><small>${mood.e} ${mood.t}</small><i class="petbar"><b style="width:${pct}%"></b></i></span></button>`;
+}
+const _renderSidebarPet = renderSidebar;
+renderSidebar = function(){
+  const r = _renderSidebarPet.apply(this, arguments);
+  if(S.route.kind !== 'server') return r;
+  const sid = S.route.sid, body = $('#sbBody'); if(!body) return r;
+  const put = () => {
+    if(S.route.kind !== 'server' || S.route.sid !== sid) return;
+    document.getElementById('sbPet')?.remove();
+    const html = petRow(sid); if(!html) return;
+    const ev = body.querySelector('#sbEvents');
+    ev ? ev.insertAdjacentHTML('afterend', html) : body.insertAdjacentHTML('afterbegin', html);
+    document.getElementById('sbPet').onclick = () => petModal(sid);
+  };
+  put();
+  const c = S.pets.get(sid); if(!c || Date.now() - c._at > 60000) petLoad(sid).then(put);
+  return r;
+};
+async function petModal(sid){
+  const s = S.servers.find(x => x.id === sid); if(!s) return;
+  const p = await petLoad(sid, true);
+  if(!p){ App.toast(PET_SQL, true); return; }
+  await ensureProfiles((p.top || []).map(t => t.user_id));
+  const st = petStage(p.xp), nx = petNext(p.xp), mood = petMood(p), can = App.hasPerm(sid, 2);
+  const pct = nx ? Math.round((p.xp - PET_STAGES[st][0]) / (nx - PET_STAGES[st][0]) * 100) : 100;
+  modal(`<div class="mh"><h2>${esc(p.name)} <small class="mut">· ${PET_SPECIES[p.species] || ''} de ${esc(s.name)}</small></h2><p>O bichinho do servidor cresce com a galera conversando, ficando em call e fazendo carinho.</p></div>
+    <div class="mc"><div class="petbig mood-${mood.k}" id="petBig">${petSvg(p, 170)}</div>
+      <div class="petstats"><div><b>${PET_STAGES[st][1]}</b><small>fase</small></div><div><b>${mood.e} ${mood.t}</b><small>humor</small></div><div><b>${p.xp.toLocaleString('pt-BR')}</b><small>pontos</small></div><div><b>+${p.today_xp || 0}</b><small>hoje</small></div></div>
+      <div class="petprog"><i class="petbar big"><b style="width:${pct}%"></b></i><small>${nx ? `Faltam <b>${nx - p.xp}</b> pontos para virar <b>${PET_STAGES[st + 1][1]}</b>` : 'Fase máxima! 👑'}</small></div>
+      <div class="gacts" style="justify-content:center"><button class="btn" id="petPet" ${p.petted_today ? 'disabled' : ''}>${p.petted_today ? '💗 Você já fez carinho hoje' : '🤚 Fazer carinho (+5)'}</button></div>
+      <h3>Quem mais cuidou (30 dias)</h3><div class="pettop">${(p.top || []).map((t, i) => `<div><span>${['🥇', '🥈', '🥉', '4', '5'][i]}</span>${avatar(prof(t.user_id), 'xs')}<b>${esc(prof(t.user_id).display_name)}</b><small>${t.xp} pts</small></div>`).join('') || '<small class="mut">Ninguém ainda. Bora conversar!</small>'}</div>
+      <p class="mut small" style="margin-top:12px">💬 mensagem +1 (até 40 por dia) · 🎧 5 min em call +5 (até 60 por dia) · 🤚 carinho +5 por dia. Parado mais de 1 dia ele fica triste; mais de 3, doente. Ele nunca morre: é só a galera voltar.</p>
+      ${can ? `<details class="petcfg"><summary>Mudar o bichinho</summary>
+        <label class="field"><span>Nome</span><input class="inp" id="petN" maxlength="20" value="${esc(p.name)}"></label>
+        <div class="petsp">${Object.entries(PET_SPECIES).map(([k, n]) => `<button type="button" class="${p.species === k ? 'on' : ''}" data-psp="${k}">${petSvg({ ...p, species: k, xp: Math.max(p.xp, 400) }, 52)}<small>${n}</small></button>`).join('')}</div>
+        <div class="colors" id="petC">${PET_COLORS.map(c => `<button type="button" data-pc="${c}" style="background:${c}" class="${p.color === c ? 'on' : ''}"></button>`).join('')}</div>
+        <button class="btn sm" id="petSave">Salvar</button></details>` : ''}
+      <div class="gacts" style="justify-content:flex-end;margin-top:14px"><button class="btn" data-close>Fechar</button></div></div>`, m => {
+    const pb = m.querySelector('#petPet');
+    pb.onclick = async () => {
+      pb.disabled = true;
+      const { data, error } = await App.sb.rpc('pet_pet', { p_server: sid });
+      if(error){ App.toast(error.message, true); pb.disabled = false; return; }
+      const big = m.querySelector('#petBig'); big.classList.remove('petted'); void big.offsetWidth; big.classList.add('petted');
+      for(let i = 0; i < 6; i++) setTimeout(() => { const h = document.createElement('span'); h.className = 'petheart'; h.textContent = '💗'; h.style.left = (35 + Math.random() * 30) + '%'; big.appendChild(h); setTimeout(() => h.remove(), 1400); }, i * 120);
+      pb.textContent = data ? '💗 Ele amou! (+5)' : '💗 Você já fez carinho hoje';
+      await petLoad(sid, true); renderSidebar();
+    };
+    if(!can) return;
+    let sp = p.species, col = p.color;
+    m.querySelectorAll('[data-psp]').forEach(b => b.onclick = () => { sp = b.dataset.psp; m.querySelectorAll('[data-psp]').forEach(x => x.classList.toggle('on', x === b)); m.querySelector('#petBig').innerHTML = petSvg({ ...p, species: sp, color: col }, 170); });
+    m.querySelectorAll('[data-pc]').forEach(b => b.onclick = () => { col = b.dataset.pc; m.querySelectorAll('[data-pc]').forEach(x => x.classList.toggle('on', x === b)); m.querySelector('#petBig').innerHTML = petSvg({ ...p, species: sp, color: col }, 170); });
+    m.querySelector('#petSave').onclick = async () => {
+      const { error } = await App.sb.rpc('pet_config', { p_server: sid, p_name: m.querySelector('#petN').value.trim(), p_species: sp, p_color: col });
+      if(error){ App.toast(error.message, true); return; }
+      await petLoad(sid, true); closeModal(); renderSidebar(); App.toast('Bichinho atualizado!');
+    };
+  });
+}
+App.petModal = petModal; App._petSvg = petSvg;
+// em call num servidor: a cada 5 min conta para o bichinho
+setInterval(() => {
+  const ch = Voice.channel; if(!ch || !ch.server_id) return;
+  App.sb.rpc('pet_voice_tick', { p_server: ch.server_id }).then(({ data }) => { if(data) petLoad(ch.server_id, true).then(() => { if(S.route.kind === 'server' && S.route.sid === ch.server_id) renderSidebar(); }); }, () => {});
+}, 5 * 60 * 1000);
+const _srvMenuExtraPet = App.srvMenuExtra;
+App.srvMenuExtra = s => (_srvMenuExtraPet ? _srvMenuExtraPet(s) : []).concat([{ label: 'Bichinho do servidor', icon: ic('paw', 18), onClick: () => petModal(s.id) }]);
+/* =====================================================================
+   v6.31: MÚSICA DO PERFIL
+   Escolha uma música (trecho de 30 s da busca do iTunes). Quando alguém abre o seu perfil, ela
+   toca baixinho, com botão para pausar. Cada um pode desligar a música dos outros em
+   Configurações → Perfil.
+   ===================================================================== */
+const PS_SQL = 'Para a música do perfil, rode o supabase.sql novo (v6.31) no Supabase.';
+const PS = { audio: null, uid: null, fade: null };
+function psStop(){ if(PS.audio){ try{ PS.audio.pause(); }catch(e){} } PS.uid = null; clearInterval(PS.fade); document.querySelectorAll('.psong').forEach(x => x.classList.remove('playing')); }
+function psPlay(song, uid, auto){
+  if(!song || !song.preview) return;
+  if(PS.uid === uid && PS.audio && !PS.audio.paused){ psStop(); return; }
+  psStop();
+  PS.audio = PS.audio || new Audio(); PS.audio.src = song.preview; PS.uid = uid; PS.audio.loop = true;
+  const target = Math.max(0.05, Math.min(1, P.psVol ?? 0.25));
+  PS.audio.volume = auto ? 0 : target;
+  if(P.outputId && PS.audio.setSinkId) PS.audio.setSinkId(P.outputId).catch(() => {});
+  PS.audio.play().then(() => {
+    document.querySelectorAll(`.psong[data-psu="${uid}"]`).forEach(x => x.classList.add('playing'));
+    if(auto){ let v = 0; PS.fade = setInterval(() => { v = Math.min(target, v + target / 12); PS.audio.volume = v; if(v >= target) clearInterval(PS.fade); }, 100); }
+  }).catch(() => {});
+}
+// cartão do perfil
+const _profileCardPS2 = profileCard;
+profileCard = function(p, extra = ''){
+  const h = _profileCardPS2(p, extra);
+  const s = p && p.theme_song;
+  if(!s || !s.preview) return h;
+  const row = `<h6>Música do perfil</h6><div class="psong" data-psu="${p.id}" data-auto="${p.id !== S.me.id ? 1 : 0}">${s.art ? `<img src="${esc(s.art)}" alt="">` : '<span class="psart">🎵</span>'}<div><b>${esc(s.title || '')}</b><small>${esc(s.artist || '')}</small></div><button class="ibtn sm psbtn" data-psplay="${p.id}" data-tip="Tocar / pausar"><span class="pson">${ic('pause', 16)}</span><span class="psoff">${ic('play', 16)}</span></button><span class="pseq"><i></i><i></i><i></i></span></div>`;
+  return h.replace(/<\/div><\/div>$/, row + '</div></div>');
+};
+document.addEventListener('click', e => {
+  const b = e.target.closest('[data-psplay]'); if(!b) return;
+  e.preventDefault(); e.stopPropagation();
+  const p = prof(b.dataset.psplay); psPlay(p.theme_song, p.id, false);
+}, true);
+// toca sozinho quando o cartão de alguém aparece; para quando fecha
+const psMenu = document.getElementById('menu');
+if(psMenu) new MutationObserver(() => {
+  const vis = !psMenu.classList.contains('hidden');
+  const card = vis && psMenu.querySelector('.psong[data-auto="1"]');
+  if(!card){ if(PS.uid && !document.querySelector(`.psong[data-psu="${PS.uid}"]`)) psStop(); return; }
+  const uid = card.dataset.psu;
+  if(PS.uid === uid) return;
+  if(P.psAuto === false || Voice.deafened) return;
+  psPlay(prof(uid).theme_song, uid, true);
+}).observe(psMenu, { attributes: true, attributeFilter: ['class'], childList: true });
+// Configurações → Perfil
+const _secProfilePS = secProfile;
+secProfile = function(box, back){
+  _secProfilePS.apply(this, arguments);
+  const cur = S.me.theme_song;
+  box.insertAdjacentHTML('beforeend', `<hr class="sdiv"><h3>🎵 Música do perfil</h3><p class="mut small">Toca baixinho quando alguém abre o seu perfil (um trecho de 30 s).</p>
+    <div id="psCur">${cur && cur.preview ? `<div class="psong mine" data-psu="${S.me.id}">${cur.art ? `<img src="${esc(cur.art)}" alt="">` : '<span class="psart">🎵</span>'}<div><b>${esc(cur.title)}</b><small>${esc(cur.artist || '')}</small></div><button class="ibtn sm psbtn" data-psplay="${S.me.id}"><span class="pson">${ic('pause', 16)}</span><span class="psoff">${ic('play', 16)}</span></button><button class="btn sec sm" id="psRm">Tirar</button></div>` : ''}</div>
+    <div class="psearch"><input class="inp" id="psQ" maxlength="80" placeholder="Buscar música ou artista"><button class="btn sec" id="psGo">${ic('search', 16)} Buscar</button></div>
+    <div class="psres" id="psRes"></div>
+    ${row('Tocar a música do perfil dos outros', 'Quando você abre o perfil de alguém que escolheu uma música.', toggle('psAuto', P.psAuto !== false))}
+    <div class="srow"><div class="t"><b>Volume da música dos perfis</b></div><input type="range" class="range" id="psVol" min="5" max="100" value="${Math.round((P.psVol ?? 0.25) * 100)}" style="max-width:200px"></div>`);
+  const $b = q => box.querySelector(q);
+  $b('#psAuto').onchange = e => { P.psAuto = e.target.checked; savePrefs(); };
+  $b('#psVol').onchange = e => { P.psVol = +e.target.value / 100; savePrefs(); if(PS.audio) PS.audio.volume = P.psVol; };
+  const save = async song => {
+    const { data, error } = await App.sb.from('profiles').update({ theme_song: song }).eq('id', S.me.id).select().single();
+    if(error){ App.toast(/theme_song|schema cache/i.test(error.message) ? PS_SQL : error.message, true); return; }
+    S.me = data; S.profiles.set(data.id, data); psStop(); renderSettings(); App.toast(song ? '🎵 Música do perfil escolhida!' : 'Música do perfil tirada.');
+  };
+  const rm = $b('#psRm'); if(rm) rm.onclick = () => save(null);
+  const search = async () => {
+    const q = $b('#psQ').value.trim(); if(!q) return;
+    const res = $b('#psRes'); res.innerHTML = '<div class="spin" style="margin:10px 0"></div>';
+    try{
+      const j = await (await fetch('/api/musica?q=' + encodeURIComponent(q))).json();
+      const list = (j && j.tracks) || [];
+      res.innerHTML = list.length ? list.slice(0, 10).map((t, i) => `<div class="psong"><img src="${esc(t.art || '')}" alt=""><div><b>${esc(t.title)}</b><small>${esc(t.artist)}</small></div><button class="ibtn sm" data-psprev="${i}" data-tip="Ouvir">${ic('play', 16)}</button><button class="btn sm" data-pspick="${i}">Escolher</button></div>`).join('') : '<p class="mut small">Não achei nada. Tente outro nome.</p>';
+      res.querySelectorAll('[data-psprev]').forEach(b => b.onclick = () => psPlay(list[+b.dataset.psprev], 'prev' + b.dataset.psprev, false));
+      res.querySelectorAll('[data-pspick]').forEach(b => b.onclick = () => { const t = list[+b.dataset.pspick]; save({ title: t.title, artist: t.artist, preview: t.preview, art: t.art }); });
+    }catch(e){ res.innerHTML = '<p class="err">Não deu para buscar agora.</p>'; }
+  };
+  $b('#psGo').onclick = search;
+  $b('#psQ').onkeydown = e => { if(e.key === 'Enter'){ e.preventDefault(); search(); } };
+  SET.cleanups.push(psStop);
+};
+/* =====================================================================
+   v6.31: CARTÃO DE ESTATÍSTICAS — horas em call, mensagens, jogo mais jogado… num cartão
+   em formato de story (1080×1920) para baixar, compartilhar ou mandar no chat.
+   ===================================================================== */
+const SC_SQL = 'Para o cartão de estatísticas, rode o supabase.sql novo (v6.31) no Supabase.';
+const scH = min => { min = min || 0; return min < 60 ? `${min} min` : `${Math.floor(min / 60)} h${min % 60 ? ' ' + (min % 60) + ' min' : ''}`; };
+const SC_THEMES = [['#ff2e9a', '#5b2bff'], ['#00c6ff', '#0b1a5c'], ['#b6ff2e', '#0a4f2c'], ['#ffb02e', '#ff2e63'], ['#1a1a24', '#3a2b55']];
+function scImg(url){ return new Promise(res => { if(!url){ res(null); return; } const i = new Image(); i.crossOrigin = 'anonymous'; i.onload = () => res(i); i.onerror = () => res(null); i.src = url; setTimeout(() => res(null), 4000); }); }
+async function scDraw(st, range, theme){
+  const W = 1080, H = 1920, c = document.createElement('canvas'); c.width = W; c.height = H; const g = c.getContext('2d');
+  const [c1, c2] = SC_THEMES[theme];
+  const gr = g.createLinearGradient(0, 0, W * .4, H); gr.addColorStop(0, c1); gr.addColorStop(1, c2); g.fillStyle = gr; g.fillRect(0, 0, W, H);
+  // bolhas de fundo
+  g.globalAlpha = .12; g.fillStyle = '#fff'; [[900, 260, 260], [120, 1500, 340], [980, 1750, 180]].forEach(([x, y, r]) => { g.beginPath(); g.arc(x, y, r, 0, Math.PI * 2); g.fill(); }); g.globalAlpha = 1;
+  const me = S.me;
+  g.fillStyle = 'rgba(255,255,255,.85)'; g.font = '800 40px system-ui, sans-serif'; g.fillText('TELÃO', 90, 140);
+  g.font = '600 34px system-ui, sans-serif'; g.fillStyle = 'rgba(255,255,255,.7)'; g.fillText(range === 30 ? 'MEUS ÚLTIMOS 30 DIAS' : range === 365 ? 'MEU ÚLTIMO ANO' : 'DESDE QUE ENTREI', 90, 190);
+  // avatar
+  const av = await scImg(me.avatar_url);
+  g.save(); g.beginPath(); g.arc(W / 2, 400, 140, 0, Math.PI * 2); g.closePath(); g.fillStyle = me.avatar_color || '#5865f2'; g.fill(); g.clip();
+  if(av) g.drawImage(av, W / 2 - 140, 260, 280, 280); else { g.fillStyle = '#fff'; g.font = '800 120px system-ui, sans-serif'; g.textAlign = 'center'; g.fillText((me.display_name || '?').slice(0, 1).toUpperCase(), W / 2, 445); g.textAlign = 'left'; }
+  g.restore(); g.lineWidth = 10; g.strokeStyle = '#fff'; g.beginPath(); g.arc(W / 2, 400, 145, 0, Math.PI * 2); g.stroke();
+  g.textAlign = 'center'; g.fillStyle = '#fff'; g.font = '900 84px system-ui, sans-serif'; g.fillText(String(me.display_name || '').slice(0, 18), W / 2, 640);
+  g.font = '500 38px system-ui, sans-serif'; g.fillStyle = 'rgba(255,255,255,.75)'; g.fillText('@' + me.username, W / 2, 695); g.textAlign = 'left';
+  // números grandes
+  const big = [['🎧', scH(st.voice_min), 'em call'], ['💬', (st.messages || 0).toLocaleString('pt-BR'), 'mensagens']];
+  big.forEach(([e, v, k], i) => {
+    const x = 90 + i * 460, y = 780;
+    g.fillStyle = 'rgba(255,255,255,.16)'; g.beginPath(); g.roundRect ? g.roundRect(x, y, 440, 250, 36) : g.rect(x, y, 440, 250); g.fill();
+    g.font = '64px system-ui, sans-serif'; g.fillText(e, x + 34, y + 90);
+    g.fillStyle = '#fff'; g.font = `900 ${String(v).length > 8 ? 58 : 72}px system-ui, sans-serif`; g.fillText(String(v), x + 34, y + 180);
+    g.fillStyle = 'rgba(255,255,255,.8)'; g.font = '600 32px system-ui, sans-serif'; g.fillText(k, x + 34, y + 225);
+  });
+  const fr = st.top_friend && prof(st.top_friend.id);
+  const rows = [['🎮', 'jogo mais jogado', st.top_game ? `${st.top_game.name} · ${scH(st.top_game.min)}` : '—'], ['🏠', 'servidor favorito', st.top_server ? st.top_server.name : '—'],
+    ['🤝', 'quem mais conversei', fr ? fr.display_name : '—'], ['📅', 'dias ativo', String(st.days || 0)], ['🏆', 'vitórias nos jogos da call', String(st.game_wins || 0)], ['❤️', 'reações recebidas', (st.reacts_got || 0).toLocaleString('pt-BR')]];
+  rows.forEach(([e, k, v], n) => {
+    const y = 1100 + n * 118;
+    g.fillStyle = 'rgba(0,0,0,.18)'; g.beginPath(); g.roundRect ? g.roundRect(90, y, W - 180, 100, 26) : g.rect(90, y, W - 180, 100); g.fill();
+    g.font = '46px system-ui, sans-serif'; g.fillText(e, 120, y + 66);
+    g.fillStyle = 'rgba(255,255,255,.75)'; g.font = '600 28px system-ui, sans-serif'; g.fillText(k, 200, y + 38);
+    g.fillStyle = '#fff'; g.font = '800 40px system-ui, sans-serif'; g.fillText(String(v).slice(0, 34), 200, y + 80);
+  });
+  g.fillStyle = 'rgba(255,255,255,.85)'; g.font = '600 32px system-ui, sans-serif'; g.textAlign = 'center'; g.fillText('vem pro Telão · ' + location.host, W / 2, H - 80); g.textAlign = 'left';
+  return c;
+}
+async function statsCard(){
+  let range = 30, theme = 0, st = null, canvas = null;
+  modal(`<div class="mh"><h2>📊 Meu cartão do Telão</h2><p>Suas estatísticas num cartão no formato de story.</p></div>
+    <div class="mc"><div class="rltabs">${[[30, '30 dias'], [365, '1 ano'], [0, 'Desde sempre']].map(([v, l]) => `<button type="button" data-scr="${v}" class="${v === 30 ? 'on' : ''}">${l}</button>`).join('')}</div>
+      <div class="scthemes">${SC_THEMES.map(([a, b], i) => `<button type="button" data-sct="${i}" class="${i === 0 ? 'on' : ''}" style="background:linear-gradient(135deg,${a},${b})"></button>`).join('')}</div>
+      <div class="scprev" id="scPrev"><div class="spin"></div></div></div>
+    <div class="mf wrapf"><button class="btn sec" data-close>Fechar</button><button class="btn sec" id="scSend">${ic('send', 16)} Mandar no chat</button>${navigator.canShare ? `<button class="btn sec" id="scShare">${ic('upload', 16)} Compartilhar</button>` : ''}<button class="btn" id="scDl">${ic('download', 16)} Baixar</button></div>`, m => {
+    const prev = m.querySelector('#scPrev');
+    const draw = async reload => {
+      prev.innerHTML = '<div class="spin"></div>';
+      if(reload || !st){
+        const { data, error } = await App.sb.rpc('my_stats', { p_days: range });
+        if(error){ prev.innerHTML = `<div class="locked">${/my_stats|schema cache|does not exist/i.test(error.message) ? SC_SQL : esc(error.message)}</div>`; return; }
+        st = data; if(st.top_friend) await ensureProfiles([st.top_friend.id]);
+      }
+      canvas = await scDraw(st, range, theme);
+      canvas.className = 'sccanvas'; prev.innerHTML = ''; prev.appendChild(canvas);
+    };
+    m.querySelectorAll('[data-scr]').forEach(b => b.onclick = () => { range = +b.dataset.scr; m.querySelectorAll('[data-scr]').forEach(x => x.classList.toggle('on', x === b)); draw(true); });
+    m.querySelectorAll('[data-sct]').forEach(b => b.onclick = () => { theme = +b.dataset.sct; m.querySelectorAll('[data-sct]').forEach(x => x.classList.toggle('on', x === b)); draw(false); });
+    const blob = () => new Promise(r => canvas.toBlob(r, 'image/png'));
+    m.querySelector('#scDl').onclick = async () => { if(!canvas) return; const b = await blob(); const a = document.createElement('a'); a.href = URL.createObjectURL(b); a.download = 'meu-cartao-telao.png'; a.click(); };
+    const sh = m.querySelector('#scShare'); if(sh) sh.onclick = async () => { if(!canvas) return; const f = new File([await blob()], 'meu-cartao-telao.png', { type: 'image/png' }); if(navigator.canShare({ files: [f] })) navigator.share({ files: [f], title: 'Meu cartão do Telão' }).catch(() => {}); else App.toast('Seu aparelho não deixa compartilhar imagem daqui. Use Baixar.', true); };
+    m.querySelector('#scSend').onclick = async e => {
+      if(!canvas) return; const cid = M.cid; if(!cid){ App.toast('Abra uma conversa para mandar.', true); return; }
+      const b = e.currentTarget; b.disabled = true;
+      try{ const meta = await uploadOne({ file: new File([await blob()], 'meu-cartao-telao.png', { type: 'image/png' }) });
+        const { error } = await App.sb.from('messages').insert({ channel_id: cid, content: 'Meu cartão do Telão 📊', attachments: [meta] }); if(error) throw error; App.toast('Enviado!'); closeModal();
+      }catch(x){ b.disabled = false; App.toast(x.message || String(x), true); }
+    };
+    draw(true);
+  });
+}
+App.statsCard = statsCard;
+const _selfMenuExtraSC = App.selfMenuExtra;
+App.selfMenuExtra = () => (_selfMenuExtraSC ? _selfMenuExtraSC() : []).concat([{ label: 'Meu cartão de estatísticas', icon: '<span style="font-size:16px;width:18px;text-align:center">📊</span>', onClick: () => statsCard() }]);
 /* ---------------- PWA / app para Windows ----------------
    v6.28: no Windows (navegador), a barrinha embaixo oferece o app de verdade para Windows,
    não a instalação do navegador. Nos outros aparelhos continua a instalação como app. */

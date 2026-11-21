@@ -2667,6 +2667,215 @@ drop trigger if exists dm_pins_limit on public.dm_pins;
 create trigger dm_pins_limit before insert on public.dm_pins for each row execute function public.dm_pins_limit();
 grant select, insert, update, delete on public.dm_pins to authenticated;
 
+-- =====================================================================
+-- v6.31: SALVOS, MÚSICA DO PERFIL, ANIVERSÁRIOS DO SERVIDOR, BICHINHO DO SERVIDOR e CARTÃO DE ESTATÍSTICAS
+-- =====================================================================
+-- mensagens salvas (só você vê; guarda uma cópia para não sumir se apagarem)
+create table if not exists public.saved_messages (
+  user_id uuid not null default auth.uid() references public.profiles(id) on delete cascade,
+  message_id uuid not null,
+  channel_id uuid,
+  author_id uuid,
+  content text,
+  attachments jsonb,
+  msg_at timestamptz,
+  note text check (note is null or char_length(note) <= 200),
+  saved_at timestamptz not null default now(),
+  primary key (user_id, message_id)
+);
+alter table public.saved_messages enable row level security;
+drop policy if exists "meus salvos" on public.saved_messages;
+create policy "meus salvos" on public.saved_messages for all to authenticated using (user_id = auth.uid()) with check (user_id = auth.uid());
+create or replace function public.saved_fill() returns trigger language plpgsql security definer set search_path = public as $$
+declare m messages;
+begin
+  new.user_id := auth.uid();
+  select * into m from messages where id = new.message_id;
+  if m.id is null or not public.can_access_channel(m.channel_id) then raise exception 'Mensagem não encontrada.'; end if;
+  if (select count(*) from saved_messages where user_id = auth.uid()) >= 500 then raise exception 'Você já tem 500 mensagens salvas. Apague algumas antes.'; end if;
+  new.channel_id := m.channel_id; new.author_id := m.author_id; new.content := left(m.content, 4000);
+  new.attachments := (select to_jsonb(m) -> 'attachments'); new.msg_at := m.created_at; new.saved_at := now();
+  return new;
+end $$;
+drop trigger if exists saved_fill on public.saved_messages;
+create trigger saved_fill before insert on public.saved_messages for each row execute function public.saved_fill();
+grant select, insert, update, delete on public.saved_messages to authenticated;
+
+-- música do perfil (trecho de 30 s da busca do iTunes)
+alter table public.profiles add column if not exists theme_song jsonb;
+alter table public.profiles drop constraint if exists profiles_theme_song_check;
+alter table public.profiles add constraint profiles_theme_song_check check (theme_song is null or (jsonb_typeof(theme_song) = 'object'
+  and coalesce(theme_song->>'preview', '') ~ '^https://[a-z0-9.-]*(mzstatic\.com|itunes\.apple\.com|apple\.com)/' and char_length(theme_song::text) < 1200));
+
+-- aniversários do servidor: calendário e parabéns automático no dia
+alter table public.servers add column if not exists bday_on boolean not null default true;
+alter table public.servers add column if not exists bday_channel uuid;
+create table if not exists public.server_bday_posts (
+  server_id uuid not null references public.servers(id) on delete cascade,
+  user_id uuid not null references public.profiles(id) on delete cascade,
+  year int not null,
+  primary key (server_id, user_id, year)
+);
+alter table public.server_bday_posts enable row level security;
+create or replace function public.server_bday_calendar(p_server uuid) returns table (user_id uuid, month int, day int)
+language sql stable security definer set search_path = public as $$
+  select p.id, extract(month from p.birthdate)::int, extract(day from p.birthdate)::int
+  from server_members m join profiles p on p.id = m.user_id
+  where m.server_id = p_server and public.is_member(p_server) and p.bday_show and p.birthdate is not null
+  order by 2, 3;
+$$;
+-- qualquer membro que abre o servidor no dia dispara (uma vez por pessoa por ano)
+create or replace function public.server_bday_announce(p_server uuid) returns int
+language plpgsql security definer set search_path = public as $$
+declare s servers; cid uuid; y int := extract(year from now() at time zone 'America/Sao_Paulo')::int; r record; n int := 0;
+begin
+  if not public.is_member(p_server) then return 0; end if;
+  select * into s from servers where id = p_server;
+  if s.id is null or not s.bday_on then return 0; end if;
+  cid := s.bday_channel;
+  if cid is null or not exists (select 1 from channels where id = cid and server_id = p_server and kind = 'text') then
+    select id into cid from channels where server_id = p_server and kind = 'text' order by position, created_at limit 1;
+  end if;
+  if cid is null then return 0; end if;
+  for r in select p.id, p.display_name, p.username from server_members m join profiles p on p.id = m.user_id
+           where m.server_id = p_server and p.bday_show and public.bday_today(p.birthdate)
+             and not exists (select 1 from server_bday_posts b where b.server_id = p_server and b.user_id = p.id and b.year = y) loop
+    insert into server_bday_posts values (p_server, r.id, y) on conflict do nothing;
+    if found then
+      insert into messages (channel_id, author_id, content, attachments)
+      values (cid, public.telao_bot(), '🎂 Hoje é aniversário de @' || r.username || '! Deixa um parabéns aí 🎉',
+        jsonb_build_array(jsonb_build_object('type', 'bday', 'user_id', r.id, 'name', left(r.display_name, 60))));
+      n := n + 1;
+    end if;
+  end loop;
+  return n;
+end $$;
+
+-- bichinho do servidor: cresce com a galera conversando, em call e fazendo carinho; definha se o servidor ficar parado
+create table if not exists public.server_pets (
+  server_id uuid primary key references public.servers(id) on delete cascade,
+  name text not null default 'Telinho' check (char_length(name) between 1 and 20),
+  species text not null default 'slime' check (species in ('slime','gato','dragao','robo','fantasma','pato')),
+  color text not null default '#ff2e9a' check (color ~ '^#[0-9a-fA-F]{6}$'),
+  xp int not null default 0,
+  last_active timestamptz not null default now(),
+  created_at timestamptz not null default now()
+);
+alter table public.server_pets enable row level security;
+drop policy if exists "membros veem o bichinho" on public.server_pets;
+create policy "membros veem o bichinho" on public.server_pets for select to authenticated using (public.is_member(server_id));
+create table if not exists public.pet_contrib (
+  server_id uuid not null references public.servers(id) on delete cascade,
+  user_id uuid not null references public.profiles(id) on delete cascade,
+  day date not null default (now() at time zone 'America/Sao_Paulo')::date,
+  msg_xp int not null default 0,
+  voice_xp int not null default 0,
+  petted boolean not null default false,
+  last_voice timestamptz,
+  primary key (server_id, user_id, day)
+);
+alter table public.pet_contrib add column if not exists last_voice timestamptz;
+alter table public.pet_contrib enable row level security;
+drop policy if exists "membros veem quem cuida" on public.pet_contrib;
+create policy "membros veem quem cuida" on public.pet_contrib for select to authenticated using (public.is_member(server_id));
+create or replace function public.pet_add(p_server uuid, p_user uuid, p_kind text, p_xp int) returns int
+language plpgsql security definer set search_path = public as $$
+declare d date := (now() at time zone 'America/Sao_Paulo')::date; got int := 0;
+begin
+  insert into server_pets (server_id) values (p_server) on conflict do nothing;
+  insert into pet_contrib (server_id, user_id, day) values (p_server, p_user, d) on conflict do nothing;
+  if p_kind = 'msg' then
+    update pet_contrib set msg_xp = msg_xp + p_xp where server_id = p_server and user_id = p_user and day = d and msg_xp + p_xp <= 40;
+    if found then got := p_xp; end if;
+  elsif p_kind = 'voice' then
+    update pet_contrib set voice_xp = voice_xp + p_xp where server_id = p_server and user_id = p_user and day = d and voice_xp + p_xp <= 60;
+    if found then got := p_xp; end if;
+  elsif p_kind = 'pet' then
+    update pet_contrib set petted = true where server_id = p_server and user_id = p_user and day = d and not petted;
+    if found then got := p_xp; end if;
+  end if;
+  update server_pets set xp = xp + got, last_active = now() where server_id = p_server;
+  return got;
+end $$;
+revoke execute on function public.pet_add(uuid, uuid, text, int) from public, anon, authenticated;
+create or replace function public.pet_on_message() returns trigger language plpgsql security definer set search_path = public as $$
+declare sid uuid;
+begin
+  select server_id into sid from channels where id = new.channel_id;
+  if sid is not null and new.author_id <> public.telao_bot() then
+    begin perform public.pet_add(sid, new.author_id, 'msg', 1); exception when others then null; end;
+  end if;
+  return new;
+end $$;
+drop trigger if exists pet_on_message on public.messages;
+create trigger pet_on_message after insert on public.messages for each row execute function public.pet_on_message();
+-- a cada 5 min em call: +5 (só conta se você está mesmo numa call daquele servidor)
+create or replace function public.pet_voice_tick(p_server uuid) returns int
+language plpgsql security definer set search_path = public as $$
+begin
+  if not exists (select 1 from voice_sessions where user_id = auth.uid() and server_id = p_server and last_seen > now() - interval '3 minutes') then return 0; end if;
+  -- no máximo uma vez a cada 4 min
+  insert into pet_contrib (server_id, user_id) values (p_server, auth.uid()) on conflict do nothing;
+  if exists (select 1 from pet_contrib where server_id = p_server and user_id = auth.uid() and day = (now() at time zone 'America/Sao_Paulo')::date
+             and last_voice > now() - interval '4 minutes') then return 0; end if;
+  update pet_contrib set last_voice = now() where server_id = p_server and user_id = auth.uid() and day = (now() at time zone 'America/Sao_Paulo')::date;
+  return public.pet_add(p_server, auth.uid(), 'voice', 5);
+end $$;
+create or replace function public.pet_pet(p_server uuid) returns int
+language plpgsql security definer set search_path = public as $$
+begin
+  if not public.is_member(p_server) then raise exception 'Você não é deste servidor.'; end if;
+  return public.pet_add(p_server, auth.uid(), 'pet', 5);
+end $$;
+create or replace function public.pet_get(p_server uuid) returns jsonb
+language plpgsql security definer set search_path = public as $$
+declare p server_pets; d date := (now() at time zone 'America/Sao_Paulo')::date;
+begin
+  if not public.is_member(p_server) then raise exception 'Você não é deste servidor.'; end if;
+  insert into server_pets (server_id) values (p_server) on conflict do nothing;
+  select * into p from server_pets where server_id = p_server;
+  return to_jsonb(p) || jsonb_build_object(
+    'petted_today', coalesce((select petted from pet_contrib where server_id = p_server and user_id = auth.uid() and day = d), false),
+    'today_xp', coalesce((select sum(msg_xp + voice_xp + case when petted then 5 else 0 end) from pet_contrib where server_id = p_server and day = d), 0),
+    'top', (select coalesce(jsonb_agg(x), '[]'::jsonb) from (select user_id, sum(msg_xp + voice_xp + case when petted then 5 else 0 end)::int xp
+             from pet_contrib where server_id = p_server and day > d - 30 group by user_id order by 2 desc limit 5) x));
+end $$;
+create or replace function public.pet_config(p_server uuid, p_name text, p_species text, p_color text) returns void
+language plpgsql security definer set search_path = public as $$
+begin
+  if not public.has_perm(p_server, 2) then raise exception 'Só quem gerencia o servidor muda o bichinho.'; end if;
+  insert into server_pets (server_id) values (p_server) on conflict do nothing;
+  update server_pets set name = coalesce(nullif(trim(p_name), ''), name), species = coalesce(p_species, species), color = coalesce(p_color, color) where server_id = p_server;
+end $$;
+
+-- cartão de estatísticas (últimos N dias ou desde sempre)
+create or replace function public.my_stats(p_days int default 30) returns jsonb
+language plpgsql stable security definer set search_path = public as $$
+declare me uuid := auth.uid(); a timestamptz := case when p_days is null or p_days <= 0 then '2000-01-01'::timestamptz else now() - make_interval(days => p_days) end; r jsonb;
+begin
+  if me is null then raise exception 'Entre na sua conta'; end if;
+  select jsonb_build_object(
+    'days_range', p_days,
+    'voice_min', coalesce((select sum(extract(epoch from (last_seen - started_at)) / 60)::int from voice_sessions where user_id = me and started_at >= a), 0),
+    'messages', (select count(*) from messages where author_id = me and created_at >= a),
+    'days', (select count(distinct d) from (select (created_at at time zone 'America/Sao_Paulo')::date d from messages where author_id = me and created_at >= a
+                                            union select (started_at at time zone 'America/Sao_Paulo')::date from voice_sessions where user_id = me and started_at >= a) x),
+    'top_game', (select jsonb_build_object('name', game, 'min', sum(extract(epoch from (last_seen - started_at)) / 60)::int) from game_sessions
+        where user_id = me and started_at >= a group by game order by sum(last_seen - started_at) desc limit 1),
+    'top_server', (select jsonb_build_object('name', s.name, 'n', x.n) from (select c.server_id sid, count(*) n from messages m join channels c on c.id = m.channel_id
+        where m.author_id = me and c.server_id is not null and m.created_at >= a group by 1 order by 2 desc limit 1) x join servers s on s.id = x.sid),
+    'top_friend', (select jsonb_build_object('id', o, 'n', n) from (select case when c.dm_a = me then c.dm_b else c.dm_a end o, count(*) n from messages m join channels c on c.id = m.channel_id
+        where c.kind = 'dm' and me in (c.dm_a, c.dm_b) and m.created_at >= a and public.telao_bot() not in (c.dm_a, c.dm_b) group by 1 order by 2 desc limit 1) x),
+    'reacts_got', (select count(*) from message_reactions r join messages m on m.id = r.message_id where m.author_id = me and r.user_id <> me and r.created_at >= a),
+    'game_wins', coalesce((select sum(wins) from game_scores where user_id = me and last_at >= a), 0),
+    'clips', (select count(*) from messages where author_id = me and created_at >= a and attachments @> '[{"clip": true}]'),
+    'since', (select created_at from profiles where id = me)
+  ) into r;
+  return r;
+end $$;
+grant execute on function public.server_bday_calendar(uuid), public.server_bday_announce(uuid), public.pet_voice_tick(uuid), public.pet_pet(uuid),
+  public.pet_get(uuid), public.pet_config(uuid, text, text, text), public.my_stats(int) to authenticated;
+
 -- impede trocar campos sensíveis via update
 create or replace function public.guard_updates() returns trigger
 language plpgsql as $$

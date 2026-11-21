@@ -14,6 +14,17 @@ const GENRES = {
 };
 module.exports = async (req, res) => {
   res.setHeader('Content-Type', 'application/json; charset=utf-8');
+  // v6.31: busca livre (música do perfil)
+  const q = String((req.query && req.query.q) || '').trim().slice(0, 80);
+  if (q) {
+    try {
+      const u = 'https://itunes.apple.com/search?' + new URLSearchParams({ term: q, entity: 'song', country: 'BR', limit: '15' });
+      const r = await fetch(u, { headers: { 'User-Agent': 'Telao/1.0' } }); const j = r.ok ? await r.json() : { results: [] };
+      const tracks = (j.results || []).filter(t => t.previewUrl).map(t => ({ title: String(t.trackName).slice(0, 80), artist: String(t.artistName).slice(0, 80), preview: t.previewUrl, art: t.artworkUrl100 || null }));
+      res.setHeader('Cache-Control', 'public, s-maxage=3600'); res.end(JSON.stringify({ tracks }));
+    } catch (e) { res.statusCode = 502; res.end(JSON.stringify({ error: 'Não deu para buscar agora.' })); }
+    return;
+  }
   const g = String((req.query && req.query.g) || 'pop');
   const artists = GENRES[g] || GENRES.pop;
   const pick = artists.slice().sort(() => Math.random() - 0.5).slice(0, 6);
