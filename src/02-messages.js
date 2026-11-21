@@ -159,7 +159,7 @@ async function mountMessages(ch, container, welcome){
       </div>
       <input type="file" id="cFile" multiple class="hidden">
     </div>`);
-  M.el = $('#msgs');
+  M.el = $('#msgs'); M.stick = true;
   bindComposer(ch);
   M.el.onscroll = onMsgScroll;
   M.el.addEventListener('click', onMsgClick);
@@ -208,7 +208,9 @@ async function loadOlder(){
   await hydrate(older);
   const h0 = M.el.scrollHeight, t0 = M.el.scrollTop;
   M.list = older.concat(M.list);
+  M.stick = false;
   renderMsgList(false);
+  M.stickIgnore = Date.now() + 120;
   M.el.scrollTop = M.el.scrollHeight - h0 + t0;
   M.loading = false;
 }
@@ -349,27 +351,49 @@ function msgHtml(m, prev){
   const av = mine ? '' : grouped ? '<div class="avsp"></div>' : avatar(p,'lg').replace('class="av lg', `data-uprof="${p.id}" class="av lg`);
   return `${pre}<div class="${cls}" data-m="${m.id}">${grouped ? '' : replyHtml(m)}<div class="mline">${av}<div class="bd">${grouped ? '' : head}${bub}${reactsHtml(m.id)}</div></div>${tools}</div>`;
 }
+/* v6.30: o chat "gruda" no fim. Abriu a conversa → fica no fim, mesmo que depois chegue reação,
+   cargo, imagem carregando ou o painel mude de tamanho. Só solta quando VOCÊ rola para cima. */
+function stickWire(){
+  const el = M.el; if(!el || el._stickWired) return; el._stickWired = true;
+  el.addEventListener('scroll', () => {
+    if(Date.now() < (M.stickIgnore || 0)) return;
+    M.stick = el.scrollHeight - el.scrollTop - el.clientHeight < 80;
+  }, { passive: true });
+  // imagens, vídeos e embeds terminando de carregar
+  const later = () => { if(M.stick && !M.detached){ stickNow(); requestAnimationFrame(() => { if(M.stick && !M.detached) stickNow(); }); } };
+  el.addEventListener('load', later, true);
+  el.addEventListener('loadedmetadata', later, true);
+  // a janela/painel mudou de tamanho (abrir lista de membros, teclado do celular…)
+  if(window.ResizeObserver){ new ResizeObserver(() => { if(M.el === el && M.stick && !M.detached) stickNow(); }).observe(el); }
+}
+function stickNow(){ if(!M.el) return; M.stickIgnore = Date.now() + 120; M.el.scrollTop = M.el.scrollHeight; }
 function renderMsgList(stick){
   if(!M.el) return;
-  const nearBottom = M.el.scrollHeight - M.el.scrollTop - M.el.clientHeight < 160;
+  stickWire();
+  if(stick === true) M.stick = true;
+  const nearBottom = M.stick !== false && !M.detached ? true : M.el.scrollHeight - M.el.scrollTop - M.el.clientHeight < 160;
   let h = M.done ? M.welcome : `<div class="loadmore"><div class="spin"></div></div>`;
   let prev = null;
   M.list.forEach(m => { h += msgHtml(m, prev); prev = m; });
   if(M.detached) h += `<div class="loadmore"><div class="spin"></div></div>`;
   M.el.innerHTML = h;
   bindEditor();
-  if(stick === true || (stick == null && nearBottom)) toBottom();
+  if(stick === true || ((stick == null || stick === false) && nearBottom && M.stick !== false && !M.detached)) toBottom();
   updateJump();
 }
 function toBottom(){
   if(!M.el) return;
-  M.el.scrollTop = M.el.scrollHeight;
+  M.stick = true; stickNow();
+  // nos primeiros segundos a conversa ainda "cresce" (imagens, embeds, cargos): segura no fim
+  clearInterval(M.stickT); const t0 = Date.now(), el0 = M.el;
+  M.stickT = setInterval(() => { if(M.el !== el0 || !M.stick || M.detached || Date.now() - t0 > 4000){ clearInterval(M.stickT); return; } if(el0.scrollHeight - el0.scrollTop - el0.clientHeight > 2) stickNow(); }, 200);
+  requestAnimationFrame(() => { if(M.stick && !M.detached) stickNow(); });
   // imagens com tamanho conhecido não pulam; as sem tamanho ajustam quando carregam
   M.el.querySelectorAll('img:not([width])').forEach(img => { if(!img.complete) img.addEventListener('load', () => { if(M.el && M.el.scrollHeight - M.el.scrollTop - M.el.clientHeight < 400) M.el.scrollTop = M.el.scrollHeight; }, { once:true }); });
 }
 function appendMessage(m){
   const prev = M.list[M.list.length - 2];
-  const nearBottom = M.el.scrollHeight - M.el.scrollTop - M.el.clientHeight < 160;
+  const nearBottom = M.stick || M.el.scrollHeight - M.el.scrollTop - M.el.clientHeight < 160;
   M.el.insertAdjacentHTML('beforeend', msgHtml(m, prev));
   if(m.author_id === S.me.id || nearBottom) toBottom(); else { M.newWhileAway++; updateJump(); }
 }
@@ -501,7 +525,7 @@ async function saveEdit(){
 }
 async function jumpTo(mid){
   const node = M.el && M.el.querySelector(`[data-m="${mid}"]`);
-  if(node){ node.scrollIntoView({ block:'center', behavior:'smooth' }); node.classList.remove('flash'); void node.offsetWidth; node.classList.add('flash'); return; }
+  if(node){ M.stick = false; node.scrollIntoView({ block:'center', behavior:'smooth' }); node.classList.remove('flash'); void node.offsetWidth; node.classList.add('flash'); return; }
   const { data: target } = await App.sb.from('messages').select('*').eq('id', mid).maybeSingle();
   if(!target || target.channel_id !== M.cid){ App.toast('Mensagem não encontrada.', true); return; }
   const [{ data: before }, { data: after }] = await Promise.all([
@@ -511,6 +535,7 @@ async function jumpTo(mid){
   M.list = (before || []).reverse().concat([target], after || []);
   M.done = (before || []).length < 25; M.detached = (after || []).length >= 25;
   await hydrate(M.list);
+  M.stick = false;
   renderMsgList(false);
   const n = M.el.querySelector(`[data-m="${mid}"]`); if(n){ n.scrollIntoView({ block:'center' }); n.classList.add('flash'); }
 }

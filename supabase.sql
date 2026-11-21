@@ -2645,6 +2645,28 @@ grant execute on function public.can_mod_reports(uuid), public.resolve_report(uu
 alter table public.game_scores drop constraint if exists game_scores_game_check;
 alter table public.game_scores add constraint game_scores_game_check check (game in ('rabisco','quiz','provavel','stop','quemsou','truco','forca','naval','musica','telefone'));
 
+-- =====================================================================
+-- v6.30: FIXAR CONVERSAS (DMs e grupos no topo da lista, até 10)
+-- =====================================================================
+create table if not exists public.dm_pins (
+  user_id uuid not null default auth.uid() references public.profiles(id) on delete cascade,
+  channel_id uuid not null references public.channels(id) on delete cascade,
+  pinned_at timestamptz not null default now(),
+  primary key (user_id, channel_id)
+);
+alter table public.dm_pins enable row level security;
+drop policy if exists "minhas conversas fixadas" on public.dm_pins;
+create policy "minhas conversas fixadas" on public.dm_pins for all to authenticated
+  using (user_id = auth.uid()) with check (user_id = auth.uid() and public.can_view_channel(channel_id));
+create or replace function public.dm_pins_limit() returns trigger language plpgsql security definer set search_path = public as $$
+begin
+  if (select count(*) from dm_pins where user_id = new.user_id) >= 10 then raise exception 'Você já tem 10 conversas fixadas. Desafixe uma antes.'; end if;
+  return new;
+end $$;
+drop trigger if exists dm_pins_limit on public.dm_pins;
+create trigger dm_pins_limit before insert on public.dm_pins for each row execute function public.dm_pins_limit();
+grant select, insert, update, delete on public.dm_pins to authenticated;
+
 -- impede trocar campos sensíveis via update
 create or replace function public.guard_updates() returns trigger
 language plpgsql as $$

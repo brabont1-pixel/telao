@@ -201,5 +201,5 @@ secAdmin = function(box, back){
   repRender(wrap, '', null, 'Denúncias em DMs');
 };
 // ganchos para os testes automáticos
-App._t = { get S(){ return S; }, get go(){ return go; }, get joinVoice(){ return joinVoice; }, get findChannel(){ return findChannel; }, get prof(){ return prof; }, get profileCard(){ return profileCard; },
+App._t = { get M(){ return M; }, get S(){ return S; }, get userMenu(){ return userMenu; }, get renderMsgList(){ return renderMsgList; }, get go(){ return go; }, get joinVoice(){ return joinVoice; }, get findChannel(){ return findChannel; }, get prof(){ return prof; }, get profileCard(){ return profileCard; },
   get openSettings(){ return openSettings; }, get closeSettings(){ return closeSettings; }, get activitiesMenu(){ return activitiesMenu; }, get closeMenu(){ return closeMenu; } };

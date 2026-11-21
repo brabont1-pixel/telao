@@ -585,7 +585,7 @@ body.cinema .stage .area{padding:8px 8px 80px}
 .qsrv{width:26px;height:26px;border-radius:9px;display:flex;align-items:center;justify-content:center;font-size:10px;font-weight:800;color:#fff;overflow:hidden}
 .qsrv img{width:100%;height:100%;object-fit:cover}
 .qsh{font-size:12px;color:var(--mut);margin-top:10px;display:flex;gap:4px;align-items:center;flex-wrap:wrap}
-.menu{position:fixed;background:var(--pop);border:1px solid var(--line2);border-radius:12px;padding:6px;min-width:220px;z-index:60;box-shadow:var(--shadow);animation:pop .14s var(--ease)}
+.menu{position:fixed;background:var(--pop);border:1px solid var(--line2);border-radius:12px;padding:6px;min-width:220px;z-index:60;box-shadow:var(--shadow);animation:pop .14s var(--ease);max-height:calc(100vh - 16px);max-height:calc(100dvh - 16px);overflow-y:auto;overscroll-behavior:contain;scrollbar-width:thin}
 .menu > button{display:flex;width:100%;justify-content:space-between;align-items:center;padding:9px 11px;border-radius:11px;color:var(--txt2);font-size:14px;font-weight:500;text-align:left;gap:10px}
 .menu > button:hover{background:var(--accs);color:var(--txt)}
 .menu > button.danger{color:#ff7c88}.menu > button.danger:hover{background:var(--bad);color:#fff}
@@ -2242,3 +2242,10 @@ button.nvc:not(:disabled){cursor:crosshair}button.nvc:not(:disabled):hover{backg
 .repb{position:absolute;left:-4px;bottom:-4px;z-index:3;font-size:10px;font-weight:900;line-height:1;padding:3px 5px;border-radius:10px;background:#ff5c5c;color:#fff;border:2px solid var(--bg0,#0d0b12);pointer-events:none}
 .reptoast{position:fixed;right:18px;bottom:90px;z-index:700;display:flex;align-items:center;gap:10px;padding:12px 12px 12px 16px;border-radius:14px;background:#2a1220;border:1px solid #ff5c5c;color:#fff;font-weight:700;box-shadow:0 10px 30px rgba(0,0,0,.5);animation:rlpop .3s}
 .rpadmin{margin-bottom:8px}
+/* v6.30: conversas fixadas */
+.dmitem .dmpin{position:absolute;right:32px;top:50%;transform:translateY(-50%);width:22px;height:22px;border-radius:6px;display:grid;place-items:center;color:var(--mut);opacity:0;transition:opacity .12s;background:var(--bg2)}
+.dmitem:hover .dmpin{opacity:1}.dmitem .dmpin:hover{color:var(--txt)}
+.dmitem.pinned .dmpin{opacity:1;color:var(--pink,#ff2e9a);background:transparent}
+.dmitem.pinned:hover .dmpin{background:var(--bg2)}
+@media (hover:none){.dmitem .dmpin{opacity:.7}}
+.dmpinsep{height:1px;background:var(--line);margin:6px 12px}

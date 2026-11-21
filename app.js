@@ -9,7 +9,7 @@ const esc = s => String(s ?? '').replace(/[&<>"']/g, c => ({'&':'&amp;','<':'&lt
 const COLORS = ['#5865f2','#eb459e','#3ba55c','#faa61a','#ed4245','#f47b67','#1abc9c','#9b59b6','#e67e22','#607d8b'];
 const ls = { get(k,d){ try{ const v=localStorage.getItem(k); return v==null?d:JSON.parse(v); }catch(e){ return d; } }, set(k,v){ try{ localStorage.setItem(k, JSON.stringify(v)); }catch(e){} } };
 
-const APP_VERSION = '6.29';
+const APP_VERSION = '6.30';
 const S = {
   me: null, profiles: new Map(), servers: [], channels: new Map(), members: new Map(),
   friends: [], dms: [], dmActivity: ls.get('telao-dmact', {}), online: new Set(),
@@ -95,9 +95,13 @@ function menu(x, y, items, cls=''){
   const el = $('#menu'); el.className = 'menu ' + cls;
   el.innerHTML = items.map((it,i) => it === '-' ? '<hr>' : it.raw ? it.raw : it.html ? `<div style="padding:6px 10px">${it.html}</div>` : `<button data-i="${i}" class="${it.danger?'danger':''} ${it.cls||''}">${esc(it.label)}<span>${it.icon||''}</span></button>`).join('');
   el.classList.remove('hidden');
-  const r = el.getBoundingClientRect();
-  el.style.left = Math.max(8, Math.min(x, innerWidth - r.width - 8)) + 'px';
-  el.style.top = Math.max(8, Math.min(y, innerHeight - r.height - 8)) + 'px';
+  // v6.30: menus altos (perfil com capa e insígnias) cabem na tela e rolam; reposiciona quando as imagens carregam
+  const place = () => { const w = el.offsetWidth, h = el.offsetHeight;   // offset*: sem a escala da animação
+    el.style.left = Math.max(8, Math.min(x, innerWidth - w - 8)) + 'px';
+    el.style.top = Math.max(8, Math.min(y, innerHeight - h - 8)) + 'px'; };
+  el.scrollTop = 0; place();
+  if(el._ro) el._ro.disconnect();
+  if(window.ResizeObserver){ el._ro = new ResizeObserver(() => { if(!el.classList.contains('hidden')) place(); }); el._ro.observe(el); }
   el.querySelectorAll('button[data-i]').forEach(b => b.onclick = () => { closeMenu(); items[+b.dataset.i].onClick(); });
   items.forEach(it => it.mount && it.mount(el));
   setTimeout(() => document.addEventListener('mousedown', outside), 0);
@@ -706,7 +710,8 @@ function renderSidebar(){
     head.innerHTML = `<div class="brandrow"><span class="logo">${LOGO}</span><b class="tagw">telão</b></div><button class="findbtn" id="sbFind">${ic('search',15)}<span>Buscar ou ir para…</span><kbd>Ctrl K</kbd></button>`; head.onclick = null;
     $('#sbFind').onclick = quickSwitcher;
     const pend = S.friends.filter(f => f.status === 'pending' && f.incoming).length;
-    const dms = [...S.dms, ...S.groups].sort((a,b) => (S.dmActivity[b.id] || b.created_at).localeCompare(S.dmActivity[a.id] || a.created_at));
+    const pins = S.dmPins || new Map();   // v6.30: fixadas primeiro (na ordem em que foram fixadas)
+    const dms = [...S.dms, ...S.groups].sort((a,b) => (pins.has(b.id) - pins.has(a.id)) || (pins.has(a.id) ? pins.get(a.id).localeCompare(pins.get(b.id)) : (S.dmActivity[b.id] || b.created_at).localeCompare(S.dmActivity[a.id] || a.created_at)));
     body.innerHTML = `
       <div class="ch big ${!S.route.dm?'on':''}" id="sbFriends"><span class="ic">${ic('users',20)}</span><span class="nm">Amigos</span>${pend?`<span class="pill">${pend}</span>`:''}</div>
       <div class="ch big" id="sbPlus"><span class="ic plusic">${ic('star',20)}</span><span class="nm">Telão+</span></div>
@@ -1195,7 +1200,7 @@ async function mountMessages(ch, container, welcome){
       </div>
       <input type="file" id="cFile" multiple class="hidden">
     </div>`);
-  M.el = $('#msgs');
+  M.el = $('#msgs'); M.stick = true;
   bindComposer(ch);
   M.el.onscroll = onMsgScroll;
   M.el.addEventListener('click', onMsgClick);
@@ -1244,7 +1249,9 @@ async function loadOlder(){
   await hydrate(older);
   const h0 = M.el.scrollHeight, t0 = M.el.scrollTop;
   M.list = older.concat(M.list);
+  M.stick = false;
   renderMsgList(false);
+  M.stickIgnore = Date.now() + 120;
   M.el.scrollTop = M.el.scrollHeight - h0 + t0;
   M.loading = false;
 }
@@ -1385,27 +1392,49 @@ function msgHtml(m, prev){
   const av = mine ? '' : grouped ? '<div class="avsp"></div>' : avatar(p,'lg').replace('class="av lg', `data-uprof="${p.id}" class="av lg`);
   return `${pre}<div class="${cls}" data-m="${m.id}">${grouped ? '' : replyHtml(m)}<div class="mline">${av}<div class="bd">${grouped ? '' : head}${bub}${reactsHtml(m.id)}</div></div>${tools}</div>`;
 }
+/* v6.30: o chat "gruda" no fim. Abriu a conversa → fica no fim, mesmo que depois chegue reação,
+   cargo, imagem carregando ou o painel mude de tamanho. Só solta quando VOCÊ rola para cima. */
+function stickWire(){
+  const el = M.el; if(!el || el._stickWired) return; el._stickWired = true;
+  el.addEventListener('scroll', () => {
+    if(Date.now() < (M.stickIgnore || 0)) return;
+    M.stick = el.scrollHeight - el.scrollTop - el.clientHeight < 80;
+  }, { passive: true });
+  // imagens, vídeos e embeds terminando de carregar
+  const later = () => { if(M.stick && !M.detached){ stickNow(); requestAnimationFrame(() => { if(M.stick && !M.detached) stickNow(); }); } };
+  el.addEventListener('load', later, true);
+  el.addEventListener('loadedmetadata', later, true);
+  // a janela/painel mudou de tamanho (abrir lista de membros, teclado do celular…)
+  if(window.ResizeObserver){ new ResizeObserver(() => { if(M.el === el && M.stick && !M.detached) stickNow(); }).observe(el); }
+}
+function stickNow(){ if(!M.el) return; M.stickIgnore = Date.now() + 120; M.el.scrollTop = M.el.scrollHeight; }
 function renderMsgList(stick){
   if(!M.el) return;
-  const nearBottom = M.el.scrollHeight - M.el.scrollTop - M.el.clientHeight < 160;
+  stickWire();
+  if(stick === true) M.stick = true;
+  const nearBottom = M.stick !== false && !M.detached ? true : M.el.scrollHeight - M.el.scrollTop - M.el.clientHeight < 160;
   let h = M.done ? M.welcome : `<div class="loadmore"><div class="spin"></div></div>`;
   let prev = null;
   M.list.forEach(m => { h += msgHtml(m, prev); prev = m; });
   if(M.detached) h += `<div class="loadmore"><div class="spin"></div></div>`;
   M.el.innerHTML = h;
   bindEditor();
-  if(stick === true || (stick == null && nearBottom)) toBottom();
+  if(stick === true || ((stick == null || stick === false) && nearBottom && M.stick !== false && !M.detached)) toBottom();
   updateJump();
 }
 function toBottom(){
   if(!M.el) return;
-  M.el.scrollTop = M.el.scrollHeight;
+  M.stick = true; stickNow();
+  // nos primeiros segundos a conversa ainda "cresce" (imagens, embeds, cargos): segura no fim
+  clearInterval(M.stickT); const t0 = Date.now(), el0 = M.el;
+  M.stickT = setInterval(() => { if(M.el !== el0 || !M.stick || M.detached || Date.now() - t0 > 4000){ clearInterval(M.stickT); return; } if(el0.scrollHeight - el0.scrollTop - el0.clientHeight > 2) stickNow(); }, 200);
+  requestAnimationFrame(() => { if(M.stick && !M.detached) stickNow(); });
   // imagens com tamanho conhecido não pulam; as sem tamanho ajustam quando carregam
   M.el.querySelectorAll('img:not([width])').forEach(img => { if(!img.complete) img.addEventListener('load', () => { if(M.el && M.el.scrollHeight - M.el.scrollTop - M.el.clientHeight < 400) M.el.scrollTop = M.el.scrollHeight; }, { once:true }); });
 }
 function appendMessage(m){
   const prev = M.list[M.list.length - 2];
-  const nearBottom = M.el.scrollHeight - M.el.scrollTop - M.el.clientHeight < 160;
+  const nearBottom = M.stick || M.el.scrollHeight - M.el.scrollTop - M.el.clientHeight < 160;
   M.el.insertAdjacentHTML('beforeend', msgHtml(m, prev));
   if(m.author_id === S.me.id || nearBottom) toBottom(); else { M.newWhileAway++; updateJump(); }
 }
@@ -1537,7 +1566,7 @@ async function saveEdit(){
 }
 async function jumpTo(mid){
   const node = M.el && M.el.querySelector(`[data-m="${mid}"]`);
-  if(node){ node.scrollIntoView({ block:'center', behavior:'smooth' }); node.classList.remove('flash'); void node.offsetWidth; node.classList.add('flash'); return; }
+  if(node){ M.stick = false; node.scrollIntoView({ block:'center', behavior:'smooth' }); node.classList.remove('flash'); void node.offsetWidth; node.classList.add('flash'); return; }
   const { data: target } = await App.sb.from('messages').select('*').eq('id', mid).maybeSingle();
   if(!target || target.channel_id !== M.cid){ App.toast('Mensagem não encontrada.', true); return; }
   const [{ data: before }, { data: after }] = await Promise.all([
@@ -1547,6 +1576,7 @@ async function jumpTo(mid){
   M.list = (before || []).reverse().concat([target], after || []);
   M.done = (before || []).length < 25; M.detached = (after || []).length >= 25;
   await hydrate(M.list);
+  M.stick = false;
   renderMsgList(false);
   const n = M.el.querySelector(`[data-m="${mid}"]`); if(n){ n.scrollIntoView({ block:'center' }); n.classList.add('flash'); }
 }
@@ -11712,8 +11742,68 @@ secAdmin = function(box, back){
   repRender(wrap, '', null, 'Denúncias em DMs');
 };
 // ganchos para os testes automáticos
-App._t = { get S(){ return S; }, get go(){ return go; }, get joinVoice(){ return joinVoice; }, get findChannel(){ return findChannel; }, get prof(){ return prof; }, get profileCard(){ return profileCard; },
+App._t = { get M(){ return M; }, get S(){ return S; }, get userMenu(){ return userMenu; }, get renderMsgList(){ return renderMsgList; }, get go(){ return go; }, get joinVoice(){ return joinVoice; }, get findChannel(){ return findChannel; }, get prof(){ return prof; }, get profileCard(){ return profileCard; },
   get openSettings(){ return openSettings; }, get closeSettings(){ return closeSettings; }, get activitiesMenu(){ return activitiesMenu; }, get closeMenu(){ return closeMenu; } };
+/* =====================================================================
+   v6.30: FIXAR CONVERSAS — DMs e grupos fixados ficam no topo da lista (até 10).
+   Fica salvo na sua conta (tabela dm_pins), então vale no PC e no celular.
+   ===================================================================== */
+S.dmPins = new Map();   // channel_id -> pinned_at
+const PIN_SQL = 'Para fixar conversas, rode o supabase.sql novo (v6.30) no Supabase.';
+async function loadDmPins(){
+  const { data, error } = await App.sb.from('dm_pins').select('channel_id,pinned_at').eq('user_id', S.me.id);
+  if(error){ S.dmPins = new Map(Object.entries(ls.get('telao-dmpins', {}))); return; }
+  S.dmPins = new Map((data || []).map(r => [r.channel_id, r.pinned_at]));
+}
+const _loadDmsPin = loadDms;
+loadDms = async function(){ const r = await _loadDmsPin.apply(this, arguments); try{ await loadDmPins(); }catch(e){} return r; };
+async function togglePin(id){
+  if(S.dmPins.has(id)){
+    S.dmPins.delete(id); renderSidebar();
+    const { error } = await App.sb.from('dm_pins').delete().eq('user_id', S.me.id).eq('channel_id', id);
+    if(error && /dm_pins|schema cache|does not exist/i.test(error.message)) ls.set('telao-dmpins', Object.fromEntries(S.dmPins));
+    App.toast('Conversa desafixada.'); return;
+  }
+  if(S.dmPins.size >= 10){ App.toast('Você já tem 10 conversas fixadas. Desafixe uma antes.', true); return; }
+  const at = new Date().toISOString();
+  S.dmPins.set(id, at); if(S.closedDms) S.closedDms.delete(id); renderSidebar();
+  const { error } = await App.sb.from('dm_pins').insert({ channel_id: id, pinned_at: at });
+  if(error){
+    if(/dm_pins|schema cache|does not exist/i.test(error.message)){ ls.set('telao-dmpins', Object.fromEntries(S.dmPins)); App.toast('Conversa fixada (só neste aparelho). ' + PIN_SQL); return; }
+    if(!/duplicate/i.test(error.message)){ S.dmPins.delete(id); renderSidebar(); App.toast(error.message, true); return; }
+  }
+  App.toast('📌 Conversa fixada no topo.');
+}
+App.togglePin = togglePin;
+const _renderSidebarPin = renderSidebar;
+renderSidebar = function(){
+  const r = _renderSidebarPin.apply(this, arguments);
+  if(S.route.kind !== 'home') return r;
+  const items = [...document.querySelectorAll('#sbBody .dmitem[data-dm], .dmitem[data-dm]')];
+  let lastPinned = null;
+  items.forEach(el => {
+    const id = el.dataset.dm, on = S.dmPins.has(id);
+    el.classList.toggle('pinned', on);
+    if(on) lastPinned = el;
+    if(!el.querySelector('.dmpin')){
+      const b = document.createElement('button');
+      b.className = 'dmpin'; b.dataset.tip = on ? 'Desafixar' : 'Fixar conversa'; b.innerHTML = ic('pin', 14);
+      b.onclick = e => { e.preventDefault(); e.stopPropagation(); togglePin(id); };
+      const x = el.querySelector('.dmclose'); x ? el.insertBefore(b, x) : el.appendChild(b);
+    }
+  });
+  document.querySelectorAll('.dmpinsep').forEach(x => x.remove());
+  if(lastPinned && lastPinned.nextElementSibling && lastPinned.nextElementSibling.classList.contains('dmitem')) lastPinned.insertAdjacentHTML('afterend', '<div class="dmpinsep"></div>');
+  return r;
+};
+// botão direito na conversa → menu da pessoa ganha "Fixar conversa"
+const _userMenuExtraPin = App.userMenuExtra;
+App.userMenuExtra = uid => {
+  const base = _userMenuExtraPin ? _userMenuExtraPin(uid) : [];
+  const d = uid !== S.me.id && S.dms.find(x => dmOther(x) === uid);
+  if(!d) return base;
+  return [{ label: S.dmPins.has(d.id) ? 'Desafixar conversa' : 'Fixar conversa', icon: ic('pin', 18), onClick: () => togglePin(d.id) }].concat(base);
+};
 /* ---------------- PWA / app para Windows ----------------
    v6.28: no Windows (navegador), a barrinha embaixo oferece o app de verdade para Windows,
    não a instalação do navegador. Nos outros aparelhos continua a instalação como app. */

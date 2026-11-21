@@ -9,7 +9,7 @@ const esc = s => String(s ?? '').replace(/[&<>"']/g, c => ({'&':'&amp;','<':'&lt
 const COLORS = ['#5865f2','#eb459e','#3ba55c','#faa61a','#ed4245','#f47b67','#1abc9c','#9b59b6','#e67e22','#607d8b'];
 const ls = { get(k,d){ try{ const v=localStorage.getItem(k); return v==null?d:JSON.parse(v); }catch(e){ return d; } }, set(k,v){ try{ localStorage.setItem(k, JSON.stringify(v)); }catch(e){} } };
 
-const APP_VERSION = '6.29';
+const APP_VERSION = '6.30';
 const S = {
   me: null, profiles: new Map(), servers: [], channels: new Map(), members: new Map(),
   friends: [], dms: [], dmActivity: ls.get('telao-dmact', {}), online: new Set(),
@@ -95,9 +95,13 @@ function menu(x, y, items, cls=''){
   const el = $('#menu'); el.className = 'menu ' + cls;
   el.innerHTML = items.map((it,i) => it === '-' ? '<hr>' : it.raw ? it.raw : it.html ? `<div style="padding:6px 10px">${it.html}</div>` : `<button data-i="${i}" class="${it.danger?'danger':''} ${it.cls||''}">${esc(it.label)}<span>${it.icon||''}</span></button>`).join('');
   el.classList.remove('hidden');
-  const r = el.getBoundingClientRect();
-  el.style.left = Math.max(8, Math.min(x, innerWidth - r.width - 8)) + 'px';
-  el.style.top = Math.max(8, Math.min(y, innerHeight - r.height - 8)) + 'px';
+  // v6.30: menus altos (perfil com capa e insígnias) cabem na tela e rolam; reposiciona quando as imagens carregam
+  const place = () => { const w = el.offsetWidth, h = el.offsetHeight;   // offset*: sem a escala da animação
+    el.style.left = Math.max(8, Math.min(x, innerWidth - w - 8)) + 'px';
+    el.style.top = Math.max(8, Math.min(y, innerHeight - h - 8)) + 'px'; };
+  el.scrollTop = 0; place();
+  if(el._ro) el._ro.disconnect();
+  if(window.ResizeObserver){ el._ro = new ResizeObserver(() => { if(!el.classList.contains('hidden')) place(); }); el._ro.observe(el); }
   el.querySelectorAll('button[data-i]').forEach(b => b.onclick = () => { closeMenu(); items[+b.dataset.i].onClick(); });
   items.forEach(it => it.mount && it.mount(el));
   setTimeout(() => document.addEventListener('mousedown', outside), 0);
@@ -706,7 +710,8 @@ function renderSidebar(){
     head.innerHTML = `<div class="brandrow"><span class="logo">${LOGO}</span><b class="tagw">telão</b></div><button class="findbtn" id="sbFind">${ic('search',15)}<span>Buscar ou ir para…</span><kbd>Ctrl K</kbd></button>`; head.onclick = null;
     $('#sbFind').onclick = quickSwitcher;
     const pend = S.friends.filter(f => f.status === 'pending' && f.incoming).length;
-    const dms = [...S.dms, ...S.groups].sort((a,b) => (S.dmActivity[b.id] || b.created_at).localeCompare(S.dmActivity[a.id] || a.created_at));
+    const pins = S.dmPins || new Map();   // v6.30: fixadas primeiro (na ordem em que foram fixadas)
+    const dms = [...S.dms, ...S.groups].sort((a,b) => (pins.has(b.id) - pins.has(a.id)) || (pins.has(a.id) ? pins.get(a.id).localeCompare(pins.get(b.id)) : (S.dmActivity[b.id] || b.created_at).localeCompare(S.dmActivity[a.id] || a.created_at)));
     body.innerHTML = `
       <div class="ch big ${!S.route.dm?'on':''}" id="sbFriends"><span class="ic">${ic('users',20)}</span><span class="nm">Amigos</span>${pend?`<span class="pill">${pend}</span>`:''}</div>
       <div class="ch big" id="sbPlus"><span class="ic plusic">${ic('star',20)}</span><span class="nm">Telão+</span></div>

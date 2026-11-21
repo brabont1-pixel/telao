@@ -478,3 +478,11 @@ O "Spotify direto" (com Ouvir junto) continua opcional e só aparece se você co
   - o ícone do servidor ganha um escudo vermelho com o número de denúncias abertas;
   - o menu do servidor tem **Denúncias (n)**, que funciona também para moderadores sem acesso às outras configurações;
   - para o admin, as denúncias de DM ficam no topo do Painel do admin e no menu do seu perfil.
+
+# Versão 6.30: perfil inteiro na tela, chat abre no fim e fixar conversas
+
+**Precisa rodar o `supabase.sql` novo no Supabase** (para as conversas fixadas valerem em todos os aparelhos).
+
+- **Perfil cortado:** o cartão de perfil (e qualquer menu alto) agora se ajusta quando a capa e as insígnias terminam de carregar: fica inteiro na tela e rola se for maior que a janela.
+- **Conversa abre no fim:** ao entrar numa DM ou canal, o chat fica grudado na última mensagem, mesmo enquanto imagens, vídeos, reações e cargos ainda estão carregando ou a janela muda de tamanho. Só solta quando você rola para cima.
+- **📌 Fixar conversa:** passe o mouse numa conversa da lista (ou clique com o botão direito → **Fixar conversa**) e clique no alfinete. As fixadas ficam no topo, separadas por uma linha, até 10. Fica salvo na sua conta.
