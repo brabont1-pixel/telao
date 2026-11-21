@@ -2238,3 +2238,7 @@ button.nvc:not(:disabled){cursor:crosshair}button.nvc:not(:disabled):hover{backg
 .telit img{width:100%;border-radius:10px;background:#fff}.telwho{display:flex;gap:6px;align-items:center;font-size:13px;color:var(--txt2)}
 .teltxt{font-size:20px;font-weight:800;color:#fff}
 .installbar.win{background:linear-gradient(90deg,rgba(255,46,154,.18),rgba(46,230,255,.12));gap:10px}.installbar.win>.ico{flex:none;color:#2ee6ff}.installbar.win span{line-height:1.25}
+/* v6.28: aviso de denúncias */
+.repb{position:absolute;left:-4px;bottom:-4px;z-index:3;font-size:10px;font-weight:900;line-height:1;padding:3px 5px;border-radius:10px;background:#ff5c5c;color:#fff;border:2px solid var(--bg0,#0d0b12);pointer-events:none}
+.reptoast{position:fixed;right:18px;bottom:90px;z-index:700;display:flex;align-items:center;gap:10px;padding:12px 12px 12px 16px;border-radius:14px;background:#2a1220;border:1px solid #ff5c5c;color:#fff;font-weight:700;box-shadow:0 10px 30px rgba(0,0,0,.5);animation:rlpop .3s}
+.rpadmin{margin-bottom:8px}

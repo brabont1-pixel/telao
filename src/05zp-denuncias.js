@@ -40,26 +40,83 @@ function reportModal(m){
   });
 }
 
-/* ---------- contador para moderadores ---------- */
-async function repRefresh(sid){
-  if(!sid || !canModReports(sid)) return;
-  const { count, error } = await App.sb.from('message_reports').select('id', { count: 'exact', head: true }).eq('server_id', sid).eq('status', 'open');
+/* ---------- aviso para moderadores ----------
+   v6.28: antes só contava o servidor aberto e só aparecia dentro das configurações.
+   Agora confere TODOS os servidores que você modera (e as denúncias de DM, se for admin) a cada 45 s,
+   põe um escudo com o número no ícone do servidor, um item "Denúncias" no menu do servidor
+   e avisa quando chega denúncia nova (inclusive as que chegaram enquanto você estava fora). */
+const REP_SEEN_KEY = 'telao-rep-seen';
+let repLoaded = false;
+async function repRefreshAll(){
+  if(!S.me) return;
+  const modSids = S.servers.filter(s => canModReports(s.id)).map(s => s.id);
+  if(!modSids.length && !S.me.is_admin) return;
+  const { data, error } = await App.sb.from('message_reports').select('id,server_id,reporter,created_at').eq('status', 'open').order('created_at', { ascending: false }).limit(500);
   if(error) return;
-  const before = S.repCount.get(sid);
-  S.repCount.set(sid, count || 0);
-  if(before !== undefined && count > before){
-    const s = S.servers.find(x => x.id === sid);
-    App.toast(`🛡️ Nova denúncia em ${s ? s.name : 'um servidor'}. Veja em Configurações do servidor → Denúncias.`);
+  const cnt = new Map(), fresh = [];
+  const seen = new Set(ls.get(REP_SEEN_KEY, []));
+  (data || []).forEach(r => {
+    const k = r.server_id || 'dm';
+    const mine = r.server_id ? modSids.includes(r.server_id) : S.me.is_admin;
+    if(!mine || r.reporter === S.me.id) return;
+    cnt.set(k, (cnt.get(k) || 0) + 1);
+    if(!seen.has(r.id)) fresh.push(r);
+  });
+  const changed = [...cnt].some(([k, v]) => S.repCount.get(k) !== v) || [...S.repCount.keys()].some(k => !cnt.has(k));
+  S.repCount = cnt;
+  if(fresh.length){
+    ls.set(REP_SEEN_KEY, [...seen, ...fresh.map(r => r.id)].slice(-400));
+    const r = fresh[0], srv = r.server_id && S.servers.find(x => x.id === r.server_id);
+    const where = srv ? srv.name : 'uma DM';
+    repToast(fresh.length > 1 ? `🛡️ ${fresh.length} denúncias novas (${where}${fresh.some(x => x.server_id !== r.server_id) ? ' e outros' : ''})` : `🛡️ Nova denúncia em ${where}`, r.server_id);
+    if(App.sfx && !isDnd()) App.sfx('msg');
   }
-  if(before !== count) renderSidebar();
+  repLoaded = true;
+  if(changed){ renderRail(); }
 }
-const _goRep = go;
-go = async function(route){
-  const r = await _goRep.apply(this, arguments);
-  if(route && route.kind === 'server') repRefresh(route.sid);
-  return r;
+App.repRefresh = repRefreshAll;
+const repRefresh = () => repRefreshAll();
+function repOpen(sid){
+  if(sid){ const s = S.servers.find(x => x.id === sid); if(s) openSettings('server', 'reports', s); }
+  else openSettings('user', 'admin');
+}
+App.repOpen = repOpen;
+function repToast(text, sid){
+  document.getElementById('repToast')?.remove();
+  const t = document.createElement('div'); t.id = 'repToast'; t.className = 'reptoast';
+  t.innerHTML = `<span>${esc(text)}</span><button class="btn sm" id="repTGo">Ver denúncias</button><button class="ibtn sm" id="repTX" aria-label="Fechar">${ic('x', 14)}</button>`;
+  document.body.appendChild(t);
+  t.querySelector('#repTGo').onclick = () => { t.remove(); repOpen(sid); };
+  t.querySelector('#repTX').onclick = () => t.remove();
+  setTimeout(() => t.isConnected && t.remove(), 20000);
+}
+setTimeout(repRefreshAll, 4000);
+setInterval(repRefreshAll, 45000);
+document.addEventListener('visibilitychange', () => { if(!document.hidden) repRefreshAll(); });
+// escudo com o número no ícone do servidor
+const _renderRailRep = renderRail;
+renderRail = function(){
+  _renderRailRep.apply(this, arguments);
+  S.repCount.forEach((n, k) => {
+    if(!n || k === 'dm') return;
+    const b = document.querySelector(`#rail [data-sid="${k}"]`);
+    if(b && !b.querySelector('.repb')) b.insertAdjacentHTML('beforeend', `<span class="repb" title="${n} ${n === 1 ? 'denúncia aberta' : 'denúncias abertas'}">🛡️${n > 9 ? '9+' : n}</span>`);
+  });
 };
-setInterval(() => { if(S.route && S.route.kind === 'server') repRefresh(S.route.sid); }, 90000);
+// item no menu do servidor (aparece para quem modera, mesmo sem acesso às outras configurações)
+const _srvMenuExtraRep = App.srvMenuExtra;
+App.srvMenuExtra = s => {
+  const out = _srvMenuExtraRep ? _srvMenuExtraRep(s) : [];
+  if(canModReports(s.id)){ const n = S.repCount.get(s.id) || 0; out.push({ label: n ? `Denúncias (${n})` : 'Denúncias', icon: ic('shield', 18), onClick: () => openSettings('server', 'reports', s) }); }
+  return out;
+};
+// admin: atalho para as denúncias de DM no menu do seu perfil
+const _selfMenuExtraRep = App.selfMenuExtra;
+App.selfMenuExtra = () => {
+  const out = _selfMenuExtraRep ? _selfMenuExtraRep() : [];
+  if(S.me && S.me.is_admin){ const n = S.repCount.get('dm') || 0; out.push({ label: n ? `Denúncias em DMs (${n})` : 'Denúncias em DMs', icon: ic('shield', 18), onClick: () => repOpen(null) }); }
+  return out;
+};
 
 /* ---------- fila de denúncias ---------- */
 function repGroup(rows){
@@ -98,7 +155,7 @@ async function repRender(box, back, sid, title){
   const rows = data || [];
   await ensureProfiles([...new Set(rows.flatMap(r => [r.author_id, r.resolved_by]).filter(Boolean))]);
   const groups = repGroup(rows);
-  if(sid && tab === 'open'){ S.repCount.set(sid, rows.length); }
+  if(tab === 'open'){ S.repCount.set(sid || 'dm', groups.reduce((a, g) => a + g.length, 0)); renderRail(); }
   box.innerHTML = `${back}<h2>${title}</h2><p class="mut">Mensagens que a galera denunciou. Quem denunciou fica em segredo; a cópia da mensagem fica guardada mesmo se ela for apagada.</p>
     <div class="rltabs" style="max-width:360px"><button class="${tab === 'open' ? 'on' : ''}" data-rpt="open">Abertas</button><button class="${tab !== 'open' ? 'on' : ''}" data-rpt="done">Resolvidas</button></div>
     <div class="rplist">${groups.map(g => repCard(g, sid)).join('') || `<div class="empty">${tab === 'open' ? 'Nenhuma denúncia aberta. 🎉' : 'Nada por aqui ainda.'}</div>`}</div>`;
@@ -109,7 +166,7 @@ async function repRender(box, back, sid, title){
     if(error){ App.toast(error.message, true); return false; }
     return true;
   };
-  const again = () => { repRender(box, back, sid, title); if(sid) repRefresh(sid); };
+  const again = () => { repRender(box, back, sid, title); repRefreshAll(); };
   box.querySelectorAll('[data-rpok]').forEach(b => b.onclick = async () => { if(await resolve(b.dataset.rpok, 'resolved', 'resolvida')) again(); });
   box.querySelectorAll('[data-rpno]').forEach(b => b.onclick = async () => { if(await resolve(b.dataset.rpno, 'dismissed', 'ignorada')) again(); });
   box.querySelectorAll('[data-rpdel]').forEach(b => b.onclick = async () => {
@@ -137,9 +194,10 @@ const _secAdminRep = secAdmin;
 secAdmin = function(box, back){
   _secAdminRep.apply(this, arguments);
   if(!S.me.is_admin) return;
-  const wrap = document.createElement('div'); wrap.className = 'rpadmin';
-  box.appendChild(document.createElement('hr')).className = 'sdiv';
-  box.appendChild(wrap);
+  const wrap = document.createElement('div'); wrap.className = 'rpadmin'; wrap.id = 'rpAdmin';
+  const h2 = box.querySelector('h2');
+  if(h2) h2.after(wrap); else box.prepend(wrap);
+  wrap.insertAdjacentHTML('afterend', '<hr class="sdiv">');
   repRender(wrap, '', null, 'Denúncias em DMs');
 };
 // ganchos para os testes automáticos

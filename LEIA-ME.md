@@ -471,3 +471,10 @@ O "Spotify direto" (com Ouvir junto) continua opcional e só aparece se você co
 
 # Versão 6.28: botão de baixar o app para Windows
 - No navegador do Windows, a barrinha de baixo agora é **Telão para Windows → Baixar**, que baixa o instalador (`Telao-Setup.exe`) direto da página de versões do GitHub (ou do link que o admin salvou em Configurações → App). O X esconde de vez. No app do Windows a barra não aparece; no celular continua a instalação como app.
+
+# Versão 6.29: aviso de denúncias para quem modera
+- Antes a denúncia só aparecia se a pessoa entrasse em Configurações do servidor → Denúncias. Agora o Telão confere todos os servidores que você modera (e as denúncias em DM, se você for o admin) ao abrir e a cada 45 s:
+  - aparece um aviso **"Nova denúncia em …"** com o botão **Ver denúncias** (inclusive para as que chegaram enquanto você estava fora);
+  - o ícone do servidor ganha um escudo vermelho com o número de denúncias abertas;
+  - o menu do servidor tem **Denúncias (n)**, que funciona também para moderadores sem acesso às outras configurações;
+  - para o admin, as denúncias de DM ficam no topo do Painel do admin e no menu do seu perfil.
