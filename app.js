@@ -9,7 +9,7 @@ const esc = s => String(s ?? '').replace(/[&<>"']/g, c => ({'&':'&amp;','<':'&lt
 const COLORS = ['#5865f2','#eb459e','#3ba55c','#faa61a','#ed4245','#f47b67','#1abc9c','#9b59b6','#e67e22','#607d8b'];
 const ls = { get(k,d){ try{ const v=localStorage.getItem(k); return v==null?d:JSON.parse(v); }catch(e){ return d; } }, set(k,v){ try{ localStorage.setItem(k, JSON.stringify(v)); }catch(e){} } };
 
-const APP_VERSION = '6.34';
+const APP_VERSION = '6.35';
 const S = {
   me: null, profiles: new Map(), servers: [], channels: new Map(), members: new Map(),
   friends: [], dms: [], dmActivity: ls.get('telao-dmact', {}), online: new Set(),
@@ -3448,12 +3448,15 @@ function secVoice(box, back){
     <hr class="sdiv"><h3>Modo de entrada</h3>
     <div class="chips"><button class="chip ${P.mode==='vad'?'on':''}" data-m="vad">🎙️ Detecção de voz</button><button class="chip ${P.mode==='ptt'?'on':''}" data-m="ptt">⌨️ Pressionar para falar</button></div>
     <div id="vPttInfo" style="margin-top:10px;font-size:14px;color:var(--txt2)">${P.mode==='ptt' ? `Segure <span class="keycap">${keyLabel(P.pttKey)}</span> para falar. <a style="cursor:pointer" data-go="keys">Trocar tecla</a>` : ''}</div>
-    <h3>Sensibilidade do indicador de fala</h3>
+    <h3>Sensibilidade do microfone</h3>
     <input type="range" class="range" id="vSens" min="1" max="30" value="${P.sensitivity}">
     <small style="color:var(--mut)">A linha amarela no medidor é o limite: acima dela, seu avatar acende de verde.</small>
+    ${row('Cortar tudo abaixo da linha amarela', 'Sensibilidade manual: só passa o que for mais alto que a linha (bom se tem barulho constante perto). Vale com a supressão Forte ou IA.', toggle('vGateMan', !!P.gateManual))}
     <hr class="sdiv"><h3>Processamento de voz</h3>
     <div class="srow"><div class="t"><b>Supressão de ruído</b><small>Corta barulho de fundo: ventilador, teclado, rua, cachorro.</small></div></div>
     <div class="nzlv">${[['off','Desligada','Som cru do microfone.'],['padrao','Padrão','Filtro do navegador.'],['forte','Forte','Filtro do navegador + isolamento de voz + portão que fecha o microfone no silêncio.'],['ia','IA ✨','Rede neural que apaga teclado, ventilador, ar-condicionado e cachorro, deixando só a voz. Melhor resultado; usa um pouco mais o processador.']].map(([v, l, d]) => `<button class="vl ${Voice.noiseLevel() === v ? 'on' : ''}" data-nz="${v}"><b>${l}</b><small>${d}</small></button>`).join('')}</div>
+    <div class="srow"><div class="t"><b>Bloquear som de longe</b><small>Celular tocando vídeo, TV, outra pessoa no quarto: o que chega bem mais baixo que a sua voz não passa para a call. Vale com a supressão Forte ou IA.</small></div></div>
+    <div class="chips" id="vFar">${[['off', 'Desligado'], ['normal', 'Normal'], ['forte', 'Forte']].map(([v, l]) => `<button class="chip ${(P.farCut === false ? 'off' : P.farCut === 'forte' ? 'forte' : 'normal') === v ? 'on' : ''}" data-far="${v}">${l}</button>`).join('')}</div>
     ${row('Modo música', 'Desliga todos os filtros e manda o som em estéreo, para tocar instrumento ou mostrar uma música com qualidade. Use fone.', toggle('vMusic', !!P.musicMode))}
     ${row('Cancelamento de eco', 'Evita que seus amigos ouçam o próprio eco.', toggle('vEcho', P.echo))}
     ${row('Controle automático de ganho', 'Ajusta o volume do seu microfone sozinho.', toggle('vAgc', P.agc))}
@@ -3494,6 +3497,8 @@ function secVoice(box, back){
   const th = () => { $b('#vTh').style.left = Math.min(100, P.sensitivity / 30 * 100 * 0.6) + '%'; };
   th();
   $b('#vSens').oninput = e => { P.sensitivity = +e.target.value; savePrefs(); th(); };
+  $b('#vGateMan').onchange = e => { P.gateManual = e.target.checked; savePrefs(); if(Voice.noiseLevel() !== 'forte' && Voice.noiseLevel() !== 'ia' && e.target.checked) App.toast('Ative a supressão Forte ou IA para isso valer.'); };
+  box.querySelectorAll('[data-far]').forEach(b => b.onclick = () => { const v = b.dataset.far; P.farCut = v === 'off' ? false : v === 'forte' ? 'forte' : true; savePrefs(); box.querySelectorAll('[data-far]').forEach(x => x.classList.toggle('on', x === b)); if(v !== 'off' && Voice.noiseLevel() !== 'forte' && Voice.noiseLevel() !== 'ia') App.toast('Ative a supressão Forte ou IA para isso valer.'); });
   const proc = (id, key) => $b(id).onchange = e => { P[key] = e.target.checked; savePrefs(); Voice.switchMic(); if(test) startTest(); };
   proc('#vEcho','echo'); proc('#vAgc','agc'); proc('#vMusic','musicMode');
   box.querySelectorAll('[data-nz]').forEach(b => b.onclick = () => { P.noiseLevel = b.dataset.nz; P.noise = b.dataset.nz !== 'off'; savePrefs(); Voice.switchMic(); renderSettings(); });

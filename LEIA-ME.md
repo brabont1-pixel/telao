@@ -520,3 +520,12 @@ O "Spotify direto" (com Ouvir junto) continua opcional e só aparece se você co
 - Quem estava na call pelo celular e ia ver TikTok/YouTube/Instagram continuava com o microfone aberto, e ele pegava o som do alto-falante (o cancelamento de eco só tira o som da própria call). Agora, **no celular, o microfone muta sozinho quando você sai do Telão e volta quando você abre de novo**. Os outros veem o ícone de mutado normalmente.
 - Se você já estava mutado, continua mutado ao voltar.
 - Dá para desligar em Configurações → Voz e vídeo → No celular (útil para quem fala com a tela bloqueada).
+
+# Versão 6.35: som de celular/TV perto do microfone do PC
+- Quem está no PC com o celular tocando vídeo do lado mandava aquele som alto na call. Dois motivos: o ganho automático do navegador **aumentava** o som de longe até ficar do volume de uma voz, e o portão do filtro Forte ficava aberto com qualquer som constante.
+- Agora, com a supressão **Forte** ou **IA** (a Forte é a padrão):
+  - o Telão aprende o volume da **sua** voz (que chega forte, perto do microfone) e **bloqueia o que chega bem mais baixo**: celular, TV, alguém falando no quarto;
+  - o ganho automático é o do Telão: ele só ajusta pela sua voz, sem aumentar o fundo;
+  - tem um **limitador** no fim, então nada passa estourado.
+- Em Configurações → Voz e vídeo: **Bloquear som de longe** (Desligado, Normal ou Forte) e **Cortar tudo abaixo da linha amarela**, uma sensibilidade manual no estilo do Discord.
+- O que não dá para separar: se o celular estiver tão alto quanto a sua voz, ou enquanto você fala junto com ele, o som passa. Nesse caso, use fone no celular ou a opção Forte.

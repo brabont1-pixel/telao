@@ -63,7 +63,9 @@
     micConstraints(){
       const P = this.prefs(), lvl = this.noiseLevel(), music = !!P.musicMode;
       const sup = (navigator.mediaDevices.getSupportedConstraints && navigator.mediaDevices.getSupportedConstraints()) || {};
-      const c = { echoCancellation: !music && P.echo !== false, noiseSuppression: !music && lvl !== 'off', autoGainControl: !music && P.agc !== false,
+      // v6.35: no Forte/IA o ganho automático é o nosso (só sobe com a SUA voz); o do navegador também aumentava o som de longe (celular, TV)
+      const ownAgc = lvl === 'forte' || lvl === 'ia';
+      const c = { echoCancellation: !music && P.echo !== false, noiseSuppression: !music && lvl !== 'off', autoGainControl: !music && P.agc !== false && !ownAgc,
         channelCount: music ? { ideal: 2 } : { ideal: 1 }, sampleRate: { ideal: 48000 }, sampleSize: { ideal: 16 } };
       if(sup.voiceIsolation && !music && lvl === 'forte') c.voiceIsolation = true;
       if(P.inputId) c.deviceId = { exact: P.inputId };
@@ -101,6 +103,9 @@
         const pres = ctx.createBiquadFilter(); pres.type = 'peaking'; pres.frequency.value = 3200; pres.gain.value = 2; pres.Q.value = 0.9;
         const comp = ctx.createDynamicsCompressor(); comp.threshold.value = -24; comp.knee.value = 18; comp.ratio.value = 3.5; comp.attack.value = 0.004; comp.release.value = 0.2;
         const gate = ctx.createGain(); gate.gain.value = 1;
+        const agc = ctx.createGain(); agc.gain.value = 1;
+        // limitador no fim: nada passa estourado
+        const lim = ctx.createDynamicsCompressor(); lim.threshold.value = -6; lim.knee.value = 0; lim.ratio.value = 20; lim.attack.value = 0.001; lim.release.value = 0.12;
         const an = ctx.createAnalyser(); an.fftSize = 1024; an.smoothingTimeConstant = 0;
         const dst = ctx.createMediaStreamDestination();
         let head = src;
@@ -108,17 +113,28 @@
           try{ const rn = await this.rnnoise(ctx); src.connect(rn); head = rn; this.rnOk = true; }
           catch(e){ this.rnOk = false; console.warn('RNNoise indisponível, usando o filtro Forte', e); if(window.App && App.toast && !this._rnWarned){ this._rnWarned = true; App.toast('Não deu para carregar a supressão por IA agora. Usando a Forte.', true); } }
         }
-        head.connect(hp).connect(hum).connect(pres).connect(comp).connect(gate).connect(dst);
+        head.connect(hp).connect(hum).connect(pres).connect(comp).connect(agc).connect(gate).connect(lim).connect(dst);
         hp.connect(an);
         const buf = new Float32Array(an.fftSize);
-        let floor = -60, open = false, holdUntil = 0;
+        let floor = -60, open = false, holdUntil = 0, voice = -26, gNow = 0;
+        const self = this; this._gateDbg = { };
         const tick = () => {
+          const P = self.prefs();
           an.getFloatTimeDomainData(buf);
           let sum = 0; for(let i = 0; i < buf.length; i++) sum += buf[i] * buf[i];
           const db = 10 * Math.log10(sum / buf.length + 1e-12);
           // aprende o nível do ruído de fundo devagar
           if(!open) floor = floor * 0.995 + db * 0.005; else floor = Math.min(floor, floor * 0.9995 + db * 0.0005);
-          const thr = Math.max(-58, Math.min(-28, floor + 9 + ((P.gateBoost || 0))));
+          // v6.35: aprende também o nível da SUA voz (o que chega bem forte, perto do microfone)
+          if(db > voice - 6 && db > floor + 15) voice = voice * 0.98 + db * 0.02;
+          else voice = Math.max(-40, voice - 0.002);
+          let thr = Math.max(-58, Math.min(-28, floor + 9 + ((P.gateBoost || 0))));
+          // som de longe (celular, TV, outra pessoa no quarto) chega bem mais baixo que a sua voz: fica de fora
+          if(P.farCut !== false) thr = Math.max(thr, voice - (P.farCut === 'forte' ? 11 : 16));
+          if(P.gateManual) thr = 20 * Math.log10(Math.max(1, P.sensitivity || 4) / 128);
+          self._gateDbg = { db, thr, voice, floor, open };
+          // nosso ganho automático: leva a sua voz para um volume bom, sem aumentar o fundo
+          if(P.agc !== false){ const want = Math.max(-6, Math.min(14, -18 - voice)); if(Math.abs(want - gNow) > 0.5){ gNow += (want - gNow) * 0.02; agc.gain.setTargetAtTime(Math.pow(10, gNow / 20), ctx.currentTime, 0.3); } }
           const now = ctx.currentTime;
           if(db > thr){ holdUntil = now + 0.28; if(!open){ open = true; gate.gain.cancelScheduledValues(now); gate.gain.setTargetAtTime(1, now, 0.006); } }
           else if(open && now > holdUntil){ open = false; gate.gain.cancelScheduledValues(now); gate.gain.setTargetAtTime(0.03, now, 0.06); }
