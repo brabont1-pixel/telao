@@ -2705,7 +2705,7 @@ grant select, insert, update, delete on public.saved_messages to authenticated;
 alter table public.profiles add column if not exists theme_song jsonb;
 alter table public.profiles drop constraint if exists profiles_theme_song_check;
 alter table public.profiles add constraint profiles_theme_song_check check (theme_song is null or (jsonb_typeof(theme_song) = 'object'
-  and coalesce(theme_song->>'preview', '') ~ '^https://[a-z0-9.-]*(mzstatic\.com|itunes\.apple\.com|apple\.com)/' and char_length(theme_song::text) < 1200));
+  and coalesce(theme_song->>'preview', '') ~ '^https://[a-z0-9.-]*(mzstatic\.com|itunes\.apple\.com|apple\.com|supabase\.co/storage/)' and char_length(theme_song::text) < 1200));
 
 -- aniversários do servidor: calendário e parabéns automático no dia
 alter table public.servers add column if not exists bday_on boolean not null default true;

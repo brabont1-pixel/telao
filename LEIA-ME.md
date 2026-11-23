@@ -507,3 +507,11 @@ O "Spotify direto" (com Ouvir junto) continua opcional e só aparece se você co
 
 - **🐾 Bichinho opcional:** agora ele começa **desligado**. Quem gerencia o servidor liga pelo menu do servidor → **Ativar bichinho do servidor** (ou em Visão geral do servidor → Bichinho do servidor), e pode desligar do mesmo jeito; os pontos ficam guardados. Desligado, ele não aparece e não conta pontos. Cada pessoa também pode marcar **Esconder o bichinho da minha lateral** (só para ela).
 - **✂️ Trecho da música do perfil:** em Configurações → Perfil → Música do perfil, depois de escolher a música aparece o editor de trecho: arraste para escolher onde começa, escolha a duração (5, 10, 15, 20 ou 30 s), ouça e salve. Quem abre seu perfil ouve só esse pedaço, em loop.
+
+# Versão 6.33: trecho da música inteira no perfil
+
+**Precisa rodar o `supabase.sql` novo no Supabase** (libera músicas enviadas pelo próprio Telão).
+
+- Em Configurações → Perfil → Música do perfil, tem **Usar uma música do meu computador** (MP3, M4A, WAV, OGG… até 40 MB). Aparece a forma de onda da música **inteira**: clique ou arraste para escolher qualquer parte, escolha a duração (5 a 30 s), ouça e salve.
+- A música inteira não sai do seu computador: só o pedaço escolhido é enviado para o seu perfil.
+- A busca continua funcionando, mas ela só tem 30 s de cada música (é o que o iTunes libera). Para escolher em qualquer parte, use o arquivo.

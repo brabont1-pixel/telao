@@ -2345,3 +2345,7 @@ body.cinema.cineidle{cursor:none}
 .pswin{position:absolute;top:0;bottom:0;border-radius:8px;background:rgba(255,46,154,.25);border:2px solid var(--pink,#ff2e9a);pointer-events:none;transition:left .1s,width .15s}
 .psplayhead{position:absolute;top:0;bottom:0;width:2px;background:#fff;display:none;pointer-events:none}
 .pstimes{display:flex;align-items:center;gap:6px;flex-wrap:wrap;font-size:13px}.pstimes span:first-child{margin-right:auto}
+/* v6.33: trecho da música inteira */
+.psfile{display:flex;flex-direction:column;gap:4px;margin:4px 0 12px}.psfile label{align-self:flex-start}
+.pswave.big{height:84px;cursor:pointer;gap:1px;padding:0 4px}.pswave.big i{background:rgba(255,255,255,.28)}
+.pswave.big{touch-action:none}
