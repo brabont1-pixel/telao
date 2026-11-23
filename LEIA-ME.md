@@ -515,3 +515,8 @@ O "Spotify direto" (com Ouvir junto) continua opcional e só aparece se você co
 - Em Configurações → Perfil → Música do perfil, tem **Usar uma música do meu computador** (MP3, M4A, WAV, OGG… até 40 MB). Aparece a forma de onda da música **inteira**: clique ou arraste para escolher qualquer parte, escolha a duração (5 a 30 s), ouça e salve.
 - A música inteira não sai do seu computador: só o pedaço escolhido é enviado para o seu perfil.
 - A busca continua funcionando, mas ela só tem 30 s de cada música (é o que o iTunes libera). Para escolher em qualquer parte, use o arquivo.
+
+# Versão 6.34: som do TikTok vazando na call pelo celular
+- Quem estava na call pelo celular e ia ver TikTok/YouTube/Instagram continuava com o microfone aberto, e ele pegava o som do alto-falante (o cancelamento de eco só tira o som da própria call). Agora, **no celular, o microfone muta sozinho quando você sai do Telão e volta quando você abre de novo**. Os outros veem o ícone de mutado normalmente.
+- Se você já estava mutado, continua mutado ao voltar.
+- Dá para desligar em Configurações → Voz e vídeo → No celular (útil para quem fala com a tela bloqueada).
