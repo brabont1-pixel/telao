@@ -529,3 +529,6 @@ O "Spotify direto" (com Ouvir junto) continua opcional e só aparece se você co
   - tem um **limitador** no fim, então nada passa estourado.
 - Em Configurações → Voz e vídeo: **Bloquear som de longe** (Desligado, Normal ou Forte) e **Cortar tudo abaixo da linha amarela**, uma sensibilidade manual no estilo do Discord.
 - O que não dá para separar: se o celular estiver tão alto quanto a sua voz, ou enquanto você fala junto com ele, o som passa. Nesse caso, use fone no celular ou a opção Forte.
+
+# Versão 6.36
+- Retirado o "mutar o microfone ao sair do Telão no celular" (v6.34). O microfone volta a ficar como você deixou, mesmo em outro app ou com a tela bloqueada.
