@@ -2880,6 +2880,162 @@ end $$;
 grant execute on function public.server_bday_calendar(uuid), public.server_bday_announce(uuid), public.pet_voice_tick(uuid), public.pet_pet(uuid),
   public.pet_get(uuid), public.pet_config(uuid, text, text, text), public.my_stats(int) to authenticated;
 
+-- =====================================================================
+-- v6.37: REGISTRO DE AUDITORIA DO SERVIDOR
+-- Tudo é gravado pelo próprio banco (gatilhos), então ninguém consegue esconder ou inventar registro.
+-- Quem vê: dono, Administrador e quem tem a permissão nova "Ver registro de auditoria" (1024).
+-- Guarda 90 dias.
+-- =====================================================================
+create table if not exists public.server_audit (
+  id bigint generated always as identity primary key,
+  server_id uuid not null references public.servers(id) on delete cascade,
+  actor uuid references public.profiles(id) on delete set null,
+  action text not null,
+  target_type text,
+  target_id uuid,
+  target_name text,
+  details jsonb not null default '{}'::jsonb,
+  created_at timestamptz not null default now()
+);
+create index if not exists server_audit_srv on public.server_audit (server_id, created_at desc);
+alter table public.server_audit enable row level security;
+drop policy if exists "ver auditoria" on public.server_audit;
+create policy "ver auditoria" on public.server_audit for select to authenticated using (public.has_perm(server_id, 1024));
+grant select on public.server_audit to authenticated;
+
+create or replace function public.audit_add(p_server uuid, p_action text, p_type text, p_id uuid, p_name text, p_details jsonb) returns void
+language plpgsql security definer set search_path = public as $$
+begin
+  if p_server is null or not exists (select 1 from servers where id = p_server) then return; end if;
+  insert into server_audit (server_id, actor, action, target_type, target_id, target_name, details)
+  values (p_server, auth.uid(), p_action, p_type, p_id, left(p_name, 120), coalesce(p_details, '{}'::jsonb));
+  if random() < 0.02 then delete from server_audit where server_id = p_server and created_at < now() - interval '90 days'; end if;
+exception when others then null;   -- registro nunca pode travar a ação de verdade
+end $$;
+revoke execute on function public.audit_add(uuid, text, text, uuid, text, jsonb) from public, anon, authenticated;
+
+-- o que mudou entre a linha antiga e a nova (ignorando campos que mudam sozinhos)
+create or replace function public.audit_diff(o jsonb, n jsonb, skip text[]) returns jsonb
+language sql immutable as $$
+  select coalesce(jsonb_object_agg(k, jsonb_build_object('de', o -> k, 'para', n -> k)), '{}'::jsonb)
+  from jsonb_object_keys(n) k
+  where not (k = any(skip)) and (o -> k) is distinct from (n -> k);
+$$;
+create or replace function public.audit_uname(u uuid) returns text language sql stable security definer set search_path = public as $$
+  select coalesce(display_name, username) from profiles where id = u;
+$$;
+
+create or replace function public.audit_trg() returns trigger
+language plpgsql security definer set search_path = public as $$
+declare o jsonb := case when tg_op <> 'INSERT' then to_jsonb(old) end; n jsonb := case when tg_op <> 'DELETE' then to_jsonb(new) end;
+  r jsonb := coalesce(n, o); sid uuid; d jsonb; me uuid := auth.uid(); cname text; rname text;
+begin
+  if tg_table_name = 'servers' then
+    if tg_op <> 'UPDATE' then return null; end if;
+    d := public.audit_diff(o, n, array['invite_code','public_since','owner_id','created_at']);
+    if d = '{}'::jsonb then return null; end if;
+    perform public.audit_add(new.id, 'server_update', 'server', new.id, new.name, d);
+    if old.invite_code is distinct from new.invite_code then perform public.audit_add(new.id, 'invite_reset', 'server', new.id, new.name, '{}'); end if;
+    if old.owner_id is distinct from new.owner_id then perform public.audit_add(new.id, 'owner_transfer', 'member', new.owner_id, public.audit_uname(new.owner_id), jsonb_build_object('de', public.audit_uname(old.owner_id))); end if;
+  elsif tg_table_name = 'channels' then
+    sid := (r ->> 'server_id')::uuid; if sid is null then return null; end if;
+    if tg_op = 'INSERT' then perform public.audit_add(sid, 'channel_create', 'channel', new.id, new.name, jsonb_build_object('tipo', new.kind));
+    elsif tg_op = 'DELETE' then perform public.audit_add(sid, 'channel_delete', 'channel', old.id, old.name, jsonb_build_object('tipo', old.kind));
+    else
+      d := public.audit_diff(o, n, array['position','created_at']);
+      if d <> '{}'::jsonb then perform public.audit_add(sid, 'channel_update', 'channel', new.id, new.name, d); end if;
+    end if;
+  elsif tg_table_name = 'server_categories' then
+    sid := (r ->> 'server_id')::uuid;
+    if tg_op = 'INSERT' then perform public.audit_add(sid, 'category_create', 'category', null, r ->> 'name', '{}');
+    elsif tg_op = 'DELETE' then perform public.audit_add(sid, 'category_delete', 'category', null, r ->> 'name', '{}');
+    else d := public.audit_diff(o, n, array['position','created_at']); if d <> '{}'::jsonb then perform public.audit_add(sid, 'category_update', 'category', null, r ->> 'name', d); end if; end if;
+  elsif tg_table_name = 'server_roles' then
+    sid := (r ->> 'server_id')::uuid;
+    if tg_op = 'INSERT' then perform public.audit_add(sid, 'role_create', 'role', (r->>'id')::uuid, r ->> 'name', '{}');
+    elsif tg_op = 'DELETE' then perform public.audit_add(sid, 'role_delete', 'role', (r->>'id')::uuid, r ->> 'name', '{}');
+    else d := public.audit_diff(o, n, array['position','created_at']); if d <> '{}'::jsonb then perform public.audit_add(sid, 'role_update', 'role', (r->>'id')::uuid, r ->> 'name', d); end if; end if;
+  elsif tg_table_name = 'member_roles' then
+    sid := (r ->> 'server_id')::uuid;
+    select name into rname from server_roles where id = (r ->> 'role_id')::uuid;
+    perform public.audit_add(sid, case when tg_op = 'INSERT' then 'member_role_add' else 'member_role_remove' end, 'member', (r->>'user_id')::uuid,
+      public.audit_uname((r->>'user_id')::uuid), jsonb_build_object('cargo', rname));
+  elsif tg_table_name = 'server_members' then
+    sid := (r ->> 'server_id')::uuid;
+    if tg_op = 'INSERT' then perform public.audit_add(sid, 'member_join', 'member', new.user_id, public.audit_uname(new.user_id), '{}');
+    elsif tg_op = 'DELETE' then
+      if me is not null and me <> old.user_id then
+        if not exists (select 1 from server_bans b where b.server_id = sid and b.user_id = old.user_id) then
+          perform public.audit_add(sid, 'member_kick', 'member', old.user_id, public.audit_uname(old.user_id), '{}'); end if;
+      else perform public.audit_add(sid, 'member_leave', 'member', old.user_id, public.audit_uname(old.user_id), '{}'); end if;
+    else
+      if old.timeout_until is distinct from new.timeout_until then
+        perform public.audit_add(sid, case when new.timeout_until is not null and new.timeout_until > now() then 'member_timeout' else 'member_timeout_end' end,
+          'member', new.user_id, public.audit_uname(new.user_id), jsonb_build_object('ate', new.timeout_until)); end if;
+      if old.voice_muted is distinct from new.voice_muted then perform public.audit_add(sid, case when new.voice_muted then 'voice_mute' else 'voice_unmute' end, 'member', new.user_id, public.audit_uname(new.user_id), '{}'); end if;
+      if old.voice_deafened is distinct from new.voice_deafened then perform public.audit_add(sid, case when new.voice_deafened then 'voice_deafen' else 'voice_undeafen' end, 'member', new.user_id, public.audit_uname(new.user_id), '{}'); end if;
+      if (to_jsonb(old) ->> 'nickname') is distinct from (to_jsonb(new) ->> 'nickname') then perform public.audit_add(sid, 'member_nick', 'member', new.user_id, public.audit_uname(new.user_id),
+        jsonb_build_object('de', to_jsonb(old) ->> 'nickname', 'para', to_jsonb(new) ->> 'nickname')); end if;
+    end if;
+  elsif tg_table_name = 'server_bans' then
+    sid := (r ->> 'server_id')::uuid;
+    perform public.audit_add(sid, case when tg_op = 'INSERT' then 'member_ban' else 'member_unban' end, 'member', (r->>'user_id')::uuid,
+      public.audit_uname((r->>'user_id')::uuid), case when tg_op = 'INSERT' then jsonb_build_object('motivo', r ->> 'reason') else '{}'::jsonb end);
+  elsif tg_table_name = 'messages' then
+    select c.server_id, c.name into sid, cname from channels c where c.id = (r ->> 'channel_id')::uuid;
+    if sid is null then return null; end if;
+    if tg_op = 'DELETE' then
+      if me is not null and me <> old.author_id then
+        perform public.audit_add(sid, 'message_delete', 'member', old.author_id, public.audit_uname(old.author_id), jsonb_build_object('canal', cname, 'texto', left(old.content, 200))); end if;
+    elsif old.pinned is distinct from new.pinned then
+      perform public.audit_add(sid, case when new.pinned then 'message_pin' else 'message_unpin' end, 'member', new.author_id, public.audit_uname(new.author_id), jsonb_build_object('canal', cname, 'texto', left(new.content, 200)));
+    end if;
+  elsif tg_table_name in ('server_emojis', 'server_sounds', 'server_events') then
+    sid := (r ->> 'server_id')::uuid;
+    perform public.audit_add(sid, replace(replace(replace(tg_table_name, 'server_', ''), 'emojis', 'emoji'), 'sounds', 'sound') || '_' || case tg_op when 'INSERT' then 'create' when 'DELETE' then 'delete' else 'update' end,
+      tg_table_name, (r->>'id')::uuid, coalesce(r ->> 'name', r ->> 'title'), '{}');
+  end if;
+  return null;
+end $$;
+do $$ declare t text; begin
+  foreach t in array array['servers','channels','server_categories','server_roles','member_roles','server_members','server_bans','server_emojis','server_sounds','server_events'] loop
+    if to_regclass('public.' || t) is not null then
+      execute format('drop trigger if exists audit_trg on public.%I', t);
+      execute format('create trigger audit_trg after insert or update or delete on public.%I for each row execute function public.audit_trg()', t);
+    end if;
+  end loop;
+  -- mensagens: só apagar (por outra pessoa) e fixar
+  drop trigger if exists audit_trg on public.messages;
+  create trigger audit_trg after update of pinned or delete on public.messages for each row execute function public.audit_trg();
+end $$;
+-- ações que não passam pelo banco (desconectar/mover alguém da call): o app registra, mas só quem tem a permissão consegue
+create or replace function public.audit_voice(p_server uuid, p_action text, p_target uuid, p_channel uuid default null) returns void
+language plpgsql security definer set search_path = public as $$
+begin
+  if p_action not in ('voice_disconnect', 'voice_move') then raise exception 'Ação inválida.'; end if;
+  if not public.has_perm(p_server, 64) then raise exception 'Sem permissão.'; end if;
+  perform public.audit_add(p_server, p_action, 'member', p_target, public.audit_uname(p_target),
+    case when p_channel is not null then jsonb_build_object('canal', (select name from channels where id = p_channel and server_id = p_server)) else '{}'::jsonb end);
+end $$;
+create or replace function public.resolve_report(p_id uuid, p_status text, p_action text default null) returns void
+language plpgsql security definer set search_path = public as $$
+declare r message_reports;
+begin
+  select * into r from message_reports where id = p_id;
+  if r.id is null then raise exception 'Denúncia não encontrada.'; end if;
+  if not public.can_mod_reports(r.server_id) then raise exception 'Sem permissão.'; end if;
+  if p_status not in ('open','resolved','dismissed') then raise exception 'Status inválido.'; end if;
+  -- resolve todas as denúncias da mesma mensagem de uma vez
+  update message_reports set status = p_status, action = left(p_action, 60),
+    resolved_by = case when p_status = 'open' then null else auth.uid() end,
+    resolved_at = case when p_status = 'open' then null else now() end
+  where (r.message_id is not null and message_id = r.message_id) or id = r.id;
+  if r.server_id is not null and p_status <> 'open' then
+    perform public.audit_add(r.server_id, 'report_' || p_status, 'member', r.author_id, public.audit_uname(r.author_id), jsonb_build_object('acao', p_action, 'motivo', r.reason));
+  end if;
+end $$;
+grant execute on function public.audit_voice(uuid, text, uuid, uuid) to authenticated;
+
 -- impede trocar campos sensíveis via update
 create or replace function public.guard_updates() returns trigger
 language plpgsql as $$

@@ -13,6 +13,7 @@ async function moveUserTo(s, uid, ch){
   const n = voiceUsers(ch).length;
   if(ch.user_limit && n >= ch.user_limit && !canMoveOthers(s)){ App.toast(`#${ch.name} está cheio.`, true); return; }
   sendToUser(uid, 'mod-move', { server_id: s.id, by: S.me.id, to: ch.id });
+  App.sb.rpc('audit_voice', { p_server: s.id, p_action: 'voice_move', p_target: uid, p_channel: ch.id }).then(() => {}, () => {});
   App.toast(`${prof(uid).display_name} foi movido para 🔊 ${ch.name}.`);
 }
 // quem recebe confere se quem moveu pode mesmo fazer isso e se o canal existe para ele

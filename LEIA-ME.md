@@ -532,3 +532,19 @@ O "Spotify direto" (com Ouvir junto) continua opcional e só aparece se você co
 
 # Versão 6.36
 - Retirado o "mutar o microfone ao sair do Telão no celular" (v6.34). O microfone volta a ficar como você deixou, mesmo em outro app ou com a tela bloqueada.
+
+# Versão 6.37: registro de auditoria
+
+**Precisa rodar o `supabase.sql` novo no Supabase.**
+
+- Configurações do servidor → **Registro de auditoria**. Mostra tudo o que mudou no servidor e quem fez, com data e hora:
+  - servidor: nome, ícone, descrição, regras, verificação, link de convite, dono;
+  - canais e categorias: criar, editar (o que mudou, de → para) e apagar;
+  - cargos: criar, editar (inclusive quais permissões entraram ou saíram) e apagar; dar e tirar cargo de alguém;
+  - membros: entrou, saiu, foi expulso, banido ou desbanido, castigo, apelido;
+  - call: silenciar, ensurdecer, desconectar e mover alguém;
+  - mensagens: apagar mensagem de outra pessoa (com o texto) e fixar ou desafixar;
+  - emojis, sons, eventos e denúncias resolvidas ou ignoradas.
+- Dá para filtrar por tipo e por pessoa, buscar por texto, e clicar numa linha para ver os detalhes.
+- É o próprio banco que grava (gatilhos), então ninguém consegue apagar ou inventar registro. Fica 90 dias.
+- Quem vê: dono, Administrador e quem tiver a permissão nova **Ver registro de auditoria** (em Cargos).

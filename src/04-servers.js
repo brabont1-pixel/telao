@@ -10,6 +10,7 @@ const PERMS = [
   [128, 'Banir membros', 'Tirar do servidor e impedir de voltar.'],
   [256, 'Gerenciar eventos', 'Criar, editar e apagar eventos do servidor.'],
   [512, 'Gerenciar emojis', 'Enviar, renomear e apagar emojis do servidor.'],
+  [1024, 'Ver registro de auditoria', 'Ver tudo o que mudou no servidor e quem fez.'],
 ];
 S.roles = new Map();        // sid -> [roles]
 S.memberRoles = new Map();  // sid -> Map(uid -> Set(roleId))

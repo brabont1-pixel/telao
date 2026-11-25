@@ -2349,3 +2349,16 @@ body.cinema.cineidle{cursor:none}
 .psfile{display:flex;flex-direction:column;gap:4px;margin:4px 0 12px}.psfile label{align-self:flex-start}
 .pswave.big{height:84px;cursor:pointer;gap:1px;padding:0 4px}.pswave.big i{background:rgba(255,255,255,.28)}
 .pswave.big{touch-action:none}
+/* v6.37: registro de auditoria */
+.aufilt{display:grid;grid-template-columns:1fr 1fr 1.4fr auto;gap:8px;margin:12px 0}
+@media(max-width:700px){.aufilt{grid-template-columns:1fr 1fr}}
+.aulist{display:flex;flex-direction:column;gap:4px}
+.aurow{display:flex;align-items:flex-start;gap:10px;padding:10px 12px;border-radius:10px;background:var(--bg1);border:1px solid transparent}
+.aurow.has{cursor:pointer}.aurow.has:hover{border-color:var(--line)}
+.auic{width:32px;height:32px;border-radius:50%;background:var(--bg3);display:flex;align-items:center;justify-content:center;flex:none}
+.aue{font-size:16px;margin-top:5px;flex:none}
+.aut{flex:1;min-width:0;font-size:14px;line-height:1.4}.aut small{color:var(--txt3);font-size:12px}
+.auu{cursor:pointer}.auu:hover{text-decoration:underline}
+.aud{display:none;margin:6px 0 0;padding:8px 10px 8px 26px;border-radius:8px;background:var(--bg0,#0d0b12);font-size:13px;color:var(--txt2)}
+.aurow.open .aud{display:block}.aud li{margin:2px 0;word-break:break-word}
+.auchev{color:var(--txt3);margin-top:6px;transition:transform .15s}.aurow.open .auchev{transform:rotate(180deg)}

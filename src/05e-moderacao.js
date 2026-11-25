@@ -32,6 +32,7 @@ App.modItems = (s, uid, x, y) => {
       onClick: () => modCall(s, uid, { p_vdeaf: !m.voice_deafened }, m.voice_deafened ? `${p.display_name} voltou a ouvir.` : `${p.display_name} foi ensurdecido.`) });
     if(anyCall || inCall) out.push({ label:'Desconectar da call', icon: ic('phoneOff', 18), cls:'moditem', onClick: () => {
       sendToUser(uid, 'mod-disconnect', { server_id: s.id, by: S.me.id });
+      App.sb.rpc('audit_voice', { p_server: s.id, p_action: 'voice_disconnect', p_target: uid }).then(() => {}, () => {});
       App.toast(`${p.display_name} foi desconectado da call.`);
     }});
     out.push(to
