@@ -18,6 +18,7 @@ const AU = {
   voice_disconnect: ['📴', 'desconectou da call', 'moderacao'], voice_move: ['↪️', 'moveu na call', 'moderacao'],
   message_delete: ['🗑️', 'apagou uma mensagem de', 'mensagens'], message_pin: ['📌', 'fixou uma mensagem de', 'mensagens'], message_unpin: ['📌', 'desafixou uma mensagem de', 'mensagens'],
   emoji_create: ['😀', 'adicionou o emoji', 'emojis'], emoji_update: ['😀', 'editou o emoji', 'emojis'], emoji_delete: ['😀', 'apagou o emoji', 'emojis'],
+  sticker_create: ['🖼️', 'adicionou a figurinha', 'emojis'], sticker_update: ['🖼️', 'editou a figurinha', 'emojis'], sticker_delete: ['🖼️', 'apagou a figurinha', 'emojis'],
   sound_create: ['🔊', 'adicionou o som', 'emojis'], sound_update: ['🔊', 'editou o som', 'emojis'], sound_delete: ['🔊', 'apagou o som', 'emojis'],
   events_create: ['📅', 'criou o evento', 'servidor'], events_update: ['📅', 'editou o evento', 'servidor'], events_delete: ['📅', 'apagou o evento', 'servidor'],
   report_resolved: ['🛡️', 'resolveu uma denúncia contra', 'moderacao'], report_dismissed: ['🛡️', 'ignorou uma denúncia contra', 'moderacao'],

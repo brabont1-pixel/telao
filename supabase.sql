@@ -2990,9 +2990,9 @@ begin
     elsif old.pinned is distinct from new.pinned then
       perform public.audit_add(sid, case when new.pinned then 'message_pin' else 'message_unpin' end, 'member', new.author_id, public.audit_uname(new.author_id), jsonb_build_object('canal', cname, 'texto', left(new.content, 200)));
     end if;
-  elsif tg_table_name in ('server_emojis', 'server_sounds', 'server_events') then
+  elsif tg_table_name in ('server_emojis', 'server_sounds', 'server_events', 'server_stickers') then
     sid := (r ->> 'server_id')::uuid;
-    perform public.audit_add(sid, replace(replace(replace(tg_table_name, 'server_', ''), 'emojis', 'emoji'), 'sounds', 'sound') || '_' || case tg_op when 'INSERT' then 'create' when 'DELETE' then 'delete' else 'update' end,
+    perform public.audit_add(sid, replace(replace(replace(replace(tg_table_name, 'server_', ''), 'emojis', 'emoji'), 'sounds', 'sound'), 'stickers', 'sticker') || '_' || case tg_op when 'INSERT' then 'create' when 'DELETE' then 'delete' else 'update' end,
       tg_table_name, (r->>'id')::uuid, coalesce(r ->> 'name', r ->> 'title'), '{}');
   end if;
   return null;
@@ -3229,6 +3229,142 @@ language sql stable security definer set search_path = public as $$
   from server_categories sc where sc.server_id = p_server and public.is_member(p_server) and public.role_match(p_server, sc.allowed_roles);
 $$;
 grant execute on function public.my_category_access(uuid) to authenticated;
+
+-- =====================================================================
+-- v6.39: FIGURINHAS, @cargo e @aqui, BUSCA AVANÇADA, PÁGINA PÚBLICA DO SERVIDOR, JOGOS NOVOS
+-- =====================================================================
+-- figurinhas do servidor (stickers grandes, PNG/GIF/WEBP)
+create table if not exists public.server_stickers (
+  id uuid primary key default gen_random_uuid(),
+  server_id uuid not null references public.servers(id) on delete cascade,
+  name text not null check (char_length(name) between 1 and 30),
+  url text not null check (url ~ '^https://'),
+  animated boolean not null default false,
+  created_by uuid not null default auth.uid() references public.profiles(id) on delete cascade,
+  created_at timestamptz not null default now()
+);
+create index if not exists server_stickers_srv on public.server_stickers (server_id);
+alter table public.server_stickers enable row level security;
+drop policy if exists "membros veem figurinhas" on public.server_stickers;
+create policy "membros veem figurinhas" on public.server_stickers for select to authenticated using (public.is_member(server_id));
+drop policy if exists "quem gerencia emojis envia figurinhas" on public.server_stickers;
+create policy "quem gerencia emojis envia figurinhas" on public.server_stickers for insert to authenticated
+  with check (created_by = auth.uid() and (public.has_perm(server_id, 512) or public.has_perm(server_id, 2)));
+drop policy if exists "quem gerencia emojis muda figurinhas" on public.server_stickers;
+create policy "quem gerencia emojis muda figurinhas" on public.server_stickers for update to authenticated
+  using (public.has_perm(server_id, 512) or public.has_perm(server_id, 2)) with check (public.has_perm(server_id, 512) or public.has_perm(server_id, 2));
+drop policy if exists "quem gerencia emojis apaga figurinhas" on public.server_stickers;
+create policy "quem gerencia emojis apaga figurinhas" on public.server_stickers for delete to authenticated
+  using (public.has_perm(server_id, 512) or public.has_perm(server_id, 2));
+create or replace function public.server_stickers_limit() returns trigger language plpgsql security definer set search_path = public as $$
+begin
+  if (select count(*) from server_stickers where server_id = new.server_id) >= 60 then raise exception 'Este servidor já tem 60 figurinhas. Apague uma antes.'; end if;
+  return new;
+end $$;
+drop trigger if exists server_stickers_limit on public.server_stickers;
+create trigger server_stickers_limit before insert on public.server_stickers for each row execute function public.server_stickers_limit();
+grant select, insert, update, delete on public.server_stickers to authenticated;
+drop trigger if exists audit_trg on public.server_stickers;
+create trigger audit_trg after insert or update or delete on public.server_stickers for each row execute function public.audit_trg();
+
+-- @todos, @aqui e @cargo: só quem tem a permissão 2048 usa @todos/@aqui; e tem limite anti-spam
+create table if not exists public.mention_log (
+  user_id uuid not null,
+  server_id uuid not null,
+  at timestamptz not null default now()
+);
+create index if not exists mention_log_user on public.mention_log (user_id, server_id, at desc);
+alter table public.mention_log enable row level security;
+create or replace function public.mass_mention_guard() returns trigger language plpgsql security definer set search_path = public as $$
+declare sid uuid; mass boolean; rping boolean; n int;
+begin
+  if auth.uid() is null or new.content is null or new.content = '' then return new; end if;
+  mass := new.content ~* '(^|\s)@(todos|everyone|aqui|here)\M';
+  rping := new.content ~ '<@&[0-9a-f-]{36}>';
+  if not mass and not rping then return new; end if;
+  select server_id into sid from channels where id = new.channel_id;
+  if sid is null then return new; end if;
+  if mass and not public.has_perm(sid, 2048) then
+    raise exception 'Só quem tem a permissão "Mencionar @todos, @aqui e cargos" pode usar @todos e @aqui neste servidor.';
+  end if;
+  if not public.has_perm(sid, 32) then
+    select count(*) into n from mention_log where user_id = auth.uid() and server_id = sid and at > now() - interval '10 minutes';
+    if n >= (case when public.has_perm(sid, 2048) then 10 else 4 end) then
+      raise exception 'Calma! Você já chamou muita gente nos últimos minutos. Espere um pouco para mencionar de novo.';
+    end if;
+  end if;
+  insert into mention_log (user_id, server_id) values (auth.uid(), sid);
+  if random() < 0.05 then delete from mention_log where at < now() - interval '1 day'; end if;
+  return new;
+end $$;
+drop trigger if exists mass_mention_guard on public.messages;
+create trigger mass_mention_guard before insert on public.messages for each row execute function public.mass_mention_guard();
+
+-- busca avançada: o banco filtra; a permissão de ler continua a mesma (RLS das mensagens)
+create or replace function public.search_messages(p_server uuid, p_channel uuid, p_q text, p_author uuid, p_from timestamptz, p_to timestamptz,
+  p_has text, p_mention text, p_pinned boolean, p_off int default 0)
+returns setof public.messages language sql stable set search_path = public as $$
+  select m.* from messages m
+  where (p_channel is null or m.channel_id = p_channel)
+    and (p_server is null or m.channel_id in (select c.id from channels c where c.server_id = p_server))
+    and (p_channel is not null or p_server is not null)
+    and (coalesce(p_q, '') = '' or m.content ilike '%' || replace(replace(p_q, '%', ''), '_', '') || '%')
+    and (p_author is null or m.author_id = p_author)
+    and (p_from is null or m.created_at >= p_from)
+    and (p_to is null or m.created_at < p_to)
+    and (coalesce(p_mention, '') = '' or m.content ilike '%@' || p_mention || '%')
+    and (p_pinned is not true or m.pinned)
+    and (p_has is null
+      or (p_has = 'image' and exists (select 1 from jsonb_array_elements(m.attachments) a where a ->> 'type' like 'image/%'))
+      or (p_has = 'video' and exists (select 1 from jsonb_array_elements(m.attachments) a where a ->> 'type' like 'video/%'))
+      or (p_has = 'audio' and exists (select 1 from jsonb_array_elements(m.attachments) a where a ->> 'type' like 'audio/%'))
+      or (p_has = 'file' and exists (select 1 from jsonb_array_elements(m.attachments) a where a ? 'url' and coalesce(a ->> 'type', '') !~ '^(image|video|audio)/' and a ->> 'type' <> 'sticker'))
+      or (p_has = 'sticker' and exists (select 1 from jsonb_array_elements(m.attachments) a where a ->> 'type' = 'sticker'))
+      or (p_has = 'link' and m.content ~* 'https?://'))
+  order by m.created_at desc
+  limit 40 offset greatest(0, least(coalesce(p_off, 0), 2000));
+$$;
+grant execute on function public.search_messages(uuid, uuid, text, uuid, timestamptz, timestamptz, text, text, boolean, int) to authenticated;
+
+-- página pública do servidor: telao.../s/nome-bonito (ou /s/CODIGO-DO-CONVITE)
+alter table public.servers add column if not exists slug text;
+do $$ begin
+  alter table public.servers drop constraint if exists servers_slug_check;
+  alter table public.servers add constraint servers_slug_check check (slug is null or (slug ~ '^[a-z0-9][a-z0-9-]{2,23}$' and slug !~ '^[0-9a-f]{8}$'));
+end $$;
+create unique index if not exists servers_slug_uq on public.servers (lower(slug)) where slug is not null;
+-- "visto agora há pouco" (só para contar quem está online na página pública; não aparece para ninguém)
+create table if not exists public.user_seen (
+  user_id uuid primary key references public.profiles(id) on delete cascade,
+  at timestamptz not null default now()
+);
+alter table public.user_seen enable row level security;
+create or replace function public.touch_seen() returns void language sql security definer set search_path = public as $$
+  insert into user_seen (user_id, at) values (auth.uid(), now())
+  on conflict (user_id) do update set at = now() where user_seen.at < now() - interval '90 seconds';
+$$;
+grant execute on function public.touch_seen() to authenticated;
+create or replace function public.server_public(p_id text) returns jsonb language plpgsql stable security definer set search_path = public as $$
+declare s servers;
+begin
+  if p_id is null or char_length(p_id) > 40 then return null; end if;
+  select * into s from servers where (slug is not null and lower(slug) = lower(p_id)) or invite_code = lower(p_id) limit 1;
+  if s.id is null then return null; end if;
+  return jsonb_build_object(
+    'name', s.name, 'description', s.description, 'icon_url', s.icon_url, 'banner_url', s.banner_url, 'accent', s.accent, 'icon_color', s.icon_color,
+    'tag', s.tag, 'slug', s.slug, 'invite', s.invite_code, 'since', s.created_at,
+    'members', (select count(*) from server_members where server_id = s.id),
+    'online', (select count(*) from server_members sm join user_seen u on u.user_id = sm.user_id where sm.server_id = s.id and u.at > now() - interval '5 minutes'),
+    'in_call', (select count(distinct v.user_id) from voice_sessions v join channels c on c.id = v.channel_id where c.server_id = s.id and v.last_seen > now() - interval '2 minutes'),
+    'channels', (select coalesce(jsonb_agg(x.name order by x.position), '[]') from (select name, position from channels where server_id = s.id and kind = 'text' and coalesce(nsfw, false) = false
+                 and not exists (select 1 from server_categories sc where sc.server_id = s.id and sc.name = channels.category and sc.allowed_roles is not null) order by position limit 6) x)
+  );
+end $$;
+grant execute on function public.server_public(text) to anon, authenticated;
+
+-- jogos novos no ranking
+alter table public.game_scores drop constraint if exists game_scores_game_check;
+alter table public.game_scores add constraint game_scores_game_check check (game in ('rabisco','quiz','provavel','stop','quemsou','truco','forca','naval','musica','telefone','domino','uno','mimica','velha'));
 
 -- =====================================================================
 -- VIRAR ADMIN: troque o e-mail abaixo pelo SEU e rode só esta linha

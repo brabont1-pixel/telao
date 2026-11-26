@@ -1,5 +1,5 @@
 // Telão para Windows (Electron): abre o Telão como um programa de verdade.
-const { app, BrowserWindow, Tray, Menu, shell, session, desktopCapturer, ipcMain, Notification, nativeImage } = require('electron');
+const { app, BrowserWindow, Tray, Menu, shell, session, desktopCapturer, ipcMain, Notification, nativeImage, dialog, screen, globalShortcut } = require('electron');
 const path = require('path');
 const fs = require('fs');
 
@@ -10,7 +10,7 @@ const ORIGIN = new URL(APP_URL).origin;
 const INSIDE = [ORIGIN, 'https://accounts.google.com', 'https://accounts.spotify.com'];
 const isInside = u => { try{ const o = new URL(u).origin; return INSIDE.includes(o) || /\.supabase\.co$/.test(new URL(u).hostname); }catch(e){ return false; } };
 
-let win = null, tray = null, quitting = false;
+let win = null, tray = null, quitting = false, lastSource = null, RC = null;
 
 if(!app.requestSingleInstanceLock()){ app.quit(); }
 else app.on('second-instance', () => { if(win){ if(win.isMinimized()) win.restore(); win.show(); win.focus(); } });
@@ -52,6 +52,8 @@ function setupPermissions(){
       const choice = await pickSource(sources);
       if(!choice) return cb({});
       const src = sources.find(s => s.id === choice.id);
+      lastSource = src ? { id: src.id, display_id: src.display_id, screen: src.id.startsWith('screen:') } : null;
+      if(RC && (!lastSource || !lastSource.screen)) rcStop('trocou o que está compartilhando');
       // no Windows dá para mandar o som do PC junto. 'loopbackWithoutChrome' = todo o som do PC MENOS o do próprio Telão
       // (senão a voz da chamada ia junto com a tela e todo mundo se ouvia de novo, com eco)
       cb(choice.audio && process.platform === 'win32' ? { video: src, audio: 'loopbackWithoutChrome' } : { video: src });
@@ -84,6 +86,7 @@ function createTray(){
     { label: 'Abrir o Telão', click: () => { win.show(); win.focus(); } },
     { label: 'Iniciar com o Windows', type: 'checkbox', checked: app.getLoginItemSettings().openAtLogin, click: i => app.setLoginItemSettings({ openAtLogin: i.checked, args: ['--hidden'] }) },
     { type: 'separator' },
+    { label: 'Parar controle remoto', click: () => rcStop('pelo menu') },
     { label: 'Recarregar', click: () => win.reload() },
     { label: 'Sair do Telão', click: () => { quitting = true; app.quit(); } },
   ]));
@@ -101,6 +104,115 @@ function setupUpdates(){
     setInterval(() => autoUpdater.checkForUpdates().catch(() => {}), 6 * 3600e3);
   }catch(e){}
 }
+
+// ---------- controle remoto (v1.3) ----------
+// Quem compartilha a TELA INTEIRA pode deixar um amigo mexer no mouse e no teclado.
+// A permissão é pedida AQUI, numa janela do próprio Windows (o site sozinho não consegue liberar).
+// Os movimentos vão para um processo do PowerShell que chama a API do Windows (SetCursorPos / mouse_event / keybd_event).
+const RC_PS = `
+Add-Type -TypeDefinition @"
+using System; using System.Runtime.InteropServices;
+public static class TelaoRC {
+  [DllImport("user32.dll")] public static extern bool SetProcessDPIAware();
+  [DllImport("user32.dll")] public static extern bool SetCursorPos(int x, int y);
+  [DllImport("user32.dll")] public static extern void mouse_event(uint f, int dx, int dy, int d, UIntPtr e);
+  [DllImport("user32.dll")] public static extern void keybd_event(byte vk, byte scan, uint f, UIntPtr e);
+  [DllImport("user32.dll")] public static extern uint MapVirtualKey(uint c, uint t);
+}
+"@
+[TelaoRC]::SetProcessDPIAware() | Out-Null
+[Console]::Out.WriteLine('ok')
+while(($l = [Console]::In.ReadLine()) -ne $null){
+  $p = $l.Split(' ')
+  try {
+    switch($p[0]){
+      'M' { [TelaoRC]::SetCursorPos([int]$p[1], [int]$p[2]) | Out-Null }
+      'B' { [TelaoRC]::mouse_event([uint32]$p[1], 0, 0, 0, [UIntPtr]::Zero) }
+      'W' { [TelaoRC]::mouse_event(0x0800, 0, 0, [int]$p[1], [UIntPtr]::Zero) }
+      'K' { $vk = [byte][int]$p[1]; $sc = [byte]([TelaoRC]::MapVirtualKey([uint32]$vk, 0) -band 0xFF); [TelaoRC]::keybd_event($vk, $sc, [uint32]$p[2], [UIntPtr]::Zero) }
+      'Q' { exit }
+    }
+  } catch {}
+}
+`;
+const VK = { Backspace: 8, Tab: 9, Enter: 13, ShiftLeft: 0xA0, ShiftRight: 0xA1, ControlLeft: 0xA2, ControlRight: 0xA3, AltLeft: 0xA4, AltRight: 0xA5, Pause: 0x13, CapsLock: 0x14, Escape: 0x1B, Space: 0x20,
+  PageUp: 0x21, PageDown: 0x22, End: 0x23, Home: 0x24, ArrowLeft: 0x25, ArrowUp: 0x26, ArrowRight: 0x27, ArrowDown: 0x28, PrintScreen: 0x2C, Insert: 0x2D, Delete: 0x2E, ContextMenu: 0x5D,
+  NumpadMultiply: 0x6A, NumpadAdd: 0x6B, NumpadSubtract: 0x6D, NumpadDecimal: 0x6E, NumpadDivide: 0x6F, NumpadEnter: 13, NumpadComma: 0xC2, NumLock: 0x90, ScrollLock: 0x91,
+  Semicolon: 0xBA, Equal: 0xBB, Comma: 0xBC, Minus: 0xBD, Period: 0xBE, Slash: 0xBF, Backquote: 0xC0, BracketLeft: 0xDB, Backslash: 0xDC, BracketRight: 0xDD, Quote: 0xDE, IntlBackslash: 0xE2, IntlRo: 0xC1 };
+for(let i = 0; i < 26; i++) VK['Key' + String.fromCharCode(65 + i)] = 65 + i;
+for(let i = 0; i < 10; i++){ VK['Digit' + i] = 48 + i; VK['Numpad' + i] = 0x60 + i; }
+for(let i = 1; i <= 12; i++) VK['F' + i] = 0x6F + i;
+const VK_EXT = new Set(['ControlRight', 'AltRight', 'Insert', 'Delete', 'Home', 'End', 'PageUp', 'PageDown', 'ArrowLeft', 'ArrowUp', 'ArrowRight', 'ArrowDown', 'NumpadDivide', 'NumpadEnter', 'PrintScreen', 'ContextMenu']);
+const BTN = [[0x2, 0x4], [0x20, 0x40], [0x8, 0x10]];   // esquerdo, meio, direito: [desce, sobe]
+function rcWrite(line){ try{ if(RC && RC.proc && RC.proc.stdin.writable) RC.proc.stdin.write(line + '\n'); }catch(e){} }
+function rcStart(name){
+  const { spawn } = require('child_process');
+  const enc = Buffer.from(RC_PS, 'utf16le').toString('base64');
+  const proc = spawn('powershell.exe', ['-NoProfile', '-NonInteractive', '-ExecutionPolicy', 'Bypass', '-EncodedCommand', enc], { windowsHide: true, stdio: ['pipe', 'pipe', 'ignore'] });
+  RC = { name, proc, keys: new Set(), btns: new Set(), n: 0, sec: 0 };
+  proc.on('exit', () => { if(RC && RC.proc === proc) rcStop('o controle fechou'); });
+  proc.on('error', () => { if(RC && RC.proc === proc) rcStop('não deu para iniciar o controle'); });
+  try{ globalShortcut.register('Control+Shift+F12', () => rcStop('Ctrl+Shift+F12')); }catch(e){}
+  RC.timer = setTimeout(() => rcStop('passou 1 hora'), 3600e3);
+  if(tray) tray.setToolTip('Telão · ' + name + ' está controlando seu PC (Ctrl+Shift+F12 para parar)');
+  if(Notification.isSupported()) new Notification({ title: 'Controle remoto ligado', body: name + ' está controlando seu PC. Ctrl+Shift+F12 para parar.' }).show();
+}
+function rcStop(why){
+  const r = RC; if(!r) return;
+  RC = null;
+  clearTimeout(r.timer);
+  try{ globalShortcut.unregister('Control+Shift+F12'); }catch(e){}
+  // solta tudo o que ficou apertado
+  try{
+    r.keys.forEach(code => { const vk = VK[code]; if(vk) r.proc.stdin.write(`K ${vk} ${2 | (VK_EXT.has(code) ? 1 : 0)}\n`); });
+    r.btns.forEach(b => { if(BTN[b]) r.proc.stdin.write(`B ${BTN[b][1]}\n`); });
+    r.proc.stdin.write('Q\n'); r.proc.stdin.end();
+  }catch(e){}
+  setTimeout(() => { try{ r.proc.kill(); }catch(e){} }, 800);
+  if(tray) tray.setToolTip('Telão');
+  if(win && !win.isDestroyed()) win.webContents.send('rc:stopped', why || '');
+}
+ipcMain.handle('rc:ask', async (e, name) => {
+  if(!win || e.sender !== win.webContents) return { ok: false };
+  if(process.platform !== 'win32') return { ok: false, why: 'Controle remoto só funciona no Windows.' };
+  if(!lastSource || !lastSource.screen) return { ok: false, why: 'Para deixar controlar, a pessoa precisa compartilhar a TELA INTEIRA (não só uma janela).' };
+  if(RC) return { ok: false, why: 'Já tem alguém controlando esse PC.' };
+  const nm = String(name || 'Alguém').replace(/[\r\n]+/g, ' ').slice(0, 40);
+  if(win.isMinimized()) win.restore();
+  win.show(); win.focus();
+  const r = await dialog.showMessageBox(win, {
+    type: 'warning', buttons: ['Recusar', 'Permitir'], defaultId: 0, cancelId: 0, noLink: true, title: 'Controle remoto',
+    message: nm + ' quer controlar seu computador',
+    detail: 'Se você permitir, essa pessoa vai poder mexer no seu mouse e digitar no seu teclado enquanto você compartilha a tela.\n\nPara parar a qualquer momento: Ctrl + Shift + F12, ou o botão "Parar" no Telão.\n\nSó permita para quem você confia.',
+  });
+  if(r.response !== 1) return { ok: false, why: 'recusou' };
+  if(RC) return { ok: false, why: 'Já tem alguém controlando esse PC.' };
+  rcStart(nm);
+  return { ok: true };
+});
+ipcMain.handle('rc:stop', e => { if(win && e.sender === win.webContents) rcStop('você parou'); });
+ipcMain.on('rc:input', (e, ev) => {
+  if(!RC || !win || e.sender !== win.webContents || !ev || typeof ev !== 'object') return;
+  // limite: no máximo ~200 comandos por segundo
+  const sec = Math.floor(Date.now() / 1000); if(sec !== RC.sec){ RC.sec = sec; RC.n = 0; } if(++RC.n > 200) return;
+  if(ev.t === 'm'){
+    const x = Math.max(0, Math.min(1, +ev.x || 0)), y = Math.max(0, Math.min(1, +ev.y || 0));
+    const d = screen.getAllDisplays().find(dd => String(dd.id) === String(lastSource && lastSource.display_id)) || screen.getPrimaryDisplay();
+    const dip = { x: Math.round(d.bounds.x + x * (d.bounds.width - 1)), y: Math.round(d.bounds.y + y * (d.bounds.height - 1)) };
+    const p = screen.dipToScreenPoint ? screen.dipToScreenPoint(dip) : dip;
+    rcWrite(`M ${Math.round(p.x)} ${Math.round(p.y)}`);
+  } else if(ev.t === 'd' || ev.t === 'u'){
+    const b = ev.b | 0; if(!BTN[b]) return;
+    if(ev.t === 'd') RC.btns.add(b); else RC.btns.delete(b);
+    rcWrite(`B ${BTN[b][ev.t === 'd' ? 0 : 1]}`);
+  } else if(ev.t === 'w'){
+    rcWrite(`W ${Math.max(-1200, Math.min(1200, ev.d | 0))}`);
+  } else if(ev.t === 'k'){
+    const code = String(ev.c || ''), vk = VK[code]; if(!vk) return;
+    if(ev.d) RC.keys.add(code); else RC.keys.delete(code);
+    rcWrite(`K ${vk} ${(ev.d ? 0 : 2) | (VK_EXT.has(code) ? 1 : 0)}`);
+  }
+});
 
 ipcMain.handle('telao:badge', (e, n) => { if(win){ win.setOverlayIcon(n ? nativeImage.createFromPath(path.join(__dirname, 'tray.png')) : null, n ? n + ' novas' : ''); if(n && !win.isFocused()) win.flashFrame(true); } });
 ipcMain.handle('telao:show', () => { if(win){ win.show(); win.focus(); } });
@@ -147,5 +259,5 @@ app.whenReady().then(() => {
   if(process.argv.includes('--hidden')) win.once('ready-to-show', () => win.hide());
   if(app.isPackaged) setupUpdates();
 });
-app.on('before-quit', () => { quitting = true; });
+app.on('before-quit', () => { quitting = true; rcStop('fechou o Telão'); });
 app.on('window-all-closed', () => {});

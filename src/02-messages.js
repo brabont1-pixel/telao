@@ -93,6 +93,21 @@ async function vote(mid, i){
 }
 
 /* ---------- markdown ---------- */
+/* v6.39: quem foi chamado? @você, @todos, @aqui (só quem estava online na hora) e @cargo */
+function isMentioned(m){
+  if(!S.me || !m || !m.content || m.author_id === S.me.id) return false;
+  const c = m.content;
+  if(c.includes('@' + S.me.username) || /(^|\s)@(todos|everyone)\b/.test(c)) return true;
+  if(/(^|\s)@(aqui|here)\b/.test(c)){ const h = (m.attachments || []).find(a => a.type === 'here'); return !h || (h.ids || []).includes(S.me.id); }
+  const rs = c.match(/<@&[0-9a-f-]{36}>/g);
+  if(rs){
+    const ch = findChannel(m.channel_id), mr = ch && ch.server_id && S.memberRoles.get(ch.server_id), set = mr && mr.get(S.me.id);
+    if(set && rs.some(x => set.has(x.slice(3, -1)))) return true;
+  }
+  return false;
+}
+function roleById(id){ for(const list of S.roles.values()){ const r = (list || []).find(x => x.id === id); if(r) return r; } return null; }
+function mentionPlain(t){ return String(t || '').replace(/<@&([0-9a-f-]{36})>/g, (x, id) => { const r = roleById(id); return '@' + (r ? r.name : 'cargo'); }); }
 function richText(t){
   if(!t) return '';
   const blocks = [];
@@ -115,6 +130,9 @@ function richText(t){
   h = h.replace(/~~(.+?)~~/g, '<s>$1</s>');
   h = h.replace(/(^|[\s(])[*_]([^*_\n]+)[*_](?=[\s).,!?]|$)/g, '$1<i>$2</i>');
   h = h.replace(/(https?:\/\/[^\s<]+[^\s<.,;:!?)\]'"])/g, url => `<a href="${url}" target="_blank" rel="noopener noreferrer">${url.length > 70 ? url.slice(0, 67) + '…' : url}</a>`);
+  h = h.replace(/&lt;@&amp;([0-9a-f-]{36})&gt;/g, (x, id) => { const r = roleById(id); const mine = r && S.me && [...S.memberRoles.values()].some(mm => mm.get(S.me.id) && mm.get(S.me.id).has(id));
+    return `<span class="mention role ${mine ? 'me' : ''}" ${r && r.color ? `style="--rc:${esc(r.color)}"` : ''}>@${esc(r ? r.name : 'cargo apagado')}</span>`; });
+  h = h.replace(/(^|\s)@(todos|everyone|aqui|here)\b/g, '$1<span class="mention all">@$2</span>');
   h = h.replace(/(^|\s)@([a-z0-9_]{3,24})\b/g, (m, sp, u) => {
     const me = S.me && u === S.me.username;
     const known = [...S.profiles.values()].find(p => p.username === u);
@@ -151,6 +169,7 @@ async function mountMessages(ch, container, welcome){
         <form id="cmpF" class="crow">
           <button type="button" class="cbtn2" id="cAttach" title="Anexar arquivos">${ic('plusCircle',22)}</button>
           <textarea id="cmp" rows="1" maxlength="4000" placeholder="Mensagem para ${esc(ph)} — digite / para comandos"></textarea>
+          <button type="button" class="cbtn2" id="cStk" title="Figurinhas e efeitos">${ic('sticker',22)}</button>
           <button type="button" class="cbtn2" id="cEmoji" title="Emoji">${ic('smile',22)}</button>
           <button type="button" class="cbtn2" id="cVoice" title="Mensagem de voz">${ic('mic',22)}</button>
           <button class="cbtn2 send" id="cSend" title="Enviar">${ic('send',20)}</button>
@@ -278,8 +297,8 @@ App.onReaction = p => {
 /* ---------- renderização ---------- */
 function attHtml(m){
   const at = m.attachments || []; if(!at.length) return '';
-  const imgs = at.filter(a => isImg(a) || isVid(a)), others = at.filter(a => !isImg(a) && !isVid(a) && a.type !== 'poll' && a.type !== 'gift' && a.type !== 'welcome' && a.type !== 'announce' && a.type !== 'bday');
-  let h = at.filter(a => a.type === 'welcome').map(a => App.welcomeCardHtml ? App.welcomeCardHtml(a) : '').join('') + at.filter(a => a.type === 'announce').map(a => App.announceCardHtml ? App.announceCardHtml(a) : '').join('') + at.filter(a => a.type === 'poll').map(a => pollHtml(m, a)).join('') + at.filter(a => a.type === 'gift').map(a => App.giftCardHtml(a)).join('') + at.filter(a => a.type === 'bday').map(a => App.bdayCardHtml ? App.bdayCardHtml(a, m) : '').join('');
+  const imgs = at.filter(a => isImg(a) || isVid(a)), others = at.filter(a => !isImg(a) && !isVid(a) && !['poll', 'gift', 'welcome', 'announce', 'bday', 'sticker', 'fx', 'here'].includes(a.type));
+  let h = at.filter(a => a.type === 'welcome').map(a => App.welcomeCardHtml ? App.welcomeCardHtml(a) : '').join('') + at.filter(a => a.type === 'announce').map(a => App.announceCardHtml ? App.announceCardHtml(a) : '').join('') + at.filter(a => a.type === 'poll').map(a => pollHtml(m, a)).join('') + at.filter(a => a.type === 'gift').map(a => App.giftCardHtml(a)).join('') + at.filter(a => a.type === 'bday').map(a => App.bdayCardHtml ? App.bdayCardHtml(a, m) : '').join('') + at.filter(a => a.type === 'sticker').slice(0, 1).map(a => `<div class="stkmsg"><img class="stk" src="${esc(a.url)}" alt="${esc(a.name || 'figurinha')}" title="${esc(a.name || 'figurinha')}" width="160" height="160" loading="lazy" decoding="async"></div>`).join('');
   if(imgs.length){
     const n = Math.min(imgs.length, 4);
     h += `<div class="mgrid g${n}">` + imgs.map((a, i) => {
@@ -330,10 +349,10 @@ function msgHtml(m, prev){
   const grouped = !pre && prev && !m.reply_to && prev.author_id === m.author_id && (new Date(m.created_at) - new Date(prev.created_at)) < 7*60*1000;
   const p = prof(m.author_id), mine = m.author_id === S.me.id;
   const time = new Date(m.created_at).toLocaleTimeString('pt-BR',{hour:'2-digit',minute:'2-digit'});
-  const mentioned = !mine && S.me && m.content && (m.content.includes('@' + S.me.username) || /@(todos|everyone)\b/.test(m.content));
+  const mentioned = !mine && isMentioned(m);
   const emo = onlyEmoji(m.content) && !(m.attachments || []).length;
   const atts = attHtml(m), emb = embedsHtml(m);
-  const onlyMedia = !m.content && (m.attachments || []).some(a => isImg(a) || isVid(a)) && !(m.attachments || []).some(a => a.type === 'poll');
+  const onlyMedia = !m.content && (m.attachments || []).some(a => isImg(a) || isVid(a) || a.type === 'sticker') && !(m.attachments || []).some(a => a.type === 'poll');
   const meta = `<span class="mtime" title="${new Date(m.created_at).toLocaleString('pt-BR')}">${m.edited_at ? '<span class="edited">editado</span> · ' : ''}${m._sending ? ic('clock',11) : time}${m.pinned ? ' ' + ic('pin',11) : ''}</span>`;
   const content = M.editing === m.id
     ? `<textarea class="editbox" id="edBox" rows="2" maxlength="4000">${esc(m.content)}</textarea><div class="edithint">Esc para <a data-edcancel>cancelar</a> · Enter para <a data-edsave>salvar</a></div>`
@@ -345,7 +364,8 @@ function msgHtml(m, prev){
       <button data-reply="${m.id}" title="Responder">${ic('reply',17)}</button>
       ${mine ? `<button data-edit="${m.id}" title="Editar">${ic('edit',17)}</button>` : ''}
       <button data-more="${m.id}" title="Mais">${ic('dots',17)}</button></div>`;
-  const cls = `msg ${grouped?'':'first'} ${mine?'mine':''} ${mentioned?'mentioned':''} ${m.pinned?'pinned':''} ${m._sending?'sendingmsg':''}`;
+  const fxA = (m.attachments || []).find(a => a.type === 'fx');
+  const cls = `msg ${fxA ? 'fx-' + String(fxA.k).replace(/[^a-z]/g, '') + (M.fxOpen && M.fxOpen.has(m.id) ? ' fxo' : '') : ''} ${grouped?'':'first'} ${mine?'mine':''} ${mentioned?'mentioned':''} ${m.pinned?'pinned':''} ${m._sending?'sendingmsg':''}`;
   const color = roleColor(m.author_id);
   const head = mine ? '' : `<div class="hd"><b data-uprof="${p.id}" ${color ? `style="color:${color}"` : ''}>${nameHtml(p)}</b>${hasPlus(p) ? badgeHtml(BADGES[2], p, 'sm') : ''}</div>`;
   const av = mine ? '' : grouped ? '<div class="avsp"></div>' : avatar(p,'lg').replace('class="av lg', `data-uprof="${p.id}" class="av lg`);
@@ -717,11 +737,12 @@ async function uploadOne(f){
   meta.url = App.sb.storage.from('attachments').getPublicUrl(path).data.publicUrl;
   return meta;
 }
-async function sendMessage(extraFiles){
+async function sendMessage(extraFiles, rawAtts){
   const ta = $('#cmp'); if(!ta) return;
   let content = ta.value.trim().replace(/:([a-z0-9_]{2,30}):/g, (m, k) => EMOJI.BY[k] || m);
   let cmdAtt = null;
-  if(!extraFiles && content.startsWith('/')){
+  if(rawAtts){ content = ''; cmdAtt = rawAtts; }
+  if(!extraFiles && !rawAtts && content.startsWith('/')){
     const r = runCommand(content);
     if(r && r.error){ App.toast(r.error, true); return; }
     if(r){ content = r.content; cmdAtt = r.attachments || null; if(r.fx){ (M._fxDone = M._fxDone || new Set()); } }
@@ -729,14 +750,17 @@ async function sendMessage(extraFiles){
   const files = extraFiles || (cmdAtt ? [] : M.files.splice(0));
   if(!content && !files.length && !cmdAtt) return;
   const reply_to = M.replyTo, ch = M.ch;
-  if(!extraFiles){ ta.value = ''; ta.style.height = 'auto'; cancelReply(); drawFiles(); }
+  if(App.preSend && content) content = App.preSend(content, ch);
+  const extra = App.sendExtras ? App.sendExtras(content, ch, !!rawAtts) : [];
+  if(!extraFiles && !rawAtts){ ta.value = ''; ta.style.height = 'auto'; cancelReply(); drawFiles(); }
+  if(rawAtts) cancelReply();
   // mensagem otimista: aparece na hora, com as imagens locais
   const tmpId = 'tmp-' + Math.random().toString(36).slice(2);
   const temp = { id: tmpId, _sending: true, channel_id: ch.id, author_id: S.me.id, content, reply_to, created_at: new Date().toISOString(), pinned: false,
-                 attachments: cmdAtt ? cmdAtt : files.map(f => ({ url: f.preview || '', name: f.file.name, type: f.file.type, size: f.file.size, _local: !!f.preview, voice: f.voice, dur: f.dur, wave: f.wave })) };
+                 attachments: (cmdAtt ? cmdAtt : files.map(f => ({ url: f.preview || '', name: f.file.name, type: f.file.type, size: f.file.size, _local: !!f.preview, voice: f.voice, dur: f.dur, wave: f.wave }))).concat(extra) };
   M.list.push(temp); appendMessage(temp);
   try{
-    const attachments = cmdAtt || await Promise.all(files.map(uploadOne));
+    const attachments = (cmdAtt || await Promise.all(files.map(uploadOne))).concat(extra);
     const { data, error } = await App.sb.from('messages').insert({ channel_id: ch.id, content, attachments, reply_to }).select().single();
     if(error) throw error;
     data._tmpOf = tmpId; addMessage(data);
@@ -745,7 +769,7 @@ async function sendMessage(extraFiles){
     const i = M.list.findIndex(x => x.id === tmpId); if(i >= 0) M.list.splice(i, 1);
     renderMsgList(false);
     App.toast('Não foi enviada: ' + (err.message || err), true);
-    if(!extraFiles){ ta.value = content; M.files = files; drawFiles(); }
+    if(!extraFiles && !rawAtts){ ta.value = content.replace(/<@&([0-9a-f-]{36})>/g, (x, id) => { const r = roleById(id); return r ? '@' + r.name : x; }); M.files = files; drawFiles(); }
   }
 }
 
@@ -841,7 +865,13 @@ function autocomplete(){
     const pool = M.ch.kind === 'dm' ? [S.me.id, dmOther(M.ch)] : M.ch.kind === 'group' ? (M.ch.members || []) : (S.members.get(M.ch.server_id) || []).map(x => x.user_id);
     items = pool.map(prof).filter(p => p.username.includes(q) || p.display_name.toLowerCase().includes(q)).slice(0, 8)
       .map(p => ({ html: `${avatar(p,'xs')}<b>${esc(p.display_name)}</b><small>@${esc(p.username)}</small>`, ins: '@' + p.username + ' ', len: m[1].length + 1 }));
-    if(M.ch.kind !== 'dm' && M.ch.kind !== 'group' && 'todos'.startsWith(q)) items.push({ html: `<span class="acic">${ic('at',16)}</span><b>@todos</b><small>Notifica todo mundo</small>`, ins: '@todos ', len: m[1].length + 1 });
+    if(M.ch.kind !== 'dm' && M.ch.kind !== 'group'){
+      const sid = M.ch.server_id, big = App.hasPerm(sid, 2048), nq = q.normalize('NFD').replace(/[̀-ͯ]/g, '');
+      if(big && 'todos'.startsWith(q)) items.push({ html: `<span class="acic">${ic('at',16)}</span><b>@todos</b><small>Notifica todo mundo</small>`, ins: '@todos ', len: m[1].length + 1 });
+      if(big && 'aqui'.startsWith(q)) items.push({ html: `<span class="acic">${ic('at',16)}</span><b>@aqui</b><small>Só quem está online agora</small>`, ins: '@aqui ', len: m[1].length + 1 });
+      (S.roles.get(sid) || []).filter(r => r.name && r.name.toLowerCase().normalize('NFD').replace(/[̀-ͯ]/g, '').includes(nq)).slice(0, 5)
+        .forEach(r => items.push({ html: `<span class="acic" style="color:${esc(r.color || '#99aab5')}">${ic('at',16)}</span><b style="color:${esc(r.color || 'inherit')}">@${esc(r.name)}</b><small>Cargo · avisa quem tem</small>`, ins: '@' + r.name + ' ', len: m[1].length + 1 }));
+    }
   } else if((m = before.match(/:([a-z0-9_]{2,30})$/i))){
     const q = m[1].toLowerCase();
     items = EMOJI.LIST.filter(e => e.names.some(n => n.startsWith(q))).slice(0, 8)

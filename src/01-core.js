@@ -9,7 +9,7 @@ const esc = s => String(s ?? '').replace(/[&<>"']/g, c => ({'&':'&amp;','<':'&lt
 const COLORS = ['#5865f2','#eb459e','#3ba55c','#faa61a','#ed4245','#f47b67','#1abc9c','#9b59b6','#e67e22','#607d8b'];
 const ls = { get(k,d){ try{ const v=localStorage.getItem(k); return v==null?d:JSON.parse(v); }catch(e){ return d; } }, set(k,v){ try{ localStorage.setItem(k, JSON.stringify(v)); }catch(e){} } };
 
-const APP_VERSION = '6.38';
+const APP_VERSION = '6.39';
 const S = {
   me: null, profiles: new Map(), servers: [], channels: new Map(), members: new Map(),
   friends: [], dms: [], dmActivity: ls.get('telao-dmact', {}), online: new Set(),
@@ -92,6 +92,15 @@ function modal(html, mount){
   mount && mount(m);
 }
 function closeModal(){ $('#modal').classList.add('hidden'); $('#modal').innerHTML = ''; }
+function promptBox(title, label, value = '', max = 100){
+  return new Promise(res => {
+    modal(`<form id="pbF"><div class="mh"><h2>${esc(title)}</h2></div><div class="mc"><label class="field"><span>${esc(label)}</span><input class="inp" id="pbV" maxlength="${max}" value="${esc(value)}"></label></div>
+      <div class="mf"><button type="button" class="btn sec" id="pbNo">Cancelar</button><button class="btn" id="pbOk">Salvar</button></div></form>`, m => {
+      m.querySelector('#pbNo').onclick = () => { closeModal(); res(null); };
+      m.querySelector('#pbF').onsubmit = e => { e.preventDefault(); const v = m.querySelector('#pbV').value.trim(); closeModal(); res(v || null); };
+    });
+  });
+}
 function confirmBox(title, text, label='Confirmar', danger=true){
   return new Promise(res => {
     modal(`<div class="mh"><h2>${esc(title)}</h2><p>${text}</p></div>
@@ -521,10 +530,10 @@ async function onMsgEvent(p){
     if(M.cid === m.channel_id) addMessage(m);
     if(m.author_id !== S.me.id && !viewing && !(S.blocked && S.blocked.has(m.author_id))){
       S.unread.add(m.channel_id); saveUnread();
-      const mention = S.me && (m.content.includes('@'+S.me.username) || /@(todos|everyone)\b/.test(m.content));
+      const mention = isMentioned(m);
       if((isPriv(ch) && P.notifDM) || (mention && P.notifMention)){
         if(!isDnd()) App.sfx('msg');
-        notify(prof(m.author_id).display_name + (ch && ch.kind === 'group' ? ' em ' + groupName(ch) : ch && ch.kind!=='dm' ? ' em #'+ch.name : ''), m.content || '📎 Enviou um anexo', m.channel_id);
+        notify(prof(m.author_id).display_name + (ch && ch.kind === 'group' ? ' em ' + groupName(ch) : ch && ch.kind!=='dm' ? ' em #'+ch.name : ''), mentionPlain(m.content) || ((m.attachments || []).some(a => a.type === 'sticker') ? '🖼️ Mandou uma figurinha' : '📎 Enviou um anexo'), m.channel_id);
       }
       renderRail(); renderSidebar();
     }

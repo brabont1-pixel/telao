@@ -1,5 +1,8 @@
 {
   "cleanUrls": true,
+  "rewrites": [
+    { "source": "/s/:id", "destination": "/api/servidor?id=:id" }
+  ],
   "headers": [
     {
       "source": "/sw.js",

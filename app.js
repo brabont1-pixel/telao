@@ -9,7 +9,7 @@ const esc = s => String(s ?? '').replace(/[&<>"']/g, c => ({'&':'&amp;','<':'&lt
 const COLORS = ['#5865f2','#eb459e','#3ba55c','#faa61a','#ed4245','#f47b67','#1abc9c','#9b59b6','#e67e22','#607d8b'];
 const ls = { get(k,d){ try{ const v=localStorage.getItem(k); return v==null?d:JSON.parse(v); }catch(e){ return d; } }, set(k,v){ try{ localStorage.setItem(k, JSON.stringify(v)); }catch(e){} } };
 
-const APP_VERSION = '6.38';
+const APP_VERSION = '6.39';
 const S = {
   me: null, profiles: new Map(), servers: [], channels: new Map(), members: new Map(),
   friends: [], dms: [], dmActivity: ls.get('telao-dmact', {}), online: new Set(),
@@ -92,6 +92,15 @@ function modal(html, mount){
   mount && mount(m);
 }
 function closeModal(){ $('#modal').classList.add('hidden'); $('#modal').innerHTML = ''; }
+function promptBox(title, label, value = '', max = 100){
+  return new Promise(res => {
+    modal(`<form id="pbF"><div class="mh"><h2>${esc(title)}</h2></div><div class="mc"><label class="field"><span>${esc(label)}</span><input class="inp" id="pbV" maxlength="${max}" value="${esc(value)}"></label></div>
+      <div class="mf"><button type="button" class="btn sec" id="pbNo">Cancelar</button><button class="btn" id="pbOk">Salvar</button></div></form>`, m => {
+      m.querySelector('#pbNo').onclick = () => { closeModal(); res(null); };
+      m.querySelector('#pbF').onsubmit = e => { e.preventDefault(); const v = m.querySelector('#pbV').value.trim(); closeModal(); res(v || null); };
+    });
+  });
+}
 function confirmBox(title, text, label='Confirmar', danger=true){
   return new Promise(res => {
     modal(`<div class="mh"><h2>${esc(title)}</h2><p>${text}</p></div>
@@ -521,10 +530,10 @@ async function onMsgEvent(p){
     if(M.cid === m.channel_id) addMessage(m);
     if(m.author_id !== S.me.id && !viewing && !(S.blocked && S.blocked.has(m.author_id))){
       S.unread.add(m.channel_id); saveUnread();
-      const mention = S.me && (m.content.includes('@'+S.me.username) || /@(todos|everyone)\b/.test(m.content));
+      const mention = isMentioned(m);
       if((isPriv(ch) && P.notifDM) || (mention && P.notifMention)){
         if(!isDnd()) App.sfx('msg');
-        notify(prof(m.author_id).display_name + (ch && ch.kind === 'group' ? ' em ' + groupName(ch) : ch && ch.kind!=='dm' ? ' em #'+ch.name : ''), m.content || '📎 Enviou um anexo', m.channel_id);
+        notify(prof(m.author_id).display_name + (ch && ch.kind === 'group' ? ' em ' + groupName(ch) : ch && ch.kind!=='dm' ? ' em #'+ch.name : ''), mentionPlain(m.content) || ((m.attachments || []).some(a => a.type === 'sticker') ? '🖼️ Mandou uma figurinha' : '📎 Enviou um anexo'), m.channel_id);
       }
       renderRail(); renderSidebar();
     }
@@ -1144,6 +1153,21 @@ async function vote(mid, i){
 }
 
 /* ---------- markdown ---------- */
+/* v6.39: quem foi chamado? @você, @todos, @aqui (só quem estava online na hora) e @cargo */
+function isMentioned(m){
+  if(!S.me || !m || !m.content || m.author_id === S.me.id) return false;
+  const c = m.content;
+  if(c.includes('@' + S.me.username) || /(^|\s)@(todos|everyone)\b/.test(c)) return true;
+  if(/(^|\s)@(aqui|here)\b/.test(c)){ const h = (m.attachments || []).find(a => a.type === 'here'); return !h || (h.ids || []).includes(S.me.id); }
+  const rs = c.match(/<@&[0-9a-f-]{36}>/g);
+  if(rs){
+    const ch = findChannel(m.channel_id), mr = ch && ch.server_id && S.memberRoles.get(ch.server_id), set = mr && mr.get(S.me.id);
+    if(set && rs.some(x => set.has(x.slice(3, -1)))) return true;
+  }
+  return false;
+}
+function roleById(id){ for(const list of S.roles.values()){ const r = (list || []).find(x => x.id === id); if(r) return r; } return null; }
+function mentionPlain(t){ return String(t || '').replace(/<@&([0-9a-f-]{36})>/g, (x, id) => { const r = roleById(id); return '@' + (r ? r.name : 'cargo'); }); }
 function richText(t){
   if(!t) return '';
   const blocks = [];
@@ -1166,6 +1190,9 @@ function richText(t){
   h = h.replace(/~~(.+?)~~/g, '<s>$1</s>');
   h = h.replace(/(^|[\s(])[*_]([^*_\n]+)[*_](?=[\s).,!?]|$)/g, '$1<i>$2</i>');
   h = h.replace(/(https?:\/\/[^\s<]+[^\s<.,;:!?)\]'"])/g, url => `<a href="${url}" target="_blank" rel="noopener noreferrer">${url.length > 70 ? url.slice(0, 67) + '…' : url}</a>`);
+  h = h.replace(/&lt;@&amp;([0-9a-f-]{36})&gt;/g, (x, id) => { const r = roleById(id); const mine = r && S.me && [...S.memberRoles.values()].some(mm => mm.get(S.me.id) && mm.get(S.me.id).has(id));
+    return `<span class="mention role ${mine ? 'me' : ''}" ${r && r.color ? `style="--rc:${esc(r.color)}"` : ''}>@${esc(r ? r.name : 'cargo apagado')}</span>`; });
+  h = h.replace(/(^|\s)@(todos|everyone|aqui|here)\b/g, '$1<span class="mention all">@$2</span>');
   h = h.replace(/(^|\s)@([a-z0-9_]{3,24})\b/g, (m, sp, u) => {
     const me = S.me && u === S.me.username;
     const known = [...S.profiles.values()].find(p => p.username === u);
@@ -1202,6 +1229,7 @@ async function mountMessages(ch, container, welcome){
         <form id="cmpF" class="crow">
           <button type="button" class="cbtn2" id="cAttach" title="Anexar arquivos">${ic('plusCircle',22)}</button>
           <textarea id="cmp" rows="1" maxlength="4000" placeholder="Mensagem para ${esc(ph)} — digite / para comandos"></textarea>
+          <button type="button" class="cbtn2" id="cStk" title="Figurinhas e efeitos">${ic('sticker',22)}</button>
           <button type="button" class="cbtn2" id="cEmoji" title="Emoji">${ic('smile',22)}</button>
           <button type="button" class="cbtn2" id="cVoice" title="Mensagem de voz">${ic('mic',22)}</button>
           <button class="cbtn2 send" id="cSend" title="Enviar">${ic('send',20)}</button>
@@ -1329,8 +1357,8 @@ App.onReaction = p => {
 /* ---------- renderização ---------- */
 function attHtml(m){
   const at = m.attachments || []; if(!at.length) return '';
-  const imgs = at.filter(a => isImg(a) || isVid(a)), others = at.filter(a => !isImg(a) && !isVid(a) && a.type !== 'poll' && a.type !== 'gift' && a.type !== 'welcome' && a.type !== 'announce' && a.type !== 'bday');
-  let h = at.filter(a => a.type === 'welcome').map(a => App.welcomeCardHtml ? App.welcomeCardHtml(a) : '').join('') + at.filter(a => a.type === 'announce').map(a => App.announceCardHtml ? App.announceCardHtml(a) : '').join('') + at.filter(a => a.type === 'poll').map(a => pollHtml(m, a)).join('') + at.filter(a => a.type === 'gift').map(a => App.giftCardHtml(a)).join('') + at.filter(a => a.type === 'bday').map(a => App.bdayCardHtml ? App.bdayCardHtml(a, m) : '').join('');
+  const imgs = at.filter(a => isImg(a) || isVid(a)), others = at.filter(a => !isImg(a) && !isVid(a) && !['poll', 'gift', 'welcome', 'announce', 'bday', 'sticker', 'fx', 'here'].includes(a.type));
+  let h = at.filter(a => a.type === 'welcome').map(a => App.welcomeCardHtml ? App.welcomeCardHtml(a) : '').join('') + at.filter(a => a.type === 'announce').map(a => App.announceCardHtml ? App.announceCardHtml(a) : '').join('') + at.filter(a => a.type === 'poll').map(a => pollHtml(m, a)).join('') + at.filter(a => a.type === 'gift').map(a => App.giftCardHtml(a)).join('') + at.filter(a => a.type === 'bday').map(a => App.bdayCardHtml ? App.bdayCardHtml(a, m) : '').join('') + at.filter(a => a.type === 'sticker').slice(0, 1).map(a => `<div class="stkmsg"><img class="stk" src="${esc(a.url)}" alt="${esc(a.name || 'figurinha')}" title="${esc(a.name || 'figurinha')}" width="160" height="160" loading="lazy" decoding="async"></div>`).join('');
   if(imgs.length){
     const n = Math.min(imgs.length, 4);
     h += `<div class="mgrid g${n}">` + imgs.map((a, i) => {
@@ -1381,10 +1409,10 @@ function msgHtml(m, prev){
   const grouped = !pre && prev && !m.reply_to && prev.author_id === m.author_id && (new Date(m.created_at) - new Date(prev.created_at)) < 7*60*1000;
   const p = prof(m.author_id), mine = m.author_id === S.me.id;
   const time = new Date(m.created_at).toLocaleTimeString('pt-BR',{hour:'2-digit',minute:'2-digit'});
-  const mentioned = !mine && S.me && m.content && (m.content.includes('@' + S.me.username) || /@(todos|everyone)\b/.test(m.content));
+  const mentioned = !mine && isMentioned(m);
   const emo = onlyEmoji(m.content) && !(m.attachments || []).length;
   const atts = attHtml(m), emb = embedsHtml(m);
-  const onlyMedia = !m.content && (m.attachments || []).some(a => isImg(a) || isVid(a)) && !(m.attachments || []).some(a => a.type === 'poll');
+  const onlyMedia = !m.content && (m.attachments || []).some(a => isImg(a) || isVid(a) || a.type === 'sticker') && !(m.attachments || []).some(a => a.type === 'poll');
   const meta = `<span class="mtime" title="${new Date(m.created_at).toLocaleString('pt-BR')}">${m.edited_at ? '<span class="edited">editado</span> · ' : ''}${m._sending ? ic('clock',11) : time}${m.pinned ? ' ' + ic('pin',11) : ''}</span>`;
   const content = M.editing === m.id
     ? `<textarea class="editbox" id="edBox" rows="2" maxlength="4000">${esc(m.content)}</textarea><div class="edithint">Esc para <a data-edcancel>cancelar</a> · Enter para <a data-edsave>salvar</a></div>`
@@ -1396,7 +1424,8 @@ function msgHtml(m, prev){
       <button data-reply="${m.id}" title="Responder">${ic('reply',17)}</button>
       ${mine ? `<button data-edit="${m.id}" title="Editar">${ic('edit',17)}</button>` : ''}
       <button data-more="${m.id}" title="Mais">${ic('dots',17)}</button></div>`;
-  const cls = `msg ${grouped?'':'first'} ${mine?'mine':''} ${mentioned?'mentioned':''} ${m.pinned?'pinned':''} ${m._sending?'sendingmsg':''}`;
+  const fxA = (m.attachments || []).find(a => a.type === 'fx');
+  const cls = `msg ${fxA ? 'fx-' + String(fxA.k).replace(/[^a-z]/g, '') + (M.fxOpen && M.fxOpen.has(m.id) ? ' fxo' : '') : ''} ${grouped?'':'first'} ${mine?'mine':''} ${mentioned?'mentioned':''} ${m.pinned?'pinned':''} ${m._sending?'sendingmsg':''}`;
   const color = roleColor(m.author_id);
   const head = mine ? '' : `<div class="hd"><b data-uprof="${p.id}" ${color ? `style="color:${color}"` : ''}>${nameHtml(p)}</b>${hasPlus(p) ? badgeHtml(BADGES[2], p, 'sm') : ''}</div>`;
   const av = mine ? '' : grouped ? '<div class="avsp"></div>' : avatar(p,'lg').replace('class="av lg', `data-uprof="${p.id}" class="av lg`);
@@ -1768,11 +1797,12 @@ async function uploadOne(f){
   meta.url = App.sb.storage.from('attachments').getPublicUrl(path).data.publicUrl;
   return meta;
 }
-async function sendMessage(extraFiles){
+async function sendMessage(extraFiles, rawAtts){
   const ta = $('#cmp'); if(!ta) return;
   let content = ta.value.trim().replace(/:([a-z0-9_]{2,30}):/g, (m, k) => EMOJI.BY[k] || m);
   let cmdAtt = null;
-  if(!extraFiles && content.startsWith('/')){
+  if(rawAtts){ content = ''; cmdAtt = rawAtts; }
+  if(!extraFiles && !rawAtts && content.startsWith('/')){
     const r = runCommand(content);
     if(r && r.error){ App.toast(r.error, true); return; }
     if(r){ content = r.content; cmdAtt = r.attachments || null; if(r.fx){ (M._fxDone = M._fxDone || new Set()); } }
@@ -1780,14 +1810,17 @@ async function sendMessage(extraFiles){
   const files = extraFiles || (cmdAtt ? [] : M.files.splice(0));
   if(!content && !files.length && !cmdAtt) return;
   const reply_to = M.replyTo, ch = M.ch;
-  if(!extraFiles){ ta.value = ''; ta.style.height = 'auto'; cancelReply(); drawFiles(); }
+  if(App.preSend && content) content = App.preSend(content, ch);
+  const extra = App.sendExtras ? App.sendExtras(content, ch, !!rawAtts) : [];
+  if(!extraFiles && !rawAtts){ ta.value = ''; ta.style.height = 'auto'; cancelReply(); drawFiles(); }
+  if(rawAtts) cancelReply();
   // mensagem otimista: aparece na hora, com as imagens locais
   const tmpId = 'tmp-' + Math.random().toString(36).slice(2);
   const temp = { id: tmpId, _sending: true, channel_id: ch.id, author_id: S.me.id, content, reply_to, created_at: new Date().toISOString(), pinned: false,
-                 attachments: cmdAtt ? cmdAtt : files.map(f => ({ url: f.preview || '', name: f.file.name, type: f.file.type, size: f.file.size, _local: !!f.preview, voice: f.voice, dur: f.dur, wave: f.wave })) };
+                 attachments: (cmdAtt ? cmdAtt : files.map(f => ({ url: f.preview || '', name: f.file.name, type: f.file.type, size: f.file.size, _local: !!f.preview, voice: f.voice, dur: f.dur, wave: f.wave }))).concat(extra) };
   M.list.push(temp); appendMessage(temp);
   try{
-    const attachments = cmdAtt || await Promise.all(files.map(uploadOne));
+    const attachments = (cmdAtt || await Promise.all(files.map(uploadOne))).concat(extra);
     const { data, error } = await App.sb.from('messages').insert({ channel_id: ch.id, content, attachments, reply_to }).select().single();
     if(error) throw error;
     data._tmpOf = tmpId; addMessage(data);
@@ -1796,7 +1829,7 @@ async function sendMessage(extraFiles){
     const i = M.list.findIndex(x => x.id === tmpId); if(i >= 0) M.list.splice(i, 1);
     renderMsgList(false);
     App.toast('Não foi enviada: ' + (err.message || err), true);
-    if(!extraFiles){ ta.value = content; M.files = files; drawFiles(); }
+    if(!extraFiles && !rawAtts){ ta.value = content.replace(/<@&([0-9a-f-]{36})>/g, (x, id) => { const r = roleById(id); return r ? '@' + r.name : x; }); M.files = files; drawFiles(); }
   }
 }
 
@@ -1892,7 +1925,13 @@ function autocomplete(){
     const pool = M.ch.kind === 'dm' ? [S.me.id, dmOther(M.ch)] : M.ch.kind === 'group' ? (M.ch.members || []) : (S.members.get(M.ch.server_id) || []).map(x => x.user_id);
     items = pool.map(prof).filter(p => p.username.includes(q) || p.display_name.toLowerCase().includes(q)).slice(0, 8)
       .map(p => ({ html: `${avatar(p,'xs')}<b>${esc(p.display_name)}</b><small>@${esc(p.username)}</small>`, ins: '@' + p.username + ' ', len: m[1].length + 1 }));
-    if(M.ch.kind !== 'dm' && M.ch.kind !== 'group' && 'todos'.startsWith(q)) items.push({ html: `<span class="acic">${ic('at',16)}</span><b>@todos</b><small>Notifica todo mundo</small>`, ins: '@todos ', len: m[1].length + 1 });
+    if(M.ch.kind !== 'dm' && M.ch.kind !== 'group'){
+      const sid = M.ch.server_id, big = App.hasPerm(sid, 2048), nq = q.normalize('NFD').replace(/[̀-ͯ]/g, '');
+      if(big && 'todos'.startsWith(q)) items.push({ html: `<span class="acic">${ic('at',16)}</span><b>@todos</b><small>Notifica todo mundo</small>`, ins: '@todos ', len: m[1].length + 1 });
+      if(big && 'aqui'.startsWith(q)) items.push({ html: `<span class="acic">${ic('at',16)}</span><b>@aqui</b><small>Só quem está online agora</small>`, ins: '@aqui ', len: m[1].length + 1 });
+      (S.roles.get(sid) || []).filter(r => r.name && r.name.toLowerCase().normalize('NFD').replace(/[̀-ͯ]/g, '').includes(nq)).slice(0, 5)
+        .forEach(r => items.push({ html: `<span class="acic" style="color:${esc(r.color || '#99aab5')}">${ic('at',16)}</span><b style="color:${esc(r.color || 'inherit')}">@${esc(r.name)}</b><small>Cargo · avisa quem tem</small>`, ins: '@' + r.name + ' ', len: m[1].length + 1 }));
+    }
   } else if((m = before.match(/:([a-z0-9_]{2,30})$/i))){
     const q = m[1].toLowerCase();
     items = EMOJI.LIST.filter(e => e.names.some(n => n.startsWith(q))).slice(0, 8)
@@ -2311,7 +2350,7 @@ function activitiesMenu(anchor){
   el.innerHTML = `<div class="pphead">${ic('gamepad',18)} Atividades</div>
     <button class="actbig" id="acWT"><span class="ai">${ic('tv',26)}</span><div><b>Assistir juntos</b><small>Vídeo do YouTube sincronizado para todo mundo na chamada</small></div></button>
     <div class="actsec">${ic('dice',15)} Jogos <small>todo mundo da chamada</small></div>
-    <div class="gamegrid">${[['rabisco','🎨','Rabisco','desenhe e adivinhe'],['quiz','🧠','Quiz','10 perguntas'],['provavel','👀','Quem é mais provável','votação da galera'],['stop','✋','Stop','adedonha'],['quemsou','🤔','Quem sou eu?','descubra quem você é'],['truco','🃏','Truco','paulista, 2 ou 4'],['forca','🪢','Forca','adivinhe a palavra'],['musica','🎵','Quiz de música','adivinhe a música'],['telefone','📞','Telefone sem fio','escreve, desenha, adivinha'],['naval','🚢','Batalha naval','2 capitães']].filter(([k]) => k === 'rabisco' || k === 'quiz' || k === 'provavel' || (App.hasGame && App.hasGame(k))).map(([k,e,n,d]) => `<button data-newgame="${k}"><span>${e}</span><b>${n}</b><small>${d}</small></button>`).join('')}</div>
+    <div class="gamegrid">${[['rabisco','🎨','Rabisco','desenhe e adivinhe'],['quiz','🧠','Quiz','10 perguntas'],['provavel','👀','Quem é mais provável','votação da galera'],['stop','✋','Stop','adedonha'],['quemsou','🤔','Quem sou eu?','descubra quem você é'],['truco','🃏','Truco','paulista, 2 ou 4'],['forca','🪢','Forca','adivinhe a palavra'],['musica','🎵','Quiz de música','adivinhe a música'],['telefone','📞','Telefone sem fio','escreve, desenha, adivinha'],['naval','🚢','Batalha naval','2 capitães'],['uno','🟥','Uno','cartas na mão'],['domino','🁫','Dominó','2 a 4 pessoas'],['mimica','🎭','Imagem & Ação','mímica em times'],['velha','⭕','Jogo da Velha','torneio']].filter(([k]) => k === 'rabisco' || k === 'quiz' || k === 'provavel' || (App.hasGame && App.hasGame(k))).map(([k,e,n,d]) => `<button data-newgame="${k}"><span>${e}</span><b>${n}</b><small>${d}</small></button>`).join('')}</div>
     <button class="actbig" id="acRl"><span class="ai">🎡</span><div><b>Roleta / sorteio</b><small>Gire uma roda ou sorteie os times; todo mundo vê ao mesmo tempo</small></div></button>
     <button class="actbig" id="acCap"><span class="ai">🗨️</span><div><b>Legendas ao vivo</b><small>Sua fala vira texto para todo mundo da chamada (acessibilidade)</small></div></button>
     <div class="actsec">${ic('music',15)} Soundboard <small>todos ouvem</small></div>
@@ -2553,6 +2592,7 @@ const PERMS = [
   [256, 'Gerenciar eventos', 'Criar, editar e apagar eventos do servidor.'],
   [512, 'Gerenciar emojis', 'Enviar, renomear e apagar emojis do servidor.'],
   [1024, 'Ver registro de auditoria', 'Ver tudo o que mudou no servidor e quem fez.'],
+  [2048, 'Mencionar @todos, @aqui e cargos', 'Chamar o servidor inteiro ou só quem está online. Sem isso, a pessoa só menciona cargos (com limite anti-spam).'],
 ];
 S.roles = new Map();        // sid -> [roles]
 S.memberRoles = new Map();  // sid -> Map(uid -> Set(roleId))
@@ -3094,8 +3134,9 @@ function renderSettings(){
     if(App.hasPerm(s.id, 2)) nav.push(['overview','Visão geral']);
     if(App.hasPerm(s.id, 16)) nav.push(['roles','Cargos']);
     if(App.hasPerm(s.id, 1)) nav.push(['channels','Canais']);
-    nav.push(['emojis','Emojis'], ['sounds','Sons'], ['tag','Tag do servidor'], ['members','Membros'], ['stats','Estatísticas'], ['boost', `<span style="display:inline-flex">${BOOST_SVG(16)}</span> Impulsos`]);
+    nav.push(['emojis','Emojis'], ['stickers','Figurinhas'], ['sounds','Sons'], ['tag','Tag do servidor'], ['members','Membros'], ['stats','Estatísticas'], ['boost', `<span style="display:inline-flex">${BOOST_SVG(16)}</span> Impulsos`]);
     if(App.hasPerm(s.id, 2)) nav.push(['invites','Convites']);
+    if(App.hasPerm(s.id, 2)) nav.push(['page','Página pública']);
     if(App.hasPerm(s.id, 128) || App.hasPerm(s.id, 4)) nav.push(['bans','Banimentos']);
     if(App.hasPerm(s.id, 2) || App.hasPerm(s.id, 64)) nav.push(['safety','Segurança']);
     if(App.hasPerm(s.id, 1024)) nav.push(['audit', 'Registro de auditoria']);
@@ -3124,7 +3165,7 @@ function renderSettings(){
   const back = isMobile() ? `<button class="btn sec sm mobileback" id="sBack">← Voltar</button>` : '';
   const fn = SET.kind === 'user'
     ? { account: secAccount, profile: secProfile, plus: secPlus, shop: secShop, connections: secConnections, security: secSecurity, privacy: secPrivacy, boosts: secMyBoosts, appearance: secAppearance, perf: secPerf, a11y: secA11y, lang: secLang, voice: secVoice, notif: secNotif, keys: secKeys, app: secApp, admin: secAdmin }[SET.sec]
-    : { overview: secSrvOverview, roles: secSrvRoles, channels: secSrvChannels, members: secSrvMembers, boost: secSrvBoost, bans: secSrvBans, safety: secSrvSafety, emojis: secSrvEmojis, tag: secSrvTag, community: secSrvCommunity, invites: secSrvInvites, stats: secSrvStats, backup: secSrvBackup, sounds: secSrvSounds, reports: secSrvReports, audit: secSrvAudit }[SET.sec];
+    : { overview: secSrvOverview, roles: secSrvRoles, channels: secSrvChannels, members: secSrvMembers, boost: secSrvBoost, bans: secSrvBans, safety: secSrvSafety, emojis: secSrvEmojis, tag: secSrvTag, community: secSrvCommunity, invites: secSrvInvites, stats: secSrvStats, backup: secSrvBackup, sounds: secSrvSounds, reports: secSrvReports, audit: secSrvAudit, stickers: secSrvStickers, page: secSrvPage }[SET.sec];
   if(fn) fn(box, back);
   // vale também para seções que se redesenham depois de carregar (Loja, Estatísticas…)
   box.addEventListener('click', e => { if(e.target.closest('#sBack')){ e.preventDefault(); settingsBack(); } });
@@ -12718,6 +12759,7 @@ const AU = {
   voice_disconnect: ['📴', 'desconectou da call', 'moderacao'], voice_move: ['↪️', 'moveu na call', 'moderacao'],
   message_delete: ['🗑️', 'apagou uma mensagem de', 'mensagens'], message_pin: ['📌', 'fixou uma mensagem de', 'mensagens'], message_unpin: ['📌', 'desafixou uma mensagem de', 'mensagens'],
   emoji_create: ['😀', 'adicionou o emoji', 'emojis'], emoji_update: ['😀', 'editou o emoji', 'emojis'], emoji_delete: ['😀', 'apagou o emoji', 'emojis'],
+  sticker_create: ['🖼️', 'adicionou a figurinha', 'emojis'], sticker_update: ['🖼️', 'editou a figurinha', 'emojis'], sticker_delete: ['🖼️', 'apagou a figurinha', 'emojis'],
   sound_create: ['🔊', 'adicionou o som', 'emojis'], sound_update: ['🔊', 'editou o som', 'emojis'], sound_delete: ['🔊', 'apagou o som', 'emojis'],
   events_create: ['📅', 'criou o evento', 'servidor'], events_update: ['📅', 'editou o evento', 'servidor'], events_delete: ['📅', 'apagou o evento', 'servidor'],
   report_resolved: ['🛡️', 'resolveu uma denúncia contra', 'moderacao'], report_dismissed: ['🛡️', 'ignorou uma denúncia contra', 'moderacao'],
@@ -12804,6 +12846,1144 @@ App._rc = { stage: 0, sidebar: 0, rail: 0, main: 0, list: 0 };
   renderRail = function(){ App._rc.rail++; return c.apply(this, arguments); };
   renderMain = function(){ App._rc.main++; return d.apply(this, arguments); };
   renderMsgList = function(){ App._rc.list++; return e.apply(this, arguments); }; }
+/* =====================================================================
+   v6.39: FIGURINHAS DO SERVIDOR, MENSAGEM COM EFEITO e @aqui / @cargo
+   - Figurinhas: imagens grandes (PNG, WEBP ou GIF animado) que o servidor sobe
+     (quem gerencia emojis). Botão de figurinha no compositor → escolhe → vai na hora.
+   - Efeitos: escolha antes de enviar (confete, corações, tremida, letra gigante,
+     neon ou segredo — fica embaçada até alguém tocar).
+   - @aqui: a mensagem leva junto quem estava online, então só essas pessoas são avisadas.
+     @Cargo vira um código do cargo na hora de enviar e avisa só quem tem o cargo.
+   ===================================================================== */
+const STK_SQL = 'Para as figurinhas, rode o supabase.sql novo (v6.39) no Supabase.';
+const STK = { cache: new Map(), at: new Map() };   // sid -> lista
+const FX_LIST = [
+  ['confete', '🎉', 'Confete', 'Chuva de confete para todo mundo'],
+  ['coracoes', '💖', 'Corações', 'Corações subindo na tela'],
+  ['tremer', '📳', 'Tremida', 'A conversa treme quando chega'],
+  ['gigante', '🔠', 'Letra gigante', 'Texto enorme'],
+  ['neon', '✨', 'Neon', 'Texto brilhando'],
+  ['segredo', '🙈', 'Segredo', 'Embaçada até alguém tocar'],
+];
+async function loadStickers(sids, force){
+  const need = sids.filter(id => force || !STK.cache.has(id) || Date.now() - (STK.at.get(id) || 0) > 60000);
+  if(need.length){
+    const { data, error } = await App.sb.from('server_stickers').select('*').in('server_id', need).order('created_at');
+    if(error) throw error;
+    need.forEach(id => { STK.cache.set(id, []); STK.at.set(id, Date.now()); });
+    (data || []).forEach(x => STK.cache.get(x.server_id).push(x));
+  }
+  return sids.flatMap(id => STK.cache.get(id) || []);
+}
+
+/* ---------- o painel do botão de figurinha: Figurinhas | Efeitos ---------- */
+function stkPanel(anchor, tab){
+  closeMenu();
+  const el = $('#menu'); el.className = 'menu stkpop';
+  const ch = M.ch; if(!ch) return;
+  const here = ch.server_id || null;
+  const sids = [...new Set([here].concat(S.servers.map(s => s.id)).filter(Boolean))];
+  tab = tab || ls.get('telao-stktab', 'stk');
+  el.innerHTML = `<div class="stktabs"><button data-st="stk" class="${tab === 'stk' ? 'on' : ''}">${ic('sticker', 16)} Figurinhas</button><button data-st="fx" class="${tab === 'fx' ? 'on' : ''}">${ic('sparkles', 16)} Efeitos</button></div><div class="stkbody" id="stkBody"></div>`;
+  const r = anchor.getBoundingClientRect(), w = Math.min(360, innerWidth - 16), h = 400;
+  el.classList.remove('hidden');
+  el.style.left = Math.max(8, Math.min(r.right - w, innerWidth - w - 8)) + 'px';
+  el.style.top = Math.max(8, r.top - h - 8) + 'px';
+  el.style.width = w + 'px';
+  const body = el.querySelector('#stkBody');
+  el.querySelectorAll('[data-st]').forEach(b => b.onclick = () => { ls.set('telao-stktab', b.dataset.st); stkPanel(anchor, b.dataset.st); });
+  if(tab === 'fx'){
+    body.innerHTML = `<p class="mut small" style="margin:4px 4px 10px">Escolha e mande a mensagem: o efeito vai junto.</p><div class="fxgrid">${FX_LIST.map(([k, e, n, d]) => `<button data-fxk="${k}" class="${M.nextFx === k ? 'on' : ''}"><span>${e}</span><b>${n}</b><small>${d}</small></button>`).join('')}</div>
+      ${M.nextFx ? `<button class="btn sec sm" id="fxOff" style="margin-top:10px">Tirar o efeito</button>` : ''}`;
+    body.querySelectorAll('[data-fxk]').forEach(b => b.onclick = () => { setNextFx(b.dataset.fxk); closeMenu(); $('#cmp') && $('#cmp').focus(); });
+    const off = body.querySelector('#fxOff'); if(off) off.onclick = () => { setNextFx(null); closeMenu(); };
+  } else {
+    body.innerHTML = '<div class="spin" style="margin:30px auto"></div>';
+    loadStickers(sids).then(list => {
+      if(!el.isConnected || !el.classList.contains('stkpop')) return;
+      const recent = ls.get('telao-stkrec', []).map(id => list.find(x => x.id === id)).filter(Boolean).slice(0, 8);
+      const groups = sids.map(id => [id, list.filter(x => x.server_id === id)]).filter(([, l]) => l.length);
+      const canAdd = here && (App.hasPerm(here, 512) || App.hasPerm(here, 2));
+      body.innerHTML = (groups.length ? `<input class="inp stkq" id="stkQ" placeholder="Procurar figurinha" autocomplete="off">
+        ${recent.length ? `<div class="epcat">Recentes</div><div class="stkgrid">${recent.map(stkBtn).join('')}</div>` : ''}
+        ${groups.map(([id, l]) => `<div class="epcat">${esc((S.servers.find(s => s.id === id) || {}).name || 'Servidor')}</div><div class="stkgrid">${l.map(stkBtn).join('')}</div>`).join('')}`
+        : `<div class="empty">${ic('sticker', 34)}<br>${here ? 'Este servidor ainda não tem figurinhas.' : 'Seus servidores ainda não têm figurinhas.'}</div>`)
+        + (canAdd ? `<button class="btn sec sm" id="stkAdd" style="margin-top:10px">${ic('plus', 14)} Adicionar figurinhas</button>` : '');
+      const q = body.querySelector('#stkQ');
+      if(q){ if(!isMobile()) setTimeout(() => q.focus(), 20); q.oninput = () => { const v = q.value.trim().toLowerCase(); body.querySelectorAll('[data-stk]').forEach(b => b.style.display = !v || b.dataset.n.includes(v) ? '' : 'none'); }; }
+      body.querySelectorAll('[data-stk]').forEach(b => b.onclick = () => { const s = list.find(x => x.id === b.dataset.stk); if(s){ closeMenu(); sendSticker(s); } });
+      const add = body.querySelector('#stkAdd'); if(add) add.onclick = () => { closeMenu(); const s = S.servers.find(x => x.id === here); s && openSettings('server', 'stickers', s); };
+    }).catch(e => { body.innerHTML = `<div class="empty">${/server_stickers|schema cache|does not exist/i.test(e.message || '') ? STK_SQL : esc(e.message || String(e))}</div>`; });
+  }
+  setTimeout(() => document.addEventListener('mousedown', outside), 0);
+  function outside(e){ if(!el.contains(e.target)) closeMenu(); }
+  el._outside = outside;
+}
+const stkBtn = s => `<button data-stk="${s.id}" data-n="${esc(s.name.toLowerCase())}" title="${esc(s.name)}"><img src="${esc(s.url)}" alt="" loading="lazy" decoding="async"></button>`;
+function sendSticker(s){
+  const rec = ls.get('telao-stkrec', []).filter(id => id !== s.id); rec.unshift(s.id); ls.set('telao-stkrec', rec.slice(0, 12));
+  sendMessage(null, [{ type: 'sticker', id: s.id, sid: s.server_id, name: s.name, url: s.url, animated: !!s.animated }]);
+}
+function setNextFx(k){
+  M.nextFx = k || null;
+  const b = $('#cStk'); if(b) b.classList.toggle('fxon', !!k);
+  let chip = $('#fxChip');
+  if(!k){ chip && chip.remove(); return; }
+  const f = FX_LIST.find(x => x[0] === k);
+  if(!chip){ const box = $('.cbox'); if(!box) return; box.insertAdjacentHTML('afterbegin', '<div class="fxchip" id="fxChip"></div>'); chip = $('#fxChip'); }
+  chip.innerHTML = `<span>${f[1]} Efeito: <b>${f[2]}</b></span><button title="Tirar o efeito">${ic('x', 14)}</button>`;
+  chip.querySelector('button').onclick = () => setNextFx(null);
+}
+
+/* ---------- antes de enviar: @Cargo vira código; @aqui leva quem está online ---------- */
+App.preSend = (content, ch) => {
+  if(!ch || !ch.server_id || content.indexOf('@') < 0) return content;
+  const roles = (S.roles.get(ch.server_id) || []).filter(r => r.name).slice().sort((a, b) => b.name.length - a.name.length);
+  roles.forEach(r => {
+    const re = new RegExp('(^|\\s)@' + r.name.replace(/[.*+?^${}()|[\]\\]/g, '\\$&') + '(?=$|[\\s.,!?;:])', 'g');
+    content = content.replace(re, (x, sp) => sp + '<@&' + r.id + '>');
+  });
+  return content;
+};
+App.sendExtras = (content, ch, raw) => {
+  const out = [];
+  if(!raw && M.nextFx && content){ out.push({ type: 'fx', k: M.nextFx }); setNextFx(null); }
+  if(content && ch && ch.server_id && /(^|\s)@(aqui|here)\b/.test(content)){
+    const ids = (S.members.get(ch.server_id) || []).map(x => x.user_id).filter(u => S.online.has(u) && u !== S.me.id);
+    out.push({ type: 'here', ids: ids.slice(0, 500) });
+  }
+  return out;
+};
+
+/* ---------- efeito ao chegar ---------- */
+const FXN = { seen: new Set() };
+function fxPlay(m){
+  const a = (m.attachments || []).find(x => x.type === 'fx'); if(!a || FXN.seen.has(m.id)) return;
+  FXN.seen.add(m.id);
+  if(a.k === 'confete' || a.k === 'coracoes') burst(a.k);
+  const node = M.el && M.el.querySelector(`[data-m="${m.id}"]`);
+  if(node){ node.classList.add('fxnew'); setTimeout(() => node.classList.remove('fxnew'), 2500); }
+  if(a.k === 'tremer'){ const w = $('#msgWrapIn'); if(w){ w.classList.remove('shake'); void w.offsetWidth; w.classList.add('shake'); setTimeout(() => w.classList.remove('shake'), 900); } if(navigator.vibrate) try{ navigator.vibrate([80, 40, 80]); }catch(e){} }
+}
+const _addMessageFX = addMessage;
+addMessage = function(m){
+  const had = M.list.some(x => x.id === m.id);
+  const r = _addMessageFX.apply(this, arguments);
+  if(!had && M.cid === m.channel_id && Date.now() - new Date(m.created_at).getTime() < 60000) fxPlay(m);
+  return r;
+};
+// segredo: toca para revelar
+document.addEventListener('click', e => {
+  const b = e.target.closest && e.target.closest('.msg.fx-segredo:not(.fxo) .bub');
+  if(!b) return;
+  e.preventDefault(); e.stopPropagation();
+  const msg = b.closest('.msg'); msg.classList.add('fxo');
+  (M.fxOpen = M.fxOpen || new Set()).add(msg.dataset.m);
+}, true);
+
+/* ---------- liga o botão no compositor ---------- */
+const _bindComposerSTK = bindComposer;
+bindComposer = function(ch){
+  const r = _bindComposerSTK.apply(this, arguments);
+  const b = $('#cStk'); if(b) b.onclick = () => stkPanel(b);
+  if(M.nextFx) setNextFx(M.nextFx);
+  return r;
+};
+
+/* ---------- Configurações do servidor → Figurinhas ---------- */
+async function secSrvStickers(box, back){
+  const s = SET.server, can = App.hasPerm(s.id, 512) || App.hasPerm(s.id, 2);
+  box.innerHTML = `${back}<h2>Figurinhas</h2><div class="spin" style="margin:20px 0"></div>`;
+  let list;
+  try{ list = await loadStickers([s.id], true); }
+  catch(e){ box.innerHTML = `${back}<h2>Figurinhas</h2><div class="locked">${/server_stickers|schema cache|does not exist/i.test(e.message || '') ? STK_SQL : esc(e.message || String(e))}</div>`; return; }
+  box.innerHTML = `${back}<h2>Figurinhas</h2><p class="mut">Imagens grandes que todo mundo do servidor pode mandar no chat (botão ${ic('sticker', 14)} ao lado do emoji). Até 60.</p>
+    <div class="emlim"><span>Figurinhas <b>${list.length}/60</b></span></div>
+    ${can ? `<div class="emup"><button class="btn" id="stkUp">${ic('plus', 16)} Enviar figurinha</button><input type="file" id="stkF" accept="image/png,image/webp,image/gif,image/jpeg" multiple hidden>
+      <small class="mut">PNG, WEBP ou GIF animado, até 512 KB. Fundo transparente fica mais bonito. A imagem é reduzida para 320 px.</small></div>` : ''}
+    <div class="stkadm">${list.map(x => `<div class="stkcard"><img src="${esc(x.url)}" alt="" loading="lazy"><b>${esc(x.name)}</b>${x.animated ? '<span class="extag">animada</span>' : ''}
+      ${can ? `<div class="stkcbt"><button class="ibtn sm" data-stkren="${x.id}" data-tip="Renomear">${ic('edit', 15)}</button><button class="ibtn sm" data-stkdel="${x.id}" data-tip="Apagar">${ic('trash', 15)}</button></div>` : ''}</div>`).join('') || '<div class="empty">Nenhuma figurinha ainda.</div>'}</div>`;
+  if(!can) return;
+  const $b = q => box.querySelector(q);
+  $b('#stkUp').onclick = () => $b('#stkF').click();
+  $b('#stkF').onchange = async ev => {
+    for(const f of [...ev.target.files]){
+      try{
+        const gif = f.type === 'image/gif';
+        if(f.size > 524288 && gif){ App.toast(`${f.name}: GIF grande demais (máx. 512 KB).`, true); continue; }
+        if(f.size > 8 * 1048576){ App.toast(`${f.name}: arquivo grande demais.`, true); continue; }
+        let blob = f, type = f.type;
+        if(!gif){
+          const bmp = await createImageBitmap(f), sc = Math.min(1, 320 / Math.max(bmp.width, bmp.height));
+          const c = document.createElement('canvas'); c.width = Math.round(bmp.width * sc); c.height = Math.round(bmp.height * sc);
+          c.getContext('2d').drawImage(bmp, 0, 0, c.width, c.height);
+          blob = await new Promise(r => c.toBlob(r, 'image/webp', 0.9)); type = 'image/webp';
+          if(!blob || blob.size > 524288){ App.toast(`${f.name}: ficou grande demais mesmo reduzida.`, true); continue; }
+        }
+        const name = (f.name.replace(/\.[^.]+$/, '').replace(/[_-]+/g, ' ').trim() || 'figurinha').slice(0, 30);
+        const path = `${S.me.id}/sticker-${Date.now().toString(36)}-${Math.random().toString(36).slice(2, 6)}.${type.split('/')[1]}`;
+        const { error: ue } = await App.sb.storage.from('media').upload(path, blob, { contentType: type, cacheControl: '31536000' });
+        if(ue) throw ue;
+        const url = App.sb.storage.from('media').getPublicUrl(path).data.publicUrl;
+        const { error } = await App.sb.from('server_stickers').insert({ server_id: s.id, name, url, animated: gif });
+        if(error) throw error;
+      }catch(err){ App.toast(`${f.name}: ${err.message || err}`, true); }
+    }
+    STK.at.delete(s.id); renderSettings();
+  };
+  box.querySelectorAll('[data-stkdel]').forEach(b => b.onclick = async () => {
+    if(!(await confirmBox('Apagar figurinha', 'Mensagens antigas com ela continuam mostrando a imagem.', 'Apagar'))) return;
+    const { error } = await App.sb.from('server_stickers').delete().eq('id', b.dataset.stkdel);
+    if(error){ App.toast(error.message, true); return; }
+    STK.at.delete(s.id); renderSettings();
+  });
+  box.querySelectorAll('[data-stkren]').forEach(b => b.onclick = async () => {
+    const x = list.find(y => y.id === b.dataset.stkren); if(!x) return;
+    const nv = await promptBox('Renomear figurinha', 'Nome', x.name, 30); if(!nv || nv === x.name) return;
+    const { error } = await App.sb.from('server_stickers').update({ name: nv.slice(0, 30) }).eq('id', x.id);
+    if(error){ App.toast(error.message, true); return; }
+    STK.at.delete(s.id); renderSettings();
+  });
+}
+App.stk = { panel: stkPanel, send: sendSticker, setFx: setNextFx };
+/* =====================================================================
+   v6.39: BUSCA AVANÇADA
+   Tudo numa tela: texto + quem mandou + onde (este canal / servidor inteiro) +
+   tem imagem, vídeo, link, arquivo, áudio ou figurinha + período + fixadas + "me mencionou".
+   O banco faz o filtro (search_messages), e a permissão de ler continua a mesma.
+   ===================================================================== */
+const BS = { f: null };
+const BS_HAS = [['', 'Qualquer coisa'], ['image', '🖼️ Imagem'], ['video', '🎬 Vídeo'], ['link', '🔗 Link'], ['file', '📎 Arquivo'], ['audio', '🎵 Áudio'], ['sticker', '🧸 Figurinha']];
+const BS_WHEN = [['', 'Qualquer data'], ['1', 'Hoje'], ['7', 'Últimos 7 dias'], ['30', 'Últimos 30 dias'], ['365', 'Último ano'], ['c', 'Escolher datas…']];
+function bsPool(ch){
+  return ch.kind === 'dm' ? [S.me.id, dmOther(ch)] : ch.kind === 'group' ? (ch.members || []) : (S.members.get(ch.server_id) || []).map(x => x.user_id);
+}
+showSearch = async function(anchor){
+  const ch = M.ch; if(!ch) return;
+  const r = anchor.getBoundingClientRect();
+  const el = $('#menu'); el.className = 'menu panelpop bspop';
+  const srv = !!ch.server_id;
+  const f = BS.f && BS.f.cid === ch.id ? BS.f : (BS.f = { cid: ch.id, q: '', who: '', where: 'ch', has: '', when: '', from: '', to: '', pinned: false, me: false });
+  const pool = bsPool(ch).map(prof).sort((a, b) => a.display_name.localeCompare(b.display_name));
+  el.innerHTML = `<div class="pphead bshead"><div class="sbox">${ic('search', 16)}<input id="srQ" placeholder="Buscar mensagens" autocomplete="off" value="${esc(f.q)}"></div>
+    <div class="bsf">
+      <label><span>De</span><select id="bsWho"><option value="">Qualquer pessoa</option>${pool.map(p => `<option value="${p.id}" ${f.who === p.id ? 'selected' : ''}>${esc(p.display_name)}</option>`).join('')}</select></label>
+      ${srv ? `<label><span>Onde</span><select id="bsWhere"><option value="ch" ${f.where === 'ch' ? 'selected' : ''}>Neste canal</option><option value="srv" ${f.where === 'srv' ? 'selected' : ''}>No servidor todo</option></select></label>` : ''}
+      <label><span>Tem</span><select id="bsHas">${BS_HAS.map(([k, n]) => `<option value="${k}" ${f.has === k ? 'selected' : ''}>${n}</option>`).join('')}</select></label>
+      <label><span>Quando</span><select id="bsWhen">${BS_WHEN.map(([k, n]) => `<option value="${k}" ${f.when === k ? 'selected' : ''}>${n}</option>`).join('')}</select></label>
+      <div class="bsdates ${f.when === 'c' ? '' : 'hidden'}" id="bsDates"><input type="date" id="bsFrom" value="${esc(f.from)}"><span>até</span><input type="date" id="bsTo" value="${esc(f.to)}"></div>
+      <div class="bschips"><button class="chip ${f.pinned ? 'on' : ''}" id="bsPin">${ic('pin', 13)} Fixadas</button><button class="chip ${f.me ? 'on' : ''}" id="bsMe">${ic('at', 13)} Me mencionaram</button><button class="lnk" id="bsClr">limpar</button></div>
+    </div></div><div class="ppbody" id="srR"><div class="empty">Digite ou escolha um filtro.</div></div>`;
+  openPanel(el, r);
+  const $e = q => el.querySelector(q), q = $e('#srQ');
+  if(!isMobile()) setTimeout(() => q.focus(), 20);
+  let t, seq = 0;
+  const run = async (more) => {
+    f.q = q.value.trim(); f.who = $e('#bsWho').value; f.where = $e('#bsWhere') ? $e('#bsWhere').value : 'ch';
+    f.has = $e('#bsHas').value; f.when = $e('#bsWhen').value; f.from = $e('#bsFrom').value; f.to = $e('#bsTo').value;
+    $e('#bsDates').classList.toggle('hidden', f.when !== 'c');
+    const box = $e('#srR');
+    const any = f.q.length >= 2 || f.who || f.has || (f.when && (f.when !== 'c' || f.from || f.to)) || f.pinned || f.me;
+    if(!any){ box.innerHTML = `<div class="empty">${f.q.length === 1 ? 'Digite pelo menos 2 letras.' : 'Digite ou escolha um filtro.'}</div>`; return; }
+    const my = ++seq;
+    if(!more){ box.innerHTML = '<div class="loadmore"><div class="spin"></div></div>'; f.rows = []; }
+    let from = null, to = null;
+    if(f.when === 'c'){ if(f.from) from = new Date(f.from + 'T00:00:00').toISOString(); if(f.to){ const d = new Date(f.to + 'T00:00:00'); d.setDate(d.getDate() + 1); to = d.toISOString(); } }
+    else if(f.when){ const d = new Date(); d.setHours(0, 0, 0, 0); d.setDate(d.getDate() - (+f.when - 1)); from = d.toISOString(); }
+    const args = { p_server: f.where === 'srv' ? ch.server_id : null, p_channel: f.where === 'srv' ? null : ch.id, p_q: f.q.length >= 2 ? f.q.replace(/[%_]/g, '') : null,
+      p_author: f.who || null, p_from: from, p_to: to, p_has: f.has || null, p_mention: f.me ? S.me.username : null, p_pinned: f.pinned, p_off: more ? f.rows.length : 0 };
+    let { data, error } = await App.sb.rpc('search_messages', args);
+    if(error && /search_messages|schema cache|does not exist|function/i.test(error.message)){
+      // banco antigo: só texto neste canal
+      if(!args.p_q){ box.innerHTML = '<div class="empty">Para os filtros, rode o supabase.sql novo (v6.39) no Supabase.</div>'; return; }
+      ({ data, error } = await App.sb.from('messages').select('*').eq('channel_id', ch.id).ilike('content', `%${args.p_q}%`).order('created_at', { ascending: false }).limit(30));
+    }
+    if(my !== seq) return;
+    if(error){ box.innerHTML = `<div class="empty">${esc(error.message)}</div>`; return; }
+    data = (data || []).filter(m => !(S.blocked && S.blocked.has(m.author_id)));
+    f.rows = (f.rows || []).concat(data);
+    await ensureProfiles(f.rows.map(m => m.author_id));
+    if(my !== seq) return;
+    const hlre = args.p_q ? new RegExp(args.p_q.replace(/[.*+?^${}()|[\]\\]/g, '\\$&'), 'gi') : null;
+    const hl = s => { const e = esc(s); return hlre ? e.replace(hlre, x => `<mark>${x}</mark>`) : e; };
+    const attTxt = m => { const a = m.attachments || []; if(a.some(x => x.type === 'sticker')) return '🧸 Figurinha'; if(a.some(x => /^image\//.test(x.type || ''))) return '🖼️ Imagem'; if(a.some(x => /^video\//.test(x.type || ''))) return '🎬 Vídeo'; if(a.some(x => x.voice)) return '🎤 Áudio'; if(a.some(x => x.url)) return '📎 Arquivo'; return ''; };
+    const chName = id => { const c = findChannel(id); return c && c.name ? '#' + c.name : ''; };
+    box.innerHTML = f.rows.length ? `<div class="srcount">${f.rows.length}${data.length === 40 ? '+' : ''} resultado(s)</div>` + f.rows.map(m => {
+      const thumb = (m.attachments || []).find(x => /^image\//.test(x.type || '') || x.type === 'sticker');
+      return `<div class="ppit" data-bsgo="${m.id}" data-bsch="${m.channel_id}">${avatar(prof(m.author_id), 'sm')}<div class="grow"><b>${esc(prof(m.author_id).display_name)}</b> <small>${fmtTime(m.created_at)}${f.where === 'srv' ? ' · ' + esc(chName(m.channel_id)) : ''}</small>
+        <div class="ppct">${m.content ? hl(mentionPlain(m.content).slice(0, 300)) : `<i>${attTxt(m)}</i>`}</div></div>${thumb ? `<img class="bsth" src="${esc(thumb.url)}" alt="" loading="lazy">` : ''}</div>`;
+    }).join('') + (data.length === 40 ? '<button class="btn sec sm" id="bsMore" style="margin:8px auto;display:block">Carregar mais</button>' : '') : '<div class="empty">Nada encontrado.</div>';
+    box.querySelectorAll('[data-bsgo]').forEach(b => b.onclick = () => bsGo(b.dataset.bsgo, b.dataset.bsch));
+    const mo = box.querySelector('#bsMore'); if(mo) mo.onclick = () => run(true);
+  };
+  const later = () => { clearTimeout(t); t = setTimeout(() => run(false), 300); };
+  q.oninput = later;
+  ['#bsWho', '#bsWhere', '#bsHas', '#bsWhen', '#bsFrom', '#bsTo'].forEach(id => { const x = $e(id); if(x) x.onchange = () => run(false); });
+  $e('#bsPin').onclick = () => { f.pinned = !f.pinned; $e('#bsPin').classList.toggle('on', f.pinned); run(false); };
+  $e('#bsMe').onclick = () => { f.me = !f.me; $e('#bsMe').classList.toggle('on', f.me); run(false); };
+  $e('#bsClr').onclick = () => { BS.f = null; showSearch(anchor); };
+  run(false);
+};
+async function bsGo(mid, cid){
+  closeMenu();
+  if(cid === M.cid){ jumpTo(mid); return; }
+  const c = findChannel(cid); if(!c || !c.server_id) return;
+  go({ kind: 'server', sid: c.server_id, cid });
+  for(let i = 0; i < 40; i++){ await new Promise(r => setTimeout(r, 150)); if(M.cid === cid && M.el && M.done !== undefined && !M.el.querySelector('.skel')) break; }
+  if(M.cid === cid) jumpTo(mid);
+}
+/* =====================================================================
+   v6.39: PÁGINA PÚBLICA DO SERVIDOR
+   telao.../s/nome-bonito → página com nome, descrição, capa, quantos estão online
+   e na call agora, e o botão Entrar. Feita para colocar na bio do Instagram/TikTok
+   (tem prévia bonita quando cola o link). Sem nome bonito, /s/CODIGO-DO-CONVITE também funciona.
+   ===================================================================== */
+const PG_SQL = 'Para a página pública, rode o supabase.sql novo (v6.39) no Supabase.';
+// "online agora" da página pública: um sinal leve a cada 4 min enquanto o Telão está aberto
+let pgSeenT = 0;
+function pgSeen(){ if(document.hidden || !S.me || Date.now() - pgSeenT < 230000) return; pgSeenT = Date.now(); App.sb.rpc('touch_seen').then(() => {}, () => {}); }
+setInterval(pgSeen, 60000);
+document.addEventListener('visibilitychange', () => { if(!document.hidden) setTimeout(pgSeen, 3000); });
+setTimeout(pgSeen, 8000);
+
+const pgUrl = s => location.origin + '/s/' + (s.slug || s.invite_code);
+const slugify = t => String(t || '').toLowerCase().normalize('NFD').replace(/[̀-ͯ]/g, '').replace(/[^a-z0-9]+/g, '-').replace(/^-+|-+$/g, '').slice(0, 24);
+async function secSrvPage(box, back){
+  const s = SET.server;
+  const url = pgUrl(s);
+  box.innerHTML = `${back}<h2>Página pública</h2>
+    <p class="mut">Um link bonito para divulgar o servidor no Instagram, TikTok ou onde quiser. Mostra nome, descrição, capa, quantos estão online e na call agora, e um botão para entrar.</p>
+    <label class="field"><span>Nome do link</span></label>
+    <div class="copyrow pgslug"><span class="pgpre">${esc(location.host)}/s/</span><input class="inp" id="pgSlug" maxlength="24" placeholder="${esc(slugify(s.name) || 'meu-servidor')}" value="${esc(s.slug || '')}"><button class="btn" id="pgSave">Salvar</button></div>
+    <small class="mut">Só letras minúsculas, números e hífen (3 a 24). Deixe vazio para usar o código do convite.</small>
+    <div class="pgcard">
+      <div class="pgqr" id="pgQr"><div class="spin"></div></div>
+      <div class="pginfo"><b>Seu link</b><a href="${esc(url)}" target="_blank" rel="noopener" id="pgLink">${esc(url)}</a>
+        <div class="gacts"><button class="btn sm" id="pgCopy">${ic('copy', 14)} Copiar</button><a class="btn sec sm" href="${esc(url)}" target="_blank" rel="noopener">${ic('globe', 14)} Abrir</a>${navigator.share ? `<button class="btn sec sm" id="pgShare">${ic('send', 14)} Compartilhar</button>` : ''}</div>
+        <small class="mut">Dica: a prévia usa a capa, o ícone e a descrição do servidor (Configurações → Visão geral).</small></div>
+    </div>`;
+  const $b = q => box.querySelector(q);
+  $b('#pgCopy').onclick = () => { copy(pgUrl(s)); $b('#pgCopy').innerHTML = `${ic('check', 14)} Copiado`; };
+  const sh = $b('#pgShare'); if(sh) sh.onclick = () => navigator.share({ title: s.name, text: `Entra no ${s.name} no Telão!`, url: pgUrl(s) }).catch(() => {});
+  try{
+    if(!window.qrcode) await new Promise((ok, bad) => { const sc = document.createElement('script'); sc.src = '/qrcode.js'; sc.onload = ok; sc.onerror = bad; document.head.appendChild(sc); });
+    const q = qrcode(0, 'M'); q.addData(url); q.make();
+    const n = q.getModuleCount(), m = 2; let d = '';
+    for(let r = 0; r < n; r++) for(let c = 0; c < n; c++) if(q.isDark(r, c)) d += `M${c + m} ${r + m}h1v1h-1z`;
+    $b('#pgQr').innerHTML = `<svg viewBox="0 0 ${n + m * 2} ${n + m * 2}" shape-rendering="crispEdges"><rect width="100%" height="100%" fill="#fff"/><path d="${d}" fill="#0b0b10"/></svg>`;
+  }catch(e){ $b('#pgQr').innerHTML = ''; }
+  $b('#pgSave').onclick = async () => {
+    let v = slugify($b('#pgSlug').value);
+    if(v && (!/^[a-z0-9][a-z0-9-]{2,23}$/.test(v) || /^[0-9a-f]{8}$/.test(v))){ App.toast('Use de 3 a 24 letras, números ou hífen.', true); return; }
+    $b('#pgSave').disabled = true;
+    const { error } = await App.sb.from('servers').update({ slug: v || null }).eq('id', s.id);
+    $b('#pgSave').disabled = false;
+    if(error){
+      App.toast(/slug|column/i.test(error.message) && /schema|exist/i.test(error.message) ? PG_SQL : /duplicate|unique|servers_slug_uq/i.test(error.message) ? 'Esse nome já é de outro servidor. Tente outro.' : error.message, true);
+      return;
+    }
+    s.slug = v || null; App.toast(v ? 'Link salvo!' : 'Voltou para o código do convite.'); renderSettings();
+  };
+}
+App.pgUrl = pgUrl;
+/* =====================================================================
+   v6.39: VÁRIAS TELAS LADO A LADO
+   Quando 2 ou mais pessoas transmitem, o botão "Ver várias telas" mostra até 4 telas
+   numa grade, cada uma com o próprio volume (e botão de mudo). Clicar em "Focar"
+   volta para uma tela só, grande.
+   ===================================================================== */
+S.multiView = ls.get('telao-multiview', false);
+const _renderStageMV = renderStage;
+renderStage = function(){
+  _renderStageMV.apply(this, arguments);
+  const wrap = $('#stageWrap'), area = wrap && wrap.querySelector('#stArea');
+  if(!area || !Voice.channel) return;
+  const screens = Voice.screens();
+  const fb = area.querySelector('#focusBox');
+  const normal = fb && !fb.classList.contains('wtfocus') && !document.body.classList.contains('cinema');
+  if(!normal || area.classList.contains('withgame') || screens.length < 2){ return; }
+  if(!S.multiView){
+    const tools = fb.querySelector('.tools');
+    if(tools && !tools.querySelector('#stGrid')){
+      tools.insertAdjacentHTML('afterbegin', `<button id="stGrid" data-tip="Ver várias telas (${Math.min(4, screens.length)})">${ic('grid', 18)}</button>`);
+      tools.querySelector('#stGrid').onclick = e => { e.stopPropagation(); S.multiView = true; ls.set('telao-multiview', true); renderStage(); };
+    }
+    return;
+  }
+  // grade: os outros primeiro, a sua por último
+  const list = screens.filter(s => !s.mine).concat(screens.filter(s => s.mine)).slice(0, 4);
+  const strip = area.querySelector('.tiles.strip');
+  const vol = s => Math.round((Voice.screenVolumes.get(s.user_id) ?? 1) * 100);
+  const cell = s => {
+    const aud = !s.mine && s.stream.getAudioTracks().length;
+    return `<div class="mvcell" data-mvs="${s.session}"><div class="vslot" data-stream="${s.stream.id}"></div>
+      <span class="lbl">${ic('monitor', 13)} ${esc(s.mine ? 'Sua tela' : prof(s.user_id).display_name)}</span>
+      <div class="mvbar">${aud ? `<button class="mvmute" data-mvm="${s.user_id}" title="Mudo">${ic(vol(s) === 0 ? 'micOff' : 'volume', 16)}</button><input type="range" min="0" max="100" value="${vol(s)}" data-mvv="${s.user_id}" title="Volume desta tela">` : s.mine ? '' : `<span class="noaud">${ic('micOff', 12)} sem áudio</span>`}
+        <span class="grow"></span><button data-mvf="${s.session}" title="Focar nesta tela">${ic('maximize', 16)}</button></div></div>`;
+  };
+  area.innerHTML = `<div class="mvwrap"><div class="mvtop"><span>${ic('grid', 15)} ${list.length} telas</span><span class="grow"></span><button class="btn sec sm" id="mvOne">${ic('monitor', 14)} Uma tela só</button></div>
+    <div class="mvgrid n${list.length}">${list.map(cell).join('')}</div></div>`;
+  if(strip){ strip.querySelectorAll('.tile.scr').forEach(x => x.remove()); area.appendChild(strip); }
+  area.querySelectorAll('.mvcell .vslot').forEach(slot => {
+    const st = list.find(x => x.stream.id === slot.dataset.stream); if(!st) return;
+    const v = getVideoEl(st.stream, false); v.className = 'fit'; slot.appendChild(v); v.play().catch(() => {});
+  });
+  area.querySelectorAll('[data-mvv]').forEach(r => r.oninput = () => {
+    Voice.setScreenVolume(r.dataset.mvv, r.value / 100);
+    const b = area.querySelector(`[data-mvm="${r.dataset.mvv}"]`); if(b) b.innerHTML = ic(+r.value === 0 ? 'micOff' : 'volume', 16);
+  });
+  area.querySelectorAll('[data-mvm]').forEach(b => b.onclick = () => {
+    const u = b.dataset.mvm, cur = Voice.screenVolumes.get(u) ?? 1, nv = cur > 0 ? 0 : 1;
+    if(cur > 0) (S.mvLast = S.mvLast || {})[u] = cur;
+    const val = nv ? ((S.mvLast && S.mvLast[u]) || 1) : 0;
+    Voice.setScreenVolume(u, val); const r = area.querySelector(`[data-mvv="${u}"]`); if(r) r.value = Math.round(val * 100);
+    b.innerHTML = ic(val === 0 ? 'micOff' : 'volume', 16);
+  });
+  const one = sess => { S.multiView = false; ls.set('telao-multiview', false); if(sess) S.focus = 's:' + sess; renderStage(); };
+  area.querySelectorAll('[data-mvf]').forEach(b => b.onclick = e => { e.stopPropagation(); one(b.dataset.mvf); });
+  area.querySelectorAll('.mvcell').forEach(c => c.ondblclick = () => { const v = c.querySelector('video'); v && (v.requestFullscreen || v.webkitRequestFullscreen || (() => {})).call(v); });
+  area.querySelector('#mvOne').onclick = () => one(null);
+  area.querySelectorAll('.tiles.strip [data-focus]').forEach(t => t.onclick = () => { S.focus = t.dataset.focus; one(null); });
+};
+/* =====================================================================
+   v6.39: KARAOKÊ NA CALL
+   Quem abre escolhe o arquivo da música (MP3, M4A, OGG, WAV) e cola a letra.
+   A música toca ao mesmo tempo para todo mundo da call (cada um ouve no próprio
+   aparelho, então não estoura no microfone de ninguém) e a letra vai rolando na tela.
+   - Letra com tempo (formato LRC: "[01:23.45] linha") rola sozinha.
+   - Letra sem tempo: quem abriu passa as linhas (botão ou seta ↓ / espaço).
+   A letra é sempre a que a pessoa colou; o Telão não busca letra em lugar nenhum.
+   ===================================================================== */
+const KR = { st: null, audio: null, off: 0, t: null, lastSend: 0, mini: false, ended: false };
+const krMine = () => KR.st && KR.st.by === S.me.id;
+function krParse(text){
+  const raw = String(text || '').replace(/\r/g, '').split('\n');
+  const timed = [];
+  raw.forEach(l => {
+    const tags = [...l.matchAll(/\[(\d{1,2}):(\d{1,2})(?:[.:](\d{1,3}))?\]/g)];
+    if(!tags.length) return;
+    const s = l.replace(/\[[^\]]*\]/g, '').trim();
+    tags.forEach(m => timed.push({ t: (+m[1]) * 60 + (+m[2]) + (m[3] ? +('0.' + m[3]) : 0), s }));
+  });
+  if(timed.length >= 2) return { timed: true, lines: timed.sort((a, b) => a.t - b.t).slice(0, 400).map(x => ({ t: +x.t.toFixed(2), s: x.s.slice(0, 140) })) };
+  return { timed: false, lines: raw.map(x => x.trim()).filter(x => x && !/^\[[a-z]+:.*\]$/i.test(x)).slice(0, 400).map(s => ({ s: s.slice(0, 140) })) };
+}
+function krSend(extra){
+  if(!krMine()) return;
+  KR.lastSend = Date.now();
+  Voice.sendFx(Object.assign({ t: 'kara', st: KR.st, now: Date.now() }, extra || {}));
+}
+function krPos(){
+  const st = KR.st; if(!st) return 0;
+  if(st.paused != null) return st.paused;
+  return Math.max(0, (Date.now() + KR.off - st.at) / 1000);
+}
+function krAudio(){
+  if(!KR.audio){ KR.audio = new Audio(); KR.audio.preload = 'auto'; KR.audio.onended = () => { KR.ended = true; krDraw(); setTimeout(() => { if(KR.ended && KR.st){ if(krMine()) Voice.sendFx({ t: 'kara', stop: true, id: KR.st.id }); else krClose(); } }, 6000); }; }
+  KR.audio.volume = P.karaVol ?? 0.8;
+  return KR.audio;
+}
+function krSync(){
+  const st = KR.st; if(!st) return;
+  const a = krAudio();
+  if(a.dataset.src !== st.url){ a.dataset.src = st.url; a.src = st.url; KR.ended = false; }
+  const pos = krPos();
+  if(st.paused != null){ if(!a.paused) a.pause(); if(Math.abs(a.currentTime - pos) > 0.3) try{ a.currentTime = pos; }catch(e){} return; }
+  if(a.duration && pos > a.duration + 1){ return; }
+  if(Math.abs(a.currentTime - pos) > 0.35) try{ a.currentTime = pos; }catch(e){}
+  if(a.paused && !KR.ended) a.play().catch(() => { krDraw(true); });
+}
+function krLineIdx(){
+  const st = KR.st; if(!st) return -1;
+  if(!st.timed) return st.line || 0;
+  const p = krPos(); let i = -1;
+  for(let k = 0; k < st.lines.length; k++){ if(st.lines[k].t <= p + 0.15) i = k; else break; }
+  return i;
+}
+function krDraw(needTap){
+  let box = $('#karaBox');
+  if(!KR.st){ box && box.remove(); return; }
+  if(!box){ document.body.insertAdjacentHTML('beforeend', '<div class="karabox" id="karaBox"></div>'); box = $('#karaBox'); }
+  const st = KR.st, i = krLineIdx(), L = st.lines;
+  const cur = L[i], prev = L[i - 1], next = L.slice(i + 1, i + 3);
+  let frac = 0;
+  if(st.timed && cur){ const end = L[i + 1] ? L[i + 1].t : cur.t + 4; frac = Math.max(0, Math.min(1, (krPos() - cur.t) / Math.max(0.5, end - cur.t))); }
+  const a = KR.audio, dur = a && a.duration || 0, pos = krPos();
+  const fmt = s => Math.floor(s / 60) + ':' + String(Math.floor(s % 60)).padStart(2, '0');
+  box.className = 'karabox' + (KR.mini ? ' mini' : '');
+  box.innerHTML = `<div class="krtop"><span class="krt">🎤 <b>${esc(st.title || 'Karaokê')}</b> <small>· ${esc(prof(st.by).display_name)}</small></span><span class="grow"></span>
+      <input type="range" min="0" max="100" value="${Math.round((P.karaVol ?? 0.8) * 100)}" id="krVol" title="Volume da música (só para você)">
+      <button id="krMini" title="${KR.mini ? 'Mostrar letra' : 'Minimizar'}">${ic(KR.mini ? 'expand' : 'chevDown', 16)}</button>
+      ${krMine() ? `<button id="krStop" title="Encerrar karaokê">${ic('x', 16)}</button>` : `<button id="krHide" title="Fechar só para mim">${ic('x', 16)}</button>`}</div>
+    ${KR.mini ? '' : `<div class="krlines">
+      <div class="krl prev">${prev ? esc(prev.s) : ''}</div>
+      <div class="krl cur" style="--kf:${(frac * 100).toFixed(1)}%">${cur ? (esc(cur.s) || '♪') : (KR.ended ? 'Fim! 👏' : st.timed ? '♪ ♪ ♪' : esc((L[0] || {}).s || '♪'))}</div>
+      ${next.map(x => `<div class="krl nxt">${esc(x.s) || '♪'}</div>`).join('')}</div>`}
+    <div class="krbar"><span>${fmt(pos)}${dur ? ' / ' + fmt(dur) : ''}</span><div class="krprog"><i style="width:${dur ? Math.min(100, pos / dur * 100).toFixed(1) : 0}%"></i></div>
+      ${krMine() ? `<button id="krPlay" title="${st.paused != null ? 'Continuar' : 'Pausar'}">${ic(st.paused != null ? 'play' : 'pause', 16)}</button>${st.timed ? '' : `<button id="krNext" class="btn sm" title="Próxima linha (↓ ou espaço)">Próxima linha ${ic('chevDown', 14)}</button>`}` : ''}
+      ${needTap ? '<button class="btn sm" id="krTap">▶ Tocar música</button>' : ''}</div>`;
+  const $k = q => box.querySelector(q);
+  $k('#krVol').oninput = e => { P.karaVol = e.target.value / 100; savePrefs(); if(KR.audio) KR.audio.volume = P.karaVol; };
+  $k('#krMini').onclick = () => { KR.mini = !KR.mini; krDraw(); };
+  if($k('#krStop')) $k('#krStop').onclick = () => { Voice.sendFx({ t: 'kara', stop: true, id: st.id }); };
+  if($k('#krHide')) $k('#krHide').onclick = krHide;
+  if($k('#krPlay')) $k('#krPlay').onclick = krToggle;
+  if($k('#krNext')) $k('#krNext').onclick = () => krStep(1);
+  if($k('#krTap')) $k('#krTap').onclick = () => { krSync(); krDraw(); };
+}
+function krToggle(){
+  const st = KR.st; if(!krMine() || !st) return;
+  if(st.paused != null){ st.at = Date.now() - st.paused * 1000; st.paused = null; }
+  else st.paused = krPos();
+  KR.off = 0; krSend(); krSync(); krDraw();
+}
+function krStep(d){
+  const st = KR.st; if(!krMine() || !st || st.timed) return;
+  st.line = Math.max(0, Math.min(st.lines.length - 1, (st.line || 0) + d)); krSend(); krDraw();
+}
+function krLoop(){
+  clearInterval(KR.t);
+  KR.t = setInterval(() => {
+    if(!KR.st){ clearInterval(KR.t); return; }
+    if(KR.hidden === KR.st.id) return;
+    if(!document.hidden) krDraw();
+    if(KR.audio && !KR.audio.paused && KR.st.paused == null){ const d = Math.abs(KR.audio.currentTime - krPos()); if(d > 0.6) krSync(); }
+  }, 200);
+  clearInterval(KR.t2);
+  KR.t2 = setInterval(() => { if(!KR.st){ clearInterval(KR.t2); return; } if(krMine() && Date.now() - KR.lastSend > 8000) krSend(); }, 2000);   // quem entrou depois também recebe
+}
+function krClose(){
+  if(KR.audio){ try{ KR.audio.pause(); }catch(e){} }
+  KR.st = null; KR.ended = false; KR.hidden = null; clearInterval(KR.t); krDraw();
+}
+function krHide(){ if(!KR.st) return; KR.hidden = KR.st.id; if(KR.audio) try{ KR.audio.pause(); }catch(e){} const b = $('#karaBox'); b && b.remove(); }
+function krShow(){ KR.hidden = null; KR.mini = false; krSync(); krDraw(); }
+const _onFxKR = Voice.onFx;
+Voice.onFx = (pl, mine) => {
+  if(pl && pl.t === 'kara'){
+    if(pl.stop){ if(KR.st && (!pl.id || KR.st.id === pl.id)){ if(!mine) App.toast('O karaokê acabou. 🎤'); krClose(); } return; }
+    if(!pl.st || !pl.st.url || !/^(https:|blob:)/.test(pl.st.url)) return;
+    const isNew = !KR.st || KR.st.id !== pl.st.id;
+    if(mine){ KR.off = 0; } else { KR.off = (pl.now || Date.now()) - Date.now(); }
+    if(!mine || isNew) KR.st = pl.st;
+    if(isNew){ KR.ended = false; KR.hidden = null; if(!mine) App.toast(`🎤 ${prof(pl.st.by).display_name} começou um karaokê: ${pl.st.title || ''}`); krLoop(); }
+    if(KR.hidden === pl.st.id) return;   // fechou só para si: continua sabendo, mas sem tocar
+    krSync(); krDraw();
+    return;
+  }
+  _onFxKR(pl, mine);
+};
+const _leaveVoiceKR = leaveVoice;
+leaveVoice = function(){ if(KR.st){ if(krMine()) Voice.sendFx({ t: 'kara', stop: true, id: KR.st.id }); krClose(); } return _leaveVoiceKR.apply(this, arguments); };
+document.addEventListener('keydown', e => {
+  if(!krMine() || !KR.st || KR.st.timed || /input|textarea|select/i.test((e.target && e.target.tagName) || '') || (e.target && e.target.isContentEditable)) return;
+  if(e.key === 'ArrowDown' || (e.key === ' ' && $('#karaBox') && $('#karaBox').contains(document.activeElement))){ e.preventDefault(); krStep(1); }
+  else if(e.key === 'ArrowUp'){ e.preventDefault(); krStep(-1); }
+});
+
+function karaStart(){
+  if(!Voice.channel){ App.toast('Entre numa chamada para o karaokê.', true); return; }
+  modal(`<form id="krF"><div class="mh"><h2>🎤 Karaokê</h2><p>A música toca para todo mundo da call ao mesmo tempo e a letra vai aparecendo na tela.</p></div>
+    <div class="mc">
+      <label class="field"><span>Música (arquivo do seu PC ou celular)</span><input type="file" id="krFile" accept="audio/*,video/mp4,video/webm,.mp3,.m4a,.ogg,.opus,.wav,.aac,.flac" class="inp"></label>
+      <label class="field"><span>Nome da música</span><input class="inp" id="krTitle" maxlength="80" placeholder="Ex.: Evidências — Chitãozinho & Xororó"></label>
+      <label class="field"><span>Letra</span><textarea class="inp" id="krLyr" rows="8" maxlength="12000" placeholder="Cole a letra aqui.\n\nCom tempo (formato LRC) ela rola sozinha:\n[00:12.50] primeira linha\n[00:16.80] segunda linha\n\nSem tempo, você passa as linhas com a seta ↓."></textarea></label>
+      <small class="mut">Dica: arquivos .lrc (letra com tempo) dá para abrir no Bloco de Notas e colar aqui.</small>
+      <div class="err" id="krErr"></div>
+    </div>
+    <div class="mf wrapf"><button type="button" class="btn sec" data-close>Cancelar</button><button class="btn" id="krGo">${ic('play', 16)} Começar</button></div></form>`, m => {
+    const f = m.querySelector('#krFile'), t = m.querySelector('#krTitle');
+    f.onchange = () => { const x = f.files[0]; if(x && !t.value) t.value = x.name.replace(/\.[^.]+$/, '').replace(/[_]+/g, ' ').slice(0, 80); };
+    m.querySelector('#krF').onsubmit = async e => {
+      e.preventDefault();
+      const err = m.querySelector('#krErr'), go = m.querySelector('#krGo'), file = f.files[0];
+      const lyr = m.querySelector('#krLyr').value;
+      if(!file){ err.textContent = 'Escolha o arquivo da música.'; return; }
+      if(!/^(audio|video)\//.test(file.type) && !/\.(mp3|m4a|ogg|opus|wav|aac|flac|webm|mp4)$/i.test(file.name)){ err.textContent = 'Esse arquivo não é de música.'; return; }
+      if(file.size > 25 * 1048576){ err.textContent = 'Arquivo grande demais (máx. 25 MB).'; return; }
+      const parsed = krParse(lyr);
+      if(!parsed.lines.length){ err.textContent = 'Cole a letra da música.'; return; }
+      go.disabled = true; go.innerHTML = '<span class="spin sm"></span> Enviando a música…';
+      try{
+        const meta = await uploadOne({ file });
+        KR.st = { id: Math.random().toString(36).slice(2, 10), url: meta.url, title: t.value.trim().slice(0, 80), by: S.me.id, timed: parsed.timed, lines: parsed.lines, line: 0, at: Date.now() + 2500, paused: null };
+        KR.off = 0; KR.hidden = null; closeModal();
+        krSend(); krLoop(); krSync(); krDraw();
+        App.toast(parsed.timed ? 'Começa em 2 segundos! A letra rola sozinha.' : 'Começa em 2 segundos! Passe as linhas com a seta ↓.');
+      }catch(x){ err.textContent = 'Não deu para enviar: ' + (x.message || x); go.disabled = false; go.innerHTML = `${ic('play', 16)} Começar`; }
+    };
+  });
+}
+const _activitiesMenuKR = activitiesMenu;
+activitiesMenu = function(anchor){
+  _activitiesMenuKR(anchor);
+  const el = $('#menu'); if(!el.classList.contains('actpop')) return;
+  const rl = el.querySelector('#acRl'); if(!rl || el.querySelector('#acKara')) return;
+  rl.insertAdjacentHTML('afterend', `<button class="actbig" id="acKara"><span class="ai">🎤</span><div><b>Karaokê</b><small>${KR.st ? 'Tem um tocando agora · clique para ver a letra' : 'Música pra todo mundo e a letra rolando na tela'}</small></div></button>`);
+  el.querySelector('#acKara').onclick = () => { closeMenu(); if(KR.st) krShow(); else karaStart(); };
+};
+App.kara = { start: karaStart, get st(){ return KR.st; }, parse: krParse, toggle: krToggle, step: krStep };
+/* =====================================================================
+   v6.39: MAIS JOGOS NA CALL — Uno, Dominó, Imagem & Ação e Jogo da Velha (torneio)
+   Mesmo esquema dos outros: quem abre é o anfitrião e guarda o que é secreto.
+   - Uno e Dominó: as cartas/pedras de cada um ficam só com o anfitrião e cada
+     jogador recebe em particular só a própria mão. A tela mostra quantas cada um tem.
+   - Imagem & Ação: só quem vai fazer a mímica recebe a palavra (em particular).
+   - Jogo da Velha: chaveamento de torneio; a call toda assiste cada partida.
+   ===================================================================== */
+const K4 = App.G;
+const H4 = { gid: null, hands: {}, deck: [], disc: [], my: {} };
+const pres4 = () => K4.presentIds();
+function p4Send(st, uid, kind, data){
+  if(uid === S.me.id){ H4.my[kind] = Object.assign({ gid: st.id }, data); return; }
+  sendToUser(uid, 'game-priv', Object.assign({ gid: st.id, k4: kind }, data));
+}
+const _onGamePriv4 = App.onGamePriv;
+App.onGamePriv = pl => {
+  if(pl && pl.k4){ const st = K4.st; if(!st || pl.gid !== st.id) return; H4.my[pl.k4] = pl; K4.render(); return; }
+  if(_onGamePriv4) _onGamePriv4(pl);
+};
+const myPriv = (st, kind) => { const x = H4.my[kind]; return x && x.gid === st.id ? x : null; };
+function nextIdx(st, n){ const L = st.order.length; return ((st.turn + st.dir * (n || 1)) % L + L) % L; }
+const curU = st => st.order[st.turn];
+
+/* ============================ UNO ============================ */
+const T_UNO = 30000;
+const U_COL = { r: 'Vermelho', g: 'Verde', b: 'Azul', y: 'Amarelo' };
+const uLabel = c => c.v === 's' ? '⊘' : c.v === 'r' ? '⇄' : c.v === 'w' ? '★' : c.v;
+const uVal = c => /^\d$/.test(c.v) ? +c.v : c.c === 'w' ? 50 : 20;
+const uCard = (c, extra = '') => `<span class="ucard c-${c.c} ${extra}"><b>${esc(uLabel(c))}</b><i>${esc(uLabel(c))}</i></span>`;
+function uDeck(){
+  let id = 0; const d = [];
+  ['r', 'g', 'b', 'y'].forEach(c => {
+    d.push({ id: id++, c, v: '0' });
+    for(let k = 0; k < 2; k++) ['1', '2', '3', '4', '5', '6', '7', '8', '9', 's', 'r', '+2'].forEach(v => d.push({ id: id++, c, v }));
+  });
+  for(let k = 0; k < 4; k++){ d.push({ id: id++, c: 'w', v: 'w' }); d.push({ id: id++, c: 'w', v: '+4' }); }
+  return K4.shuffle(d);
+}
+function uDraw(st, uid, n){
+  const h = H4.hands[uid]; const got = [];
+  for(let i = 0; i < n; i++){
+    if(!H4.deck.length){ const top = H4.disc.pop(); H4.deck = K4.shuffle(H4.disc); H4.disc = top ? [top] : []; }
+    if(!H4.deck.length) break;
+    const c = H4.deck.pop(); h.push(c); got.push(c);
+  }
+  st.counts[uid] = h.length; st.deckN = H4.deck.length;
+  return got;
+}
+const uCan = (st, c) => c.c === 'w' || c.c === st.color || c.v === st.top.v;
+function uSendAll(st){ st.order.forEach(u => p4Send(st, u, 'uno', { hand: H4.hands[u] || [] })); }
+function uAdvance(st, n){ st.turn = nextIdx(st, n); st.drawn = null; st.drawnId = null; K4.setDeadline(T_UNO); }
+function uFinish(st, winner){
+  let pts = 0; st.order.forEach(u => { if(u !== winner) pts += (H4.hands[u] || []).reduce((a, c) => a + uVal(c), 0); });
+  st.winner = winner; st.winPts = pts;
+  st.players.forEach(u => { st.scores[u] = u === winner ? 100 + pts : Math.max(0, 40 - (H4.hands[u] || []).reduce((a, c) => a + uVal(c), 0)); });
+  st.reveal = Object.fromEntries(st.order.map(u => [u, (H4.hands[u] || []).slice(0, 20)]));
+  K4.endGame();
+}
+App.registerGame('uno', { name: 'Uno', icon: '🟥', desc: 'Jogue carta da mesma cor ou do mesmo número. +2, +4, pular e inverter valem. Ficou com uma carta? Grite UNO antes que alguém te pegue! Quem zerar a mão primeiro ganha.', min: 2 }, {
+  start(st){
+    if(st.players.length > 10){ App.toast('Uno vai até 10 pessoas.', true); st.phase = 'lobby'; K4.push(); return; }
+    H4.gid = st.id; H4.deck = uDeck(); H4.disc = []; H4.hands = {};
+    st.order = K4.shuffle(st.players); st.dir = 1; st.turn = 0; st.counts = {};
+    st.order.forEach(u => { H4.hands[u] = []; uDraw(st, u, 7); });
+    let top; do { top = H4.deck.pop(); if(!/^\d$/.test(top.v)){ H4.deck.unshift(top); top = null; } } while(!top);
+    H4.disc.push(top); st.top = top; st.color = top.c; st.deckN = H4.deck.length;
+    st.unoOpen = null; st.log = 'Começou! Primeira carta: ' + U_COL[top.c] + ' ' + top.v;
+    st.phase = 'play'; K4.setDeadline(T_UNO);
+    uSendAll(st); K4.push();
+    setTimeout(() => { if(K4.st && K4.st.id === st.id && H4.gid === st.id) uSendAll(st); }, 1500);
+  },
+  act(st, uid, a){
+    if(st.phase !== 'play' || H4.gid !== st.id) return;
+    const h = H4.hands[uid]; if(!h) return;
+    if(a.a === 'ucatch'){
+      if(st.unoOpen && st.unoOpen !== uid && st.order.includes(uid) && (H4.hands[st.unoOpen] || []).length === 1){
+        const who = st.unoOpen; uDraw(st, who, 2); st.unoOpen = null; st.log = `${prof(uid).display_name} pegou ${prof(who).display_name} sem gritar UNO! +2 cartas`;
+        p4Send(st, who, 'uno', { hand: H4.hands[who] }); K4.push();
+      }
+      return;
+    }
+    if(a.a === 'uuno'){ if(st.unoOpen === uid){ st.unoOpen = null; st.log = `${prof(uid).display_name} gritou UNO! 🔔`; st.shout = { at: Date.now(), uid }; K4.push(); } return; }
+    if(curU(st) !== uid) return;
+    if(a.a === 'uplay'){
+      const i = h.findIndex(c => c.id === a.id); if(i < 0) return;
+      const c = h[i];
+      if(st.drawnId != null && c.id !== st.drawnId) return;
+      if(!uCan(st, c)) return;
+      if(st.unoOpen && st.unoOpen !== uid) st.unoOpen = null;
+      h.splice(i, 1); st.counts[uid] = h.length; H4.disc.push(c); st.top = c;
+      st.color = c.c === 'w' ? (U_COL[a.color] ? a.color : K4.shuffle(['r', 'g', 'b', 'y'])[0]) : c.c;
+      st.log = `${prof(uid).display_name} jogou ${c.c === 'w' ? (c.v === '+4' ? '+4' : 'coringa') + ' e escolheu ' + U_COL[st.color] : U_COL[c.c] + ' ' + uLabel(c)}`;
+      if(!h.length){ p4Send(st, uid, 'uno', { hand: h }); uFinish(st, uid); return; }
+      if(h.length === 1){ if(a.uno){ st.log += ' · UNO! 🔔'; st.shout = { at: Date.now(), uid }; } else st.unoOpen = uid; }
+      p4Send(st, uid, 'uno', { hand: h });
+      const two = st.order.length === 2;
+      if(c.v === 'r'){ if(two) uAdvance(st, 2); else { st.dir = -st.dir; uAdvance(st, 1); } }
+      else if(c.v === 's') uAdvance(st, 2);
+      else if(c.v === '+2' || c.v === '+4'){
+        const vic = st.order[nextIdx(st, 1)], n = c.v === '+2' ? 2 : 4;
+        uDraw(st, vic, n); p4Send(st, vic, 'uno', { hand: H4.hands[vic] }); st.log += ` · ${prof(vic).display_name} comprou ${n} e perdeu a vez`;
+        uAdvance(st, 2);
+      } else uAdvance(st, 1);
+      K4.push();
+    } else if(a.a === 'udraw' && st.drawnId == null){
+      if(st.unoOpen && st.unoOpen !== uid) st.unoOpen = null;
+      const [c] = uDraw(st, uid, 1);
+      p4Send(st, uid, 'uno', { hand: h });
+      if(c && uCan(st, c)){ st.drawn = uid; st.drawnId = c.id; st.log = `${prof(uid).display_name} comprou uma carta`; K4.setDeadline(12000); }
+      else { st.log = `${prof(uid).display_name} comprou e passou`; uAdvance(st, 1); }
+      K4.push();
+    } else if(a.a === 'upass' && st.drawnId != null){ st.log = `${prof(uid).display_name} passou`; uAdvance(st, 1); K4.push(); }
+  },
+  tick(st){
+    if(st.phase !== 'play') return;
+    if(H4.gid !== st.id){ K4.feed({ sys: 'Quem dava as cartas saiu da call, então a partida acabou.' }); uFinish(st, null); return; }
+    const here = pres4(), alive = st.order.filter(u => here.includes(u));
+    if(alive.length < 2){ uFinish(st, alive[0] || null); return; }
+    const u = curU(st);
+    if(!here.includes(u)){ st.log = `${prof(u).display_name} não está na call: pulou a vez`; uAdvance(st, 1); K4.push(); return; }
+    if(st.drawnId != null){ st.log = `${prof(u).display_name} demorou e passou`; uAdvance(st, 1); K4.push(); return; }
+    uDraw(st, u, 1); p4Send(st, u, 'uno', { hand: H4.hands[u] }); st.log = `${prof(u).display_name} demorou: comprou e passou`; uAdvance(st, 1); K4.push();
+  },
+  render(st){
+    const me = S.me.id, mine = st.order.includes(me), my = myPriv(st, 'uno'), hand = my ? my.hand : [];
+    const myTurn = st.phase === 'play' && curU(st) === me;
+    const seats = st.order.map((u, i) => `<div class="useat ${i === st.turn ? 'turn' : ''} ${u === me ? 'me' : ''}">${avatar(prof(u), 'sm')}<span>${K4.nm(u)}</span><b class="ucnt">${st.counts[u] ?? 0}</b>${(st.counts[u] === 1) ? '<i class="uone">UNO</i>' : ''}</div>`).join(`<span class="udir">${st.dir > 0 ? '→' : '←'}</span>`);
+    const pend = U4.wild != null && hand.find(c => c.id === U4.wild);
+    const shoutNew = st.shout && Date.now() - st.shout.at < 2200;
+    return `<div class="guno">
+      <div class="useats">${seats}</div>
+      <div class="utable"><div class="udeck"><button class="ucard back" data-g="udraw" ${myTurn && st.drawnId == null ? '' : 'disabled'} title="Comprar"><b>UNO</b></button><small>${st.deckN} no monte</small></div>
+        <div class="udisc">${st.top ? uCard(st.top, 'big') : ''}<span class="ucolor c-${st.color}">${U_COL[st.color] || ''}</span></div></div>
+      <div class="ulog">${esc(st.log || '')}</div>
+      ${shoutNew ? `<div class="ushout">UNO! 🔔<small>${K4.nm(st.shout.uid)}</small></div>` : ''}
+      ${st.unoOpen && st.unoOpen !== me && mine ? `<button class="btn red" data-g="ucatch">🫵 ${K4.nm(st.unoOpen)} não gritou UNO! Pegar</button>` : ''}
+      ${st.unoOpen === me ? `<button class="btn ubig" data-g="uuno">🔔 Gritar UNO!</button>` : ''}
+      ${mine ? `${pend ? `<div class="uwild"><b>Escolha a cor:</b>${['r', 'g', 'b', 'y'].map(c => `<button class="uwc c-${c}" data-g="ucolor" data-c="${c}">${U_COL[c]}</button>`).join('')}<button class="btn sec sm" data-g="uwx">Cancelar</button></div>` : ''}
+        <div class="uhand">${hand.map(c => { const ok = myTurn && uCan(st, c) && (st.drawnId == null || st.drawnId === c.id); return `<button class="ucbtn ${ok ? 'ok' : ''}" data-g="uplay" data-id="${c.id}" ${ok ? '' : 'disabled'}>${uCard(c)}</button>`; }).join('') || '<span class="mut small">Esperando as cartas…</span>'}</div>
+        <div class="uacts">${myTurn ? `<span class="tyour">Sua vez!</span>${hand.length === 2 ? `<label class="usay"><input type="checkbox" id="uSay" ${U4.say ? 'checked' : ''}> Gritar UNO ao jogar</label>` : ''}${st.drawnId != null ? '<button class="btn sec sm" data-g="upass">Passar</button>' : ''}` : st.phase === 'play' ? `<span class="mut">Vez de ${K4.nm(curU(st))}</span>` : ''}</div>`
+        : '<p class="mut small">Você está assistindo.</p>'}
+    </div>`;
+  },
+  endExtra(st){
+    if(!st.reveal) return '';
+    return `<div class="truend">${st.winner ? `🟥 <b>${K4.nm(st.winner)}</b> zerou a mão e levou <b>${st.winPts}</b> pontos das cartas dos outros!` : 'A partida acabou.'}</div>
+      <div class="ureveal">${Object.entries(st.reveal).filter(([, h]) => h.length).map(([u, h]) => `<div><small>${K4.nm(u)}</small>${h.map(c => uCard(c, 'mini')).join('')}</div>`).join('')}</div>`;
+  },
+  after(st, el){
+    const cb = el && el.querySelector('#uSay'); if(cb) cb.onchange = () => { U4.say = cb.checked; };
+    if(st.shout && st.shout.at !== U4.shout && Date.now() - st.shout.at < 2200){ U4.shout = st.shout.at; App.sfx && App.sfx('screen'); }
+    if(st.phase === 'play' && curU(st) === S.me.id && U4.lastTurn !== st.turn + ':' + st.log){ U4.lastTurn = st.turn + ':' + st.log; if(navigator.vibrate) try{ navigator.vibrate(40); }catch(e){} }
+  },
+  click(k, b, st){
+    const my = myPriv(st, 'uno'), hand = my ? my.hand : [];
+    if(k === 'uplay'){
+      const id = +b.dataset.id, c = hand.find(x => x.id === id); if(!c) return true;
+      if(c.c === 'w'){ U4.wild = id; K4.render(); return true; }
+      K4.act({ a: 'uplay', id, uno: hand.length === 2 && U4.say }); U4.say = false; return true;
+    }
+    if(k === 'ucolor'){ const id = U4.wild; U4.wild = null; K4.act({ a: 'uplay', id, color: b.dataset.c, uno: hand.length === 2 && U4.say }); U4.say = false; return true; }
+    if(k === 'uwx'){ U4.wild = null; K4.render(); return true; }
+    if(k === 'udraw'){ K4.act({ a: 'udraw' }); return true; }
+    if(k === 'upass'){ K4.act({ a: 'upass' }); return true; }
+    if(k === 'uuno'){ K4.act({ a: 'uuno' }); return true; }
+    if(k === 'ucatch'){ K4.act({ a: 'ucatch' }); return true; }
+  },
+});
+const U4 = { wild: null, say: false };
+
+/* ============================ DOMINÓ ============================ */
+const T_DOM = 35000, T_DOM_END = 7000, DOM_TARGET = 50, DOM_ROUNDS = 3;
+const dPip = n => { const P = { 0: [], 1: [4], 2: [0, 8], 3: [0, 4, 8], 4: [0, 2, 6, 8], 5: [0, 2, 4, 6, 8], 6: [0, 2, 3, 5, 6, 8] }[n] || []; return `<span class="dhalf">${[...Array(9)].map((_, i) => `<i class="${P.includes(i) ? 'on' : ''}"></i>`).join('')}</span>`; };
+const dTile = (t, extra = '') => `<span class="dtile ${t[0] === t[1] ? 'dbl' : ''} ${extra}">${dPip(t[0])}<span class="dsep"></span>${dPip(t[1])}</span>`;
+const dSum = h => (h || []).reduce((a, t) => a + t[0] + t[1], 0);
+function dFits(st, t){
+  if(!st.chain.length) return ['L'];
+  const s = []; if(t[0] === st.L || t[1] === st.L) s.push('L'); if(t[0] === st.R || t[1] === st.R) s.push('R'); return s;
+}
+function dDeal(st){
+  const all = []; for(let a = 0; a <= 6; a++) for(let b = a; b <= 6; b++) all.push([a, b]);
+  const d = K4.shuffle(all); H4.hands = {}; H4.gid = st.id;
+  st.order.forEach(u => { H4.hands[u] = d.splice(0, 7); st.counts[u] = 7; });
+  H4.deck = d; st.bone = d.length; st.chain = []; st.L = null; st.R = null; st.passes = 0; st.handNo = (st.handNo || 0) + 1;
+  // começa quem tem a maior carroça (pedra dobrada); senão, quem ganhou a última
+  let best = -1, who = st.lastWin && st.order.includes(st.lastWin) ? st.order.indexOf(st.lastWin) : 0;
+  if(!st.lastWin) st.order.forEach((u, i) => H4.hands[u].forEach(t => { if(t[0] === t[1] && t[0] > best){ best = t[0]; who = i; } }));
+  st.turn = who; st.dir = 1; st.log = `Rodada ${st.handNo}. Começa ${prof(st.order[who]).display_name}.`;
+  st.phase = 'play'; K4.setDeadline(T_DOM);
+  st.order.forEach(u => p4Send(st, u, 'dom', { hand: H4.hands[u], handNo: st.handNo }));
+  setTimeout(() => { if(K4.st && K4.st.id === st.id && H4.gid === st.id && K4.st.handNo === st.handNo) st.order.forEach(u => u !== S.me.id && p4Send(st, u, 'dom', { hand: H4.hands[u], handNo: st.handNo })); }, 1500);
+}
+function dPlace(st, uid, i, side){
+  const h = H4.hands[uid], t = h[i]; if(!t) return false;
+  const fits = dFits(st, t); if(!fits.length) return false;
+  if(!fits.includes(side)) side = fits[0];
+  let tile = t.slice();
+  if(!st.chain.length){ st.chain = [tile]; st.L = tile[0]; st.R = tile[1]; }
+  else if(side === 'L'){ if(tile[1] !== st.L) tile = [tile[1], tile[0]]; st.chain.unshift(tile); st.L = tile[0]; }
+  else { if(tile[0] !== st.R) tile = [tile[1], tile[0]]; st.chain.push(tile); st.R = tile[1]; }
+  h.splice(i, 1); st.counts[uid] = h.length; st.passes = 0;
+  st.log = `${prof(uid).display_name} jogou ${t[0]}|${t[1]}`;
+  p4Send(st, uid, 'dom', { hand: h, handNo: st.handNo });
+  if(!h.length){ dRoundEnd(st, uid, 'bateu'); return true; }
+  st.turn = nextIdx(st, 1); K4.setDeadline(T_DOM); K4.push();
+  return true;
+}
+function dRoundEnd(st, winner, why){
+  if(!winner){
+    // trancou: ganha quem tem menos pontos na mão
+    let low = 1e9; st.order.forEach(u => { const s = dSum(H4.hands[u]); if(s < low){ low = s; winner = u; } });
+  }
+  const pts = st.order.reduce((a, u) => a + (u === winner ? 0 : dSum(H4.hands[u])), 0);
+  st.tot[winner] = (st.tot[winner] || 0) + pts; st.scores[winner] = (st.scores[winner] || 0) + pts + 10; st.lastWin = winner;
+  st.rend = { winner, why, pts, hands: Object.fromEntries(st.order.map(u => [u, H4.hands[u] || []])) };
+  st.phase = 'rend'; K4.setDeadline(T_DOM_END); K4.push();
+}
+App.registerGame('domino', { name: 'Dominó', icon: '🁫', desc: 'De 2 a 4 pessoas, 7 pedras cada. Encaixe pelo número da ponta. Sem pedra que sirva: compre do monte (ou passe, se acabou). Quem bater leva os pontos das mãos dos outros. Ganha quem chegar a 50 (ou mais pontos em 3 rodadas).', min: 2 }, {
+  start(st){
+    if(st.players.length > 4){ App.toast('Dominó vai até 4 pessoas.', true); st.phase = 'lobby'; K4.push(); return; }
+    st.order = K4.shuffle(st.players); st.counts = {}; st.tot = {}; st.handNo = 0; st.lastWin = null;
+    dDeal(st); K4.push();
+  },
+  act(st, uid, a){
+    if(st.phase !== 'play' || H4.gid !== st.id || curU(st) !== uid) return;
+    const h = H4.hands[uid]; if(!h) return;
+    const can = h.some(t => dFits(st, t).length);
+    if(a.a === 'dplay') dPlace(st, uid, a.i | 0, a.side === 'L' ? 'L' : 'R');
+    else if(a.a === 'dbuy' && !can && H4.deck.length){ h.push(H4.deck.pop()); st.counts[uid] = h.length; st.bone = H4.deck.length; st.log = `${prof(uid).display_name} comprou do monte`; p4Send(st, uid, 'dom', { hand: h, handNo: st.handNo }); K4.setDeadline(T_DOM); K4.push(); }
+    else if(a.a === 'dpass' && !can && !H4.deck.length){
+      st.passes++; st.log = `${prof(uid).display_name} passou`;
+      if(st.passes >= st.order.length){ dRoundEnd(st, null, 'trancou'); return; }
+      st.turn = nextIdx(st, 1); K4.setDeadline(T_DOM); K4.push();
+    }
+  },
+  tick(st){
+    if(st.phase === 'rend'){
+      const top = Math.max(0, ...Object.values(st.tot));
+      if(top >= DOM_TARGET || st.handNo >= DOM_ROUNDS){ st.winner = Object.keys(st.tot).find(u => st.tot[u] === top) || null; if(st.winner) st.scores[st.winner] = (st.scores[st.winner] || 0) + 50; K4.endGame(); return; }
+      dDeal(st); K4.push(); return;
+    }
+    if(st.phase !== 'play') return;
+    if(H4.gid !== st.id){ K4.feed({ sys: 'Quem estava com as pedras saiu da call, então a partida acabou.' }); K4.endGame(); return; }
+    const here = pres4(); if(st.order.filter(u => here.includes(u)).length < 2){ K4.feed({ sys: 'Saiu gente da call, então a partida acabou.' }); K4.endGame(); return; }
+    const u = curU(st), h = H4.hands[u] || [];
+    // demorou: joga a primeira que serve, ou compra, ou passa
+    const i = h.findIndex(t => dFits(st, t).length);
+    if(i >= 0){ dPlace(st, u, i, dFits(st, h[i])[0]); return; }
+    if(H4.deck.length){ h.push(H4.deck.pop()); st.counts[u] = h.length; st.bone = H4.deck.length; p4Send(st, u, 'dom', { hand: h, handNo: st.handNo }); st.log = `${prof(u).display_name} demorou: comprou`; K4.setDeadline(5000); K4.push(); return; }
+    st.passes++; st.log = `${prof(u).display_name} demorou e passou`;
+    if(st.passes >= st.order.length){ dRoundEnd(st, null, 'trancou'); return; }
+    st.turn = nextIdx(st, 1); K4.setDeadline(T_DOM); K4.push();
+  },
+  render(st){
+    const me = S.me.id, mine = st.order.includes(me), my = myPriv(st, 'dom'), hand = my && my.handNo === st.handNo ? my.hand : [];
+    const myTurn = st.phase === 'play' && curU(st) === me;
+    const can = hand.some(t => dFits(st, t).length);
+    const seats = st.order.map((u, i) => `<div class="useat ${st.phase === 'play' && i === st.turn ? 'turn' : ''} ${u === me ? 'me' : ''}">${avatar(prof(u), 'sm')}<span>${K4.nm(u)}</span><b class="ucnt">${st.counts[u] ?? 0}</b><small class="dtot">${st.tot[u] || 0} pts</small></div>`).join('');
+    const sel = D4.sel != null && hand[D4.sel] && myTurn ? D4.sel : null;
+    const fitsSel = sel != null ? dFits(st, hand[sel]) : [];
+    const chain = st.chain.length ? st.chain.map((t, i) => dTile(t, (i === 0 ? 'endl ' : '') + (i === st.chain.length - 1 ? 'endr' : ''))).join('') : '<span class="mut">Mesa vazia: qualquer pedra começa.</span>';
+    if(st.phase === 'rend'){
+      const r = st.rend;
+      return `<div class="gdom"><div class="useats">${seats}</div><div class="thandend">${r.why === 'trancou' ? '🔒 Trancou! ' : '💥 Bateu! '}<b>${K4.nm(r.winner)}</b> levou <b>+${r.pts}</b></div>
+        <div class="ureveal">${Object.entries(r.hands).filter(([, h]) => h.length).map(([u, h]) => `<div><small>${K4.nm(u)} · ${dSum(h)}</small>${h.map(t => dTile(t, 'mini')).join('')}</div>`).join('')}</div></div>`;
+    }
+    return `<div class="gdom"><div class="useats">${seats}</div>
+      <div class="dtable">${sel != null && fitsSel.includes('L') && st.chain.length ? '<button class="btn sm dside" data-g="dside" data-s="L">◀ Aqui</button>' : ''}<div class="dchain">${chain}</div>${sel != null && fitsSel.includes('R') && st.chain.length ? '<button class="btn sm dside" data-g="dside" data-s="R">Aqui ▶</button>' : ''}</div>
+      <div class="ulog">${esc(st.log || '')} · <small>${st.bone} no monte · rodada ${st.handNo}/${DOM_ROUNDS} · até ${DOM_TARGET} pts</small></div>
+      ${mine ? `<div class="dhand">${hand.map((t, i) => { const ok = myTurn && dFits(st, t).length; return `<button class="dbtn ${ok ? 'ok' : ''} ${sel === i ? 'sel' : ''}" data-g="dplay" data-i="${i}" ${ok ? '' : 'disabled'}>${dTile(t)}</button>`; }).join('') || '<span class="mut small">Esperando as pedras…</span>'}</div>
+        <div class="uacts">${myTurn ? (can ? '<span class="tyour">Sua vez! Escolha uma pedra</span>' : st.bone ? '<button class="btn" data-g="dbuy">Comprar do monte</button>' : '<button class="btn sec" data-g="dpass">Passar a vez</button>') : st.phase === 'play' ? `<span class="mut">Vez de ${K4.nm(curU(st))}</span>` : ''}</div>`
+        : '<p class="mut small">Você está assistindo.</p>'}</div>`;
+  },
+  endExtra(st){ return st.winner ? `<div class="truend">🁫 <b>${K4.nm(st.winner)}</b> ganhou o dominó com <b>${st.tot[st.winner]}</b> pontos!</div>` : ''; },
+  click(k, b, st){
+    const my = myPriv(st, 'dom'), hand = my ? my.hand : [];
+    if(k === 'dplay'){
+      const i = +b.dataset.i, f = dFits(st, hand[i] || [-1, -1]);
+      if(f.length === 1 || !st.chain.length){ D4.sel = null; K4.act({ a: 'dplay', i, side: f[0] || 'R' }); }
+      else if(f.length === 2 && hand[i][0] === hand[i][1] && st.L === st.R){ D4.sel = null; K4.act({ a: 'dplay', i, side: 'R' }); }
+      else { D4.sel = i; K4.render(); }
+      return true;
+    }
+    if(k === 'dside'){ const i = D4.sel; D4.sel = null; K4.act({ a: 'dplay', i, side: b.dataset.s }); return true; }
+    if(k === 'dbuy'){ K4.act({ a: 'dbuy' }); return true; }
+    if(k === 'dpass'){ K4.act({ a: 'dpass' }); return true; }
+  },
+});
+const D4 = { sel: null };
+
+/* ============================ IMAGEM & AÇÃO ============================ */
+const T_MIM = 60000, T_MIM_SHOW = 5000;
+const MIM_WORDS = ('escovar os dentes,andar de bicicleta,pescar,dirigir,nadar,cozinhar,tocar violão,jogar futebol,surfar,pular corda,tirar selfie,dançar funk,lavar louça,trocar fralda,passar roupa,pintar parede,fazer churrasco,jogar boliche,escalar,remar,tomar banho,acordar atrasado,perder o ônibus,levar choque,pisar no lego,ver um fantasma,abrir um presente,soprar velas,andar de skate,patinar no gelo,jogar videogame,assistir filme de terror,montar barraca,ordenhar vaca,cortar cabelo,fazer as unhas,maquiar,costurar,carregar peso,correr maratona,gol,pênalti,pipoca,sorvete,espaguete,melancia,abacaxi,cachorro,gato,galinha,macaco,elefante,canguru,pinguim,cobra,borboleta,polvo,tubarão,dinossauro,girafa,aranha,palhaço,mágico,bombeiro,policial,médico,dentista,professor,garçom,astronauta,pirata,zumbi,vampiro,super-herói,ninja,princesa,robô,motoboy,DJ,youtuber,goleiro,juiz de futebol,salva-vidas,piloto de avião,celular,guarda-chuva,micro-ondas,liquidificador,aspirador de pó,secador de cabelo,ventilador,controle remoto,fone de ouvido,geladeira,chuveiro,escada rolante,elevador,roda-gigante,montanha-russa,carrinho de supermercado,avião,helicóptero,trem,barco,foguete,moto,semáforo,chuva,raio,terremoto,vulcão,tornado,neve,arco-íris,praia,acampamento,casamento,aniversário,formatura,Carnaval,Natal,Ano-Novo,Festa Junina,show de rock,velório,mudança,entrevista de emprego,primeiro encontro,ressaca,ataque de riso,soluço,espirro,cócegas,sonâmbulo,ronco,medo de altura,dor de dente,queimar a língua').split(',');
+const MIM_MODES = [['🤐', 'Mímica', 'Sem falar nada! Ligue a câmera e use o corpo.'], ['🗣️', 'Explicar', 'Pode falar, mas não pode dizer a palavra (nem pedaços dela).'], ['🎵', 'Só sons', 'Sem palavras: só barulhos, sons e cantarolar.']];
+function mimTurn(st){
+  st.turnNo = (st.turnNo || 0) + 1;
+  if(st.turnNo > st.turns){ const w = st.tpts[0] === st.tpts[1] ? -1 : st.tpts[0] > st.tpts[1] ? 0 : 1; st.winTeam = w; st.teams.forEach((t, i) => t.forEach(u => { if(i === w || w === -1) st.scores[u] = (st.scores[u] || 0) + (w === -1 ? 20 : 50); })); K4.endGame(); return; }
+  const team = (st.turnNo - 1) % 2, members = st.teams[team].filter(u => pres4().includes(u));
+  const list = members.length ? members : st.teams[team];
+  st.ptr[team] = ((st.ptr[team] ?? -1) + 1) % list.length;
+  st.actor = list[st.ptr[team]]; st.team = team;
+  const used = H4.used || (H4.used = []);
+  const w = K4.shuffle(MIM_WORDS.filter(x => !used.includes(x)))[0] || K4.shuffle(MIM_WORDS)[0]; used.push(w);
+  H4.word = w; H4.gid = st.id; st.mode = Math.floor(Math.random() * MIM_MODES.length);
+  st.word = null; st.got = null; st.skips = 0; st.phase = 'act'; K4.setDeadline(T_MIM);
+  p4Send(st, st.actor, 'mim', { word: w, turnNo: st.turnNo });
+  K4.feed({ sys: `Vez de ${prof(st.actor).display_name} (Time ${team + 1}) · ${MIM_MODES[st.mode][1]}` });
+  K4.push();
+}
+const mimGuessers = st => { const mates = st.teams[st.team].filter(u => u !== st.actor && pres4().includes(u)); return mates.length ? mates : st.players.filter(u => u !== st.actor); };
+App.registerGame('mimica', { name: 'Imagem & Ação', icon: '🎭', desc: 'Dois times. Na sua vez você recebe uma palavra secreta e tem 60 s para o seu time adivinhar — às vezes só com mímica (ligue a câmera!), às vezes explicando sem dizer a palavra, às vezes só com sons.', min: 2 }, {
+  start(st){
+    const sh = K4.shuffle(st.players); st.teams = [[], []]; sh.forEach((u, i) => st.teams[i % 2].push(u));
+    st.tpts = [0, 0]; st.ptr = {}; st.turns = Math.min(16, Math.max(6, st.players.length * 2)); st.turnNo = 0; H4.used = [];
+    mimTurn(st);
+  },
+  act(st, uid, a){
+    if(st.phase !== 'act' || H4.gid !== st.id) return;
+    if(a.a === 'mskip' && uid === st.actor && st.skips < 1){
+      st.skips++; const used = H4.used; const w = K4.shuffle(MIM_WORDS.filter(x => !used.includes(x)))[0]; used.push(w); H4.word = w;
+      p4Send(st, st.actor, 'mim', { word: w, turnNo: st.turnNo }); K4.feed({ sys: `${prof(uid).display_name} pulou a palavra` }); K4.push(); return;
+    }
+    if(a.a === 'mguess' && uid !== st.actor && mimGuessers(st).includes(uid)){
+      const g = K4.norm(String(a.text || '').slice(0, 60)), w = K4.norm(H4.word);
+      if(!g) return;
+      const ok = g === w || (w.length > 5 && K4.lev(g, w) <= 1) || g.replace(/ /g, '') === w.replace(/ /g, '');
+      if(ok){
+        const team = st.teams[0].includes(uid) ? 0 : 1;
+        st.tpts[team]++; st.scores[uid] = (st.scores[uid] || 0) + 10; st.scores[st.actor] = (st.scores[st.actor] || 0) + (team === st.team ? 10 : 0);
+        st.got = uid; st.word = H4.word; st.phase = 'show'; K4.feed({ uid, text: '✅ ' + H4.word, ok: true }); K4.setDeadline(T_MIM_SHOW); K4.push();
+      } else { K4.feed({ uid, text: String(a.text).slice(0, 60) }); K4.push(); }
+    }
+  },
+  tick(st){
+    if(st.phase === 'act'){ st.word = H4.gid === st.id ? H4.word : '???'; st.got = null; st.phase = 'show'; K4.feed({ sys: `Ninguém acertou: era "${st.word}"` }); K4.setDeadline(T_MIM_SHOW); K4.push(); }
+    else if(st.phase === 'show') mimTurn(st);
+  },
+  render(st){
+    const me = S.me.id, actor = st.actor === me, my = myPriv(st, 'mim');
+    const word = actor && my && my.turnNo === st.turnNo ? my.word : null;
+    const md = MIM_MODES[st.mode] || MIM_MODES[0];
+    const canGuess = st.phase === 'act' && !actor && mimGuessers(st).includes(me);
+    const teamBox = i => `<div class="mteam ${st.team === i ? 'on' : ''} ${st.teams[i].includes(me) ? 'mine' : ''}"><small>Time ${i + 1}</small><b>${st.tpts[i]}</b><span>${st.teams[i].map(u => K4.nm(u)).join(', ')}</span></div>`;
+    const feed = (st.feed || []).slice(-6).map(f => f.sys ? `<div class="mf1 sys">${esc(f.sys)}</div>` : `<div class="mf1 ${f.ok ? 'ok' : ''}"><b>${K4.nm(f.uid)}:</b> ${esc(f.text)}</div>`).join('');
+    return `<div class="gmim"><div class="mteams">${teamBox(0)}<div class="mvs">vez ${st.turnNo}/${st.turns}</div>${teamBox(1)}</div>
+      <div class="mstage"><div class="mmode">${md[0]} <b>${md[1]}</b><small>${md[2]}</small></div>
+        <div class="mactor">${avatar(prof(st.actor), 'lg')}<span>${actor ? 'É você!' : K4.nm(st.actor)}</span></div>
+        ${st.phase === 'show' ? `<div class="mword">${st.got ? `✅ <b>${K4.nm(st.got)}</b> acertou:` : '⏰ Era:'} <em>${esc(st.word || '')}</em></div>`
+          : actor ? `<div class="mword secret">Sua palavra: <em>${esc(word || '…')}</em>${st.skips < 1 ? '<button class="btn sec sm" data-g="mskip">Pular (1x)</button>' : ''}</div>${md[1] === 'Mímica' && !Voice.camStream ? '<small class="mut">Dica: ligue a câmera para a galera ver a mímica.</small>' : ''}`
+          : `<div class="mword">${canGuess ? 'Adivinhe! Digite o palpite.' : 'O outro time está tentando… assista!'}</div>`}
+      </div>
+      <div class="mfeed">${feed}</div>
+      ${canGuess ? '<form class="mguess" id="mgF"><input class="inp" id="mgIn" maxlength="60" placeholder="Seu palpite (Enter)" autocomplete="off"><button class="btn">Chutar</button></form>' : ''}</div>`;
+  },
+  endExtra(st){ return st.winTeam === undefined ? '' : `<div class="truend">🎭 ${st.winTeam === -1 ? `Empate! <b>${st.tpts[0]}</b> a <b>${st.tpts[1]}</b>` : `<b>Time ${st.winTeam + 1}</b> ganhou de <b>${st.tpts[st.winTeam]}</b> a <b>${st.tpts[1 - st.winTeam]}</b>`}</div>`; },
+  after(st, el){
+    const f = el && el.querySelector('#mgF');
+    if(f){ const i = f.querySelector('#mgIn'); i.onkeydown = e => e.stopPropagation(); f.onsubmit = e => { e.preventDefault(); const v = i.value.trim(); if(v){ K4.act({ a: 'mguess', text: v }); i.value = ''; } i.focus(); }; }
+  },
+  click(k){ if(k === 'mskip'){ K4.act({ a: 'mskip' }); return true; } },
+});
+
+/* ============================ JOGO DA VELHA (torneio) ============================ */
+const T_VEL = 20000, T_VEL_SHOW = 3500;
+const VL = [[0, 1, 2], [3, 4, 5], [6, 7, 8], [0, 3, 6], [1, 4, 7], [2, 5, 8], [0, 4, 8], [2, 4, 6]];
+const vWin = b => { for(const l of VL) if(b[l[0]] && b[l[0]] === b[l[1]] && b[l[1]] === b[l[2]]) return { s: b[l[0]], l }; return null; };
+function vPairs(list){ const out = []; for(let i = 0; i < list.length; i += 2) out.push([list[i], list[i + 1] || null]); return out; }
+function vNextMatch(st){
+  // pula os "passou direto" (sem adversário)
+  while(true){
+    const round = st.br[st.ri];
+    if(st.mi >= round.length){
+      const winners = st.wins[st.ri];
+      if(winners.length <= 1){ st.champ = winners[0] || null; if(st.champ) st.scores[st.champ] = (st.scores[st.champ] || 0) + 100; K4.endGame(); return; }
+      st.ri++; st.mi = 0; st.br.push(vPairs(winners)); st.wins.push([]); continue;
+    }
+    const [a, b] = round[st.mi];
+    if(!b){ st.wins[st.ri].push(a); st.mi++; K4.feed({ sys: `${prof(a).display_name} passou direto para a próxima fase` }); continue; }
+    const here = pres4();
+    if(!here.includes(a) || !here.includes(b)){ const w = here.includes(a) ? a : b; st.wins[st.ri].push(w); st.mi++; K4.feed({ sys: `${prof(w).display_name} avançou (o outro saiu da call)` }); continue; }
+    break;
+  }
+  const [a, b] = st.br[st.ri][st.mi];
+  st.draws = 0; vNewBoard(st, [a, b]);
+}
+function vNewBoard(st, pair){
+  const flip = st.draws % 2 === 1;
+  st.px = flip ? pair[1] : pair[0]; st.po = flip ? pair[0] : pair[1];
+  st.board = Array(9).fill(''); st.vturn = 'X'; st.vres = null; st.phase = 'play'; K4.setDeadline(T_VEL); K4.push();
+}
+function vMove(st, i){
+  if(st.board[i]) return;
+  st.board[i] = st.vturn;
+  const w = vWin(st.board);
+  if(w){ const uid = w.s === 'X' ? st.px : st.po; st.vres = { w: uid, line: w.l }; st.scores[uid] = (st.scores[uid] || 0) + 20; st.wins[st.ri].push(uid); st.mi++; st.phase = 'show'; K4.setDeadline(T_VEL_SHOW); K4.push(); return; }
+  if(st.board.every(Boolean)){
+    st.draws++;
+    if(st.draws >= 3){ const uid = Math.random() < 0.5 ? st.px : st.po; st.vres = { w: uid, coin: true }; st.wins[st.ri].push(uid); st.mi++; st.phase = 'show'; K4.feed({ sys: `3 empates seguidos: a moeda escolheu ${prof(uid).display_name} 🪙` }); K4.setDeadline(T_VEL_SHOW); K4.push(); return; }
+    st.vres = { draw: true }; st.phase = 'show'; K4.setDeadline(2500); K4.push(); return;
+  }
+  st.vturn = st.vturn === 'X' ? 'O' : 'X'; K4.setDeadline(T_VEL); K4.push();
+}
+App.registerGame('velha', { name: 'Jogo da Velha', icon: '⭕', desc: 'Torneio com chaveamento: cada partida é um contra um e a call toda assiste. Quem ganha avança até sobrar o campeão. Empatou? Joga de novo (na terceira, a moeda decide).', min: 2 }, {
+  start(st){ st.br = [vPairs(K4.shuffle(st.players))]; st.wins = [[]]; st.ri = 0; st.mi = 0; st.champ = null; vNextMatch(st); },
+  act(st, uid, a){
+    if(st.phase !== 'play' || a.a !== 'vmove') return;
+    const who = st.vturn === 'X' ? st.px : st.po; if(uid !== who) return;
+    const i = a.i | 0; if(i < 0 || i > 8) return; vMove(st, i);
+  },
+  tick(st){
+    if(st.phase === 'show'){ if(st.vres && st.vres.draw) vNewBoard(st, st.br[st.ri][st.mi]); else vNextMatch(st); return; }
+    if(st.phase !== 'play') return;
+    const who = st.vturn === 'X' ? st.px : st.po;
+    if(!pres4().includes(who)){ const other = who === st.px ? st.po : st.px; st.vres = { w: other }; st.wins[st.ri].push(other); st.mi++; st.phase = 'show'; K4.setDeadline(T_VEL_SHOW); K4.push(); return; }
+    const free = st.board.map((v, i) => v ? -1 : i).filter(i => i >= 0); vMove(st, free[Math.floor(Math.random() * free.length)]);
+  },
+  render(st){
+    const me = S.me.id, who = st.vturn === 'X' ? st.px : st.po, myTurn = st.phase === 'play' && who === me;
+    const line = st.vres && st.vres.line || [];
+    const names = r => st.br[r].map(([a, b]) => { const w = st.wins[r] || []; return `<div class="vbm">${[a, b].map(u => u ? `<span class="${w.includes(u) ? 'won' : (w.includes(a === u ? b : a) ? 'lost' : '')}">${K4.nm(u)}</span>` : '<span class="bye">—</span>').join('<i>x</i>')}</div>`; }).join('');
+    const title = r => { const left = st.br[r].length * 2; return left <= 2 ? 'Final' : left <= 4 ? 'Semifinal' : left <= 8 ? 'Quartas' : `Fase ${r + 1}`; };
+    return `<div class="gvelha"><div class="vbr">${st.br.map((_, r) => `<div class="vbr1 ${r === st.ri ? 'on' : ''}"><small>${title(r)}</small>${names(r)}</div>`).join('')}</div>
+      <div class="vmatch"><span class="vpl x ${st.vturn === 'X' && st.phase === 'play' ? 'turn' : ''}">❌ ${K4.nm(st.px)}</span><b>vs</b><span class="vpl o ${st.vturn === 'O' && st.phase === 'play' ? 'turn' : ''}">⭕ ${K4.nm(st.po)}</span>${st.draws ? `<small class="mut">${st.draws} empate(s)</small>` : ''}</div>
+      <div class="vboard">${st.board.map((v, i) => `<button class="vc ${v ? 'v' + v : ''} ${line.includes(i) ? 'win' : ''}" ${myTurn && !v ? `data-g="vmove" data-i="${i}"` : 'disabled'}>${v === 'X' ? '✕' : v === 'O' ? '◯' : ''}</button>`).join('')}</div>
+      <div class="uacts">${st.phase === 'show' ? (st.vres && st.vres.draw ? '<b>Deu velha! Joga de novo…</b>' : `<b>🏆 ${K4.nm(st.vres && st.vres.w)} venceu${st.vres && st.vres.coin ? ' na moeda' : ''}!</b>`) : myTurn ? '<span class="tyour">Sua vez!</span>' : `<span class="mut">Vez de ${K4.nm(who)}</span>`}</div></div>`;
+  },
+  endExtra(st){ return st.champ ? `<div class="truend">⭕ <b>${K4.nm(st.champ)}</b> é campeão do torneio de Jogo da Velha! 🏆</div>` : ''; },
+  click(k, b){ if(k === 'vmove'){ K4.act({ a: 'vmove', i: +b.dataset.i }); return true; } },
+});
+App._g4 = { H4, uCan, dFits };
+/* =====================================================================
+   v6.39: CONTROLE REMOTO (só no app do Windows)
+   Quem assiste uma tela pede "Controlar". Quem compartilha recebe uma janela do
+   próprio Windows perguntando se deixa (o site sozinho não consegue liberar).
+   Liberou: o mouse e o teclado de quem pediu passam a mexer no PC de quem compartilha.
+   Para parar: botão Parar (dos dois lados), Ctrl+Shift+F12 no PC controlado,
+   parar de compartilhar a tela ou sair da call. Acaba sozinho depois de 1 hora.
+   Os comandos vão direto de um para o outro (canal da própria chamada), não passam pelo servidor.
+   ===================================================================== */
+const RC = { view: null, host: null, lastMove: 0, pend: null, wheel: 0 };
+const rcDesk = () => window.telaoDesktop && window.telaoDesktop.rc;
+function rcInfo(sess){ return Voice.infos && Voice.infos.get(sess); }
+
+/* ---------- quem pede (assiste) ---------- */
+async function rcRequest(sess){
+  const info = rcInfo(sess); if(!info) return;
+  if(RC.view && RC.view.on){ rcViewStop(true); return; }
+  const dc = Voice.openCtl(sess);
+  if(!dc){ App.toast('Não deu para falar com o PC dessa pessoa.', true); return; }
+  RC.view = { sess, uid: info.user_id, on: false, at: Date.now() };
+  const send = () => Voice.sendCtl(sess, { a: 'req' });
+  if(dc.readyState === 'open') send();
+  else { const t0 = Date.now(); await new Promise(res => { const iv = setInterval(() => { if(dc.readyState === 'open' || Date.now() - t0 > 8000){ clearInterval(iv); res(); } }, 100); }); if(dc.readyState !== 'open'){ App.toast('Não conectou o controle. Tente de novo.', true); RC.view = null; return; } send(); }
+  App.toast(`Pedido enviado. Esperando ${prof(info.user_id).display_name} aceitar no PC dele…`);
+  renderStage();
+}
+function rcViewStop(tell){
+  const v = RC.view; if(!v) return;
+  if(tell) Voice.sendCtl(v.sess, { a: 'stop' });
+  RC.view = null; renderStage();
+}
+function rcMap(e, v){
+  const r = v.getBoundingClientRect(), vw = v.videoWidth || r.width, vh = v.videoHeight || r.height;
+  const sc = Math.min(r.width / vw, r.height / vh), cw = vw * sc, chh = vh * sc;
+  const ox = r.left + (r.width - cw) / 2, oy = r.top + (r.height - chh) / 2;
+  return { x: Math.max(0, Math.min(1, (e.clientX - ox) / cw)), y: Math.max(0, Math.min(1, (e.clientY - oy) / chh)) };
+}
+function rcLayer(box){
+  const v = box.querySelector('.vslot video'); if(!v) return;
+  const L = document.createElement('div'); L.className = 'rclayer'; L.tabIndex = 0;
+  L.innerHTML = `<span class="rchint">${ic('mouse', 14)} Clique aqui para mexer · o teclado vai para o PC de ${esc(prof(RC.view.uid).display_name)} enquanto a tela estiver selecionada</span>`;
+  box.appendChild(L);
+  const s = RC.view.sess, out = o => Voice.sendCtl(s, Object.assign({ a: 'in' }, o));
+  let raf = 0, last = null;
+  L.onpointermove = e => { last = rcMap(e, v); if(!raf) raf = requestAnimationFrame(() => { raf = 0; if(Date.now() - RC.lastMove > 25 && last){ RC.lastMove = Date.now(); out({ t: 'm', x: +last.x.toFixed(4), y: +last.y.toFixed(4) }); } }); };
+  L.onpointerdown = e => { e.preventDefault(); L.focus({ preventScroll: true }); L.classList.add('active'); const p = rcMap(e, v); out({ t: 'm', x: +p.x.toFixed(4), y: +p.y.toFixed(4) }); out({ t: 'd', b: e.button }); try{ L.setPointerCapture(e.pointerId); }catch(x){} };
+  L.onpointerup = e => { e.preventDefault(); out({ t: 'u', b: e.button }); };
+  L.oncontextmenu = e => e.preventDefault();
+  L.onwheel = e => { e.preventDefault(); RC.wheel += -e.deltaY; if(Math.abs(RC.wheel) >= 40){ const n = Math.max(-1200, Math.min(1200, Math.round(RC.wheel / 100) * 120 || Math.sign(RC.wheel) * 120)); RC.wheel = 0; out({ t: 'w', d: n }); } };
+  const key = d => e => { if(e.code === 'MetaLeft' || e.code === 'MetaRight') return; e.preventDefault(); e.stopPropagation(); if(e.repeat && !d) return; out({ t: 'k', d, c: e.code }); };
+  L.onkeydown = key(true); L.onkeyup = key(false);
+  L.onblur = () => L.classList.remove('active');
+  if(RC.view.focus){ setTimeout(() => L.focus({ preventScroll: true }), 0); }
+  L.onfocus = () => { RC.view && (RC.view.focus = true); L.classList.add('active'); };
+}
+
+/* ---------- quem compartilha (é controlado) ---------- */
+function rcBanner(){
+  let b = $('#rcBanner');
+  if(!RC.host){ b && b.remove(); return; }
+  if(!b){ document.body.insertAdjacentHTML('beforeend', '<div class="rcbanner" id="rcBanner"></div>'); b = $('#rcBanner'); }
+  b.innerHTML = `${ic('mouse', 18)} <span><b>${esc(prof(RC.host.uid).display_name)}</b> está controlando seu PC · Ctrl+Shift+F12 para parar</span><button class="btn red sm" id="rcStop">Parar</button>`;
+  b.querySelector('#rcStop').onclick = () => rcHostStop('você parou');
+}
+function rcHostStop(why, silent){
+  const h = RC.host; if(!h) return;
+  RC.host = null;
+  try{ rcDesk() && rcDesk().stop(); }catch(e){}
+  Voice.sendCtl(h.sess, { a: 'stop', why });
+  rcBanner();
+  if(!silent) App.toast('Controle remoto encerrado.');
+}
+async function rcOnReq(remote){
+  const info = rcInfo(remote), uid = info && info.user_id; if(!uid) return;
+  const no = why => Voice.sendCtl(remote, { a: 'no', why });
+  if(!rcDesk()) return no('Ela não está no app do Telão para Windows (atualizado).');
+  if(!Voice.screenStream) return no('Ela não está compartilhando a tela.');
+  if(RC.host) return no(RC.host.sess === remote ? 'Você já está controlando.' : 'Já tem alguém controlando esse PC.');
+  if(RC.pend) return no('Já tem um pedido esperando resposta.');
+  if(S.blocked && S.blocked.has(uid)) return no('Recusado.');
+  RC.pend = remote;
+  App.toast(`🖱️ ${prof(uid).display_name} pediu para controlar seu PC. Responda na janela do Windows.`);
+  let r;
+  try{ r = await rcDesk().ask(prof(uid).display_name); }catch(e){ r = { ok: false, why: 'erro' }; }
+  RC.pend = null;
+  if(!r || !r.ok) return no(r && r.why && r.why !== 'recusou' ? r.why : `${S.me.display_name || 'A pessoa'} recusou.`);
+  if(!Voice.screenStream || !Voice.peers.has(remote)){ try{ rcDesk().stop(); }catch(e){} return; }
+  RC.host = { sess: remote, uid, at: Date.now() };
+  Voice.sendCtl(remote, { a: 'ok' });
+  rcBanner();
+}
+Voice.onCtl = (remote, m) => {
+  if(!m || typeof m !== 'object') return;
+  // lado controlado
+  if(m.a === 'req'){ rcOnReq(remote); return; }
+  if(m.a === 'in'){ if(RC.host && RC.host.sess === remote && rcDesk()) rcDesk().input({ t: m.t, x: m.x, y: m.y, b: m.b, d: m.d, c: m.c }); return; }
+  if(m.a === 'stop' && RC.host && RC.host.sess === remote){ rcHostStop('a outra pessoa parou'); return; }
+  if(m.a === 'closed' && RC.host && RC.host.sess === remote){ rcHostStop('caiu a conexão', true); }
+  // lado que controla
+  const v = RC.view; if(!v || v.sess !== remote) return;
+  if(m.a === 'ok'){ v.on = true; v.focus = true; App.toast(`Você está controlando o PC de ${prof(v.uid).display_name}. Clique na tela para mexer.`); renderStage(); }
+  else if(m.a === 'no'){ App.toast(String(m.why || 'Recusado.').slice(0, 140), true); RC.view = null; renderStage(); }
+  else if(m.a === 'stop' || m.a === 'closed'){ if(v.on) App.toast('O controle remoto acabou.'); RC.view = null; renderStage(); }
+};
+if(rcDesk() && rcDesk().onStop) rcDesk().onStop(why => { if(RC.host){ const h = RC.host; RC.host = null; Voice.sendCtl(h.sess, { a: 'stop', why }); rcBanner(); App.toast('Controle remoto encerrado' + (why ? ` (${why})` : '') + '.'); } });
+// parou de compartilhar, a pessoa saiu da call… acaba
+setInterval(() => {
+  if(RC.host && (!Voice.screenStream || !Voice.peers.has(RC.host.sess))) rcHostStop('a tela parou', true);
+  if(RC.view && (!Voice.peers.has(RC.view.sess) || !(rcInfo(RC.view.sess) || {}).sharing)){ RC.view = null; renderStage(); }
+  if(RC.view && !RC.view.on && Date.now() - RC.view.at > 60000){ App.toast('Ninguém respondeu o pedido de controle.', true); RC.view = null; renderStage(); }
+}, 1000);
+const _leaveVoiceRC = leaveVoice;
+leaveVoice = function(){ if(RC.host) rcHostStop('saiu da call', true); if(RC.view) rcViewStop(true); return _leaveVoiceRC.apply(this, arguments); };
+
+/* ---------- botão na tela em foco ---------- */
+const _renderStageRC = renderStage;
+renderStage = function(){
+  _renderStageRC.apply(this, arguments);
+  const box = document.querySelector('#stageWrap #focusBox'); if(!box || box.classList.contains('wtfocus') || box.classList.contains('hidden')) return;
+  const sess = S.focus && S.focus.startsWith('s:') ? S.focus.slice(2) : null;
+  if(!sess || sess === Voice.SESSION) return;
+  const info = rcInfo(sess), tools = box.querySelector('.tools');
+  const mineView = RC.view && RC.view.sess === sess;
+  if(tools && (info && info.rc || mineView) && !tools.querySelector('#stRc')){
+    tools.insertAdjacentHTML('afterbegin', `<button id="stRc" class="${mineView && RC.view.on ? 'rec' : mineView ? 'on' : ''}" data-tip="${mineView && RC.view.on ? 'Parar de controlar' : mineView ? 'Esperando aceitar… (clique para cancelar)' : 'Pedir para controlar este PC'}">${ic('mouse', 18)}</button>`);
+    tools.querySelector('#stRc').onclick = e => { e.stopPropagation(); if(mineView){ rcViewStop(true); } else rcRequest(sess); };
+  }
+  if(mineView && RC.view.on){ box.classList.add('rcon'); rcLayer(box); }
+};
+App.rc = { get view(){ return RC.view; }, get host(){ return RC.host; }, request: rcRequest, stopHost: rcHostStop, stopView: rcViewStop, onReqTest: rcOnReq };
 /* ---------------- PWA / app para Windows ----------------
    v6.28: no Windows (navegador), a barrinha embaixo oferece o app de verdade para Windows,
    não a instalação do navegador. Nos outros aparelhos continua a instalação como app. */

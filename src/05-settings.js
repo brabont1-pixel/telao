@@ -259,8 +259,9 @@ function renderSettings(){
     if(App.hasPerm(s.id, 2)) nav.push(['overview','Visão geral']);
     if(App.hasPerm(s.id, 16)) nav.push(['roles','Cargos']);
     if(App.hasPerm(s.id, 1)) nav.push(['channels','Canais']);
-    nav.push(['emojis','Emojis'], ['sounds','Sons'], ['tag','Tag do servidor'], ['members','Membros'], ['stats','Estatísticas'], ['boost', `<span style="display:inline-flex">${BOOST_SVG(16)}</span> Impulsos`]);
+    nav.push(['emojis','Emojis'], ['stickers','Figurinhas'], ['sounds','Sons'], ['tag','Tag do servidor'], ['members','Membros'], ['stats','Estatísticas'], ['boost', `<span style="display:inline-flex">${BOOST_SVG(16)}</span> Impulsos`]);
     if(App.hasPerm(s.id, 2)) nav.push(['invites','Convites']);
+    if(App.hasPerm(s.id, 2)) nav.push(['page','Página pública']);
     if(App.hasPerm(s.id, 128) || App.hasPerm(s.id, 4)) nav.push(['bans','Banimentos']);
     if(App.hasPerm(s.id, 2) || App.hasPerm(s.id, 64)) nav.push(['safety','Segurança']);
     if(App.hasPerm(s.id, 1024)) nav.push(['audit', 'Registro de auditoria']);
@@ -289,7 +290,7 @@ function renderSettings(){
   const back = isMobile() ? `<button class="btn sec sm mobileback" id="sBack">← Voltar</button>` : '';
   const fn = SET.kind === 'user'
     ? { account: secAccount, profile: secProfile, plus: secPlus, shop: secShop, connections: secConnections, security: secSecurity, privacy: secPrivacy, boosts: secMyBoosts, appearance: secAppearance, perf: secPerf, a11y: secA11y, lang: secLang, voice: secVoice, notif: secNotif, keys: secKeys, app: secApp, admin: secAdmin }[SET.sec]
-    : { overview: secSrvOverview, roles: secSrvRoles, channels: secSrvChannels, members: secSrvMembers, boost: secSrvBoost, bans: secSrvBans, safety: secSrvSafety, emojis: secSrvEmojis, tag: secSrvTag, community: secSrvCommunity, invites: secSrvInvites, stats: secSrvStats, backup: secSrvBackup, sounds: secSrvSounds, reports: secSrvReports, audit: secSrvAudit }[SET.sec];
+    : { overview: secSrvOverview, roles: secSrvRoles, channels: secSrvChannels, members: secSrvMembers, boost: secSrvBoost, bans: secSrvBans, safety: secSrvSafety, emojis: secSrvEmojis, tag: secSrvTag, community: secSrvCommunity, invites: secSrvInvites, stats: secSrvStats, backup: secSrvBackup, sounds: secSrvSounds, reports: secSrvReports, audit: secSrvAudit, stickers: secSrvStickers, page: secSrvPage }[SET.sec];
   if(fn) fn(box, back);
   // vale também para seções que se redesenham depois de carregar (Loja, Estatísticas…)
   box.addEventListener('click', e => { if(e.target.closest('#sBack')){ e.preventDefault(); settingsBack(); } });

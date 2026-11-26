@@ -556,3 +556,22 @@ O "Spotify direto" (com Ouvir junto) continua opcional e só aparece se você co
 - **Conversas movimentadas:** quem está no fim da conversa fica com no máximo 200 mensagens na tela (as antigas voltam ao rolar para cima).
 - **Chat grudado no fim:** só solta quando você mesmo rola (roda do mouse, toque, teclado); rolagens automáticas do navegador não tiram mais o chat do fim.
 - Dica: em Configurações → Desempenho tem os modos **Equilibrado** e **Modo jogo** (Ctrl+Shift+G), que cortam efeitos de vidro e animações em PCs mais fracos.
+
+# Versão 6.39: figurinhas, efeitos, @cargo, busca, página pública, várias telas, jogos, karaokê e controle remoto
+
+**Precisa rodar o `supabase.sql` novo no Supabase.** O controle remoto também precisa do **app do Windows 1.3.0** (atualiza sozinho).
+
+- **Figurinhas do servidor:** Configurações do servidor → **Figurinhas** (quem gerencia emojis). PNG, WEBP ou GIF animado até 512 KB, até 60 por servidor. No chat, o botão de figurinha (ao lado do emoji) → aba **Figurinhas** → clica e já vai, grande.
+- **Mensagem com efeito:** mesmo botão → aba **Efeitos**: Confete, Corações, Tremida, Letra gigante, Neon e **Segredo** (chega embaçada e só aparece quando a pessoa toca). Escolhe o efeito e manda a mensagem.
+- **@cargo e @aqui:** digite @ e o nome do cargo para avisar só quem tem aquele cargo. **@aqui** avisa só quem está online na hora; **@todos** avisa todo mundo.
+  - @todos e @aqui agora precisam da permissão nova **Mencionar @todos, @aqui e cargos** (dono e Administrador já têm).
+  - Anti-spam: quem não é Administrador pode chamar cargos/@aqui/@todos no máximo 4 vezes a cada 10 minutos (10 se tiver a permissão).
+- **Busca avançada** (lupa no topo do canal): texto + **De** (pessoa) + **Onde** (este canal ou o servidor todo) + **Tem** (imagem, vídeo, link, arquivo, áudio, figurinha) + **Quando** (hoje, 7 dias, 30 dias, 1 ano ou datas) + **Fixadas** e **Me mencionaram**. Clica no resultado e vai até a mensagem, mesmo em outro canal.
+- **Página pública do servidor:** Configurações do servidor → **Página pública**. Escolha um nome (ex.: `galera-top`) e o link fica `telao.../s/galera-top`, com nome, descrição, capa, quantos estão online e na call agora, canais e o botão **Entrar**. Tem QR code e a prévia do link (Instagram, TikTok, WhatsApp) já vem com a capa e a descrição. Sem nome, `/s/CODIGO-DO-CONVITE` também funciona.
+- **Várias telas lado a lado:** com 2 ou mais pessoas transmitindo, o botão de grade na tela em foco mostra até 4 telas juntas, cada uma com **volume e mudo próprios**. "Focar" volta para uma só.
+- **Jogos novos na call** (Atividades): **Uno** (cartas na mão de cada um, +2, +4, pular, inverter e "UNO!" — quem esquece pode ser pego e compra 2), **Dominó** (2 a 4, compra do monte, bateu ou trancou, até 50 pontos ou 3 rodadas), **Imagem & Ação** (2 times; quem faz a vez recebe a palavra em segredo e às vezes é mímica, às vezes explicar sem dizer, às vezes só sons) e **Jogo da Velha em torneio** (chaveamento, a call assiste; 3 empates seguidos, a moeda decide).
+- **Karaokê** (Atividades → Karaokê): escolha o arquivo da música e cole a letra. A música toca ao mesmo tempo para todo mundo (cada um ouve no próprio aparelho) e a letra vai rolando na tela. Letra com tempo (formato LRC, `[01:23.45] linha`) rola sozinha; sem tempo, quem abriu passa as linhas com a seta ↓. A letra é sempre a que vocês colam: o Telão não busca letras em sites.
+- **Controle remoto (só no app do Windows):** quem assiste uma tela clica no ícone de mouse → **Pedir para controlar**. Quem compartilha recebe uma **janela do próprio Windows** perguntando se deixa (o site sozinho não consegue liberar). Liberado, o mouse e o teclado de quem pediu mexem no PC.
+  - Só funciona compartilhando a **tela inteira** (não uma janela).
+  - Para parar: botão **Parar** (aparece no topo), **Ctrl+Shift+F12**, o menu da bandeja, parar de compartilhar ou sair da call. Acaba sozinho depois de 1 hora.
+  - Os comandos vão direto de um PC para o outro pela conexão da própria call. Programas abertos "como administrador" não aceitam o controle (proteção do Windows).

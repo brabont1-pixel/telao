@@ -239,6 +239,7 @@
           session: SESSION, user_id: me.id, voice: this.channel.id,
           muted: this.muted || this.forceMuted || !this.micStream, deafened: this.deafened || this.forceDeaf, smod: !!(this.forceMuted || this.forceDeaf),
           sharing: !!this.screenStream, screen: this.screenStream ? this.screenStream.id : null, secho: !!(this.screenStream && this.screenEcho),
+          rc: !!(this.screenStream && window.telaoDesktop && window.telaoDesktop.rc),
           camera: !!this.camStream, cam: this.camStream ? this.camStream.id : null,
           at: Date.now()
         });
@@ -290,6 +291,8 @@
       this.peers.set(remote, p);
 
       pc.onicecandidate = e => { if(e.candidate) this.send(remote, { candidate: e.candidate.toJSON() }); };
+      // v6.39: canal de controle (controle remoto). Só é criado quando alguém pede; aqui só atende.
+      pc.ondatachannel = e => { if(e.channel && e.channel.label === 'rc') this.wireCtl(p, e.channel); };
       pc.onnegotiationneeded = async () => {
         try{
           p.makingOffer = true;
@@ -344,6 +347,22 @@
       return p;
     },
 
+    onCtl: () => {},
+    wireCtl(p, dc){
+      p.ctl = dc;
+      dc.onmessage = ev => { if(typeof ev.data !== 'string' || ev.data.length > 2000) return; try{ this.onCtl(p.remote, JSON.parse(ev.data)); }catch(e){} };
+      dc.onclose = () => { if(p.ctl === dc){ p.ctl = null; this.onCtl(p.remote, { a: 'closed' }); } };
+    },
+    openCtl(remote){
+      const p = this.peers.get(remote); if(!p) return null;
+      if(p.ctl && p.ctl.readyState !== 'closed' && p.ctl.readyState !== 'closing') return p.ctl;
+      try{ const dc = p.pc.createDataChannel('rc', { ordered: true }); this.wireCtl(p, dc); return dc; }catch(e){ return null; }
+    },
+    sendCtl(remote, obj){
+      const p = this.peers.get(remote), dc = p && p.ctl;
+      if(!dc || dc.readyState !== 'open') return false;
+      try{ dc.send(JSON.stringify(obj)); return true; }catch(e){ return false; }
+    },
     closePeer(sess){
       const p = this.peers.get(sess); if(!p) return;
       clearInterval(p.watch);
