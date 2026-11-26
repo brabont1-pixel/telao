@@ -273,7 +273,7 @@ reactsHtml = function(mid){
 };
 // emoji de servidor que ainda não está no cache (ex.: Telão+ usando de outro servidor)
 const ceWait = new Set();
-new MutationObserver(() => {
+App.onDom(() => {
   const miss = [...document.querySelectorAll('img.cemoji[data-ceid]')].map(i => i.dataset.ceid).filter(id => !ceWait.has(id));
   if(!miss.length) return;
   miss.forEach(id => ceWait.add(id));
@@ -281,7 +281,7 @@ new MutationObserver(() => {
     (data || []).forEach(e => S.cemoji.set(e.id, e));
     document.querySelectorAll('img.cemoji[data-ceid]').forEach(i => { const e = S.cemoji.get(i.dataset.ceid); if(e){ i.src = e.url; i.removeAttribute('data-ceid'); } else i.replaceWith(document.createTextNode(i.alt)); });
   });
-}).observe(document.body, { childList: true, subtree: true });
+});
 // recentes guardam só emojis comuns
 const _pushRecent = pushRecent;
 pushRecent = function(e){ if(!String(e).startsWith('<')) _pushRecent(e); };

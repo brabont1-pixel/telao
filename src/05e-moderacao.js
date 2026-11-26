@@ -103,7 +103,7 @@ function composerTimeout(){
   if(to){ c.dataset.ph = c.dataset.ph || c.placeholder; c.placeholder = `⏳ Você está de castigo até ${to.toLocaleTimeString('pt-BR',{hour:'2-digit',minute:'2-digit'})}`; c.value = ''; }
   else if(c.dataset.ph){ c.placeholder = c.dataset.ph; delete c.dataset.ph; }
 }
-new MutationObserver(() => { const c = $('#cmp'); if(c && !c._toChecked){ c._toChecked = true; composerTimeout(); } }).observe(document.body, { childList:true, subtree:true });
+App.onDom(() => { const c = $('#cmp'); if(c && !c._toChecked){ c._toChecked = true; composerTimeout(); } });
 setInterval(composerTimeout, 15000);
 
 /* configurações do servidor: lista de banidos */

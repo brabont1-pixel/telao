@@ -4,7 +4,8 @@
    Na hora do clipe sempre existe um que começou há 30–45 s; ele é fechado (arquivo completo e válido)
    e o clipe abre no ponto certo para mostrar só os últimos 30 segundos.
    ===================================================================== */
-const CLIP_LEN = 30, CLIP_STEP = 15, CLIP_LIFE = CLIP_LEN + CLIP_STEP + 2;
+// v6.38: um gravador novo a cada 30 s (antes 15 s): no máximo 2 codificando ao mesmo tempo, em vez de 4
+const CLIP_LEN = 30, CLIP_STEP = 30, CLIP_LIFE = CLIP_LEN + CLIP_STEP + 2;
 const CL = { recs: [], key: '', tick: null, ac: null, dest: null, srcNodes: new Map(), stream: null, who: null, busy: false };
 
 function clipSource(){
@@ -34,7 +35,8 @@ function clipMix(tracks){
   return CL.dest.stream.getAudioTracks()[0] || null;
 }
 function clipMime(video){
-  const list = video ? ['video/webm;codecs=vp9,opus', 'video/webm;codecs=vp8,opus', 'video/webm'] : ['audio/webm;codecs=opus', 'audio/webm'];
+  // VP8 gasta bem menos processador que VP9 para gravar em tempo real
+  const list = video ? ['video/webm;codecs=vp8,opus', 'video/webm;codecs=vp9,opus', 'video/webm'] : ['audio/webm;codecs=opus', 'audio/webm'];
   return list.find(t => MediaRecorder.isTypeSupported(t)) || '';
 }
 function clipNewRec(){
@@ -42,7 +44,7 @@ function clipNewRec(){
   const video = CL.stream.getVideoTracks().length > 0;
   const mime = clipMime(video);
   let mr;
-  try{ mr = new MediaRecorder(CL.stream, { mimeType: mime || undefined, videoBitsPerSecond: App.perf === 'game' ? 1500000 : 3000000, audioBitsPerSecond: 128000 }); }catch(e){ return; }
+  try{ mr = new MediaRecorder(CL.stream, { mimeType: mime || undefined, videoBitsPerSecond: App.perf === 'game' ? 1200000 : 2500000, audioBitsPerSecond: 128000 }); }catch(e){ return; }
   const rec = { mr, chunks: [], t0: Date.now(), video, mime: mr.mimeType || mime };
   mr.ondataavailable = e => { if(e.data && e.data.size) rec.chunks.push(e.data); };
   try{ mr.start(1000); }catch(e){ return; }
@@ -184,3 +186,4 @@ function clipModal(blob, start, len, video, who){
     };
   });
 }
+App._clipRecs = () => CL.recs.length;

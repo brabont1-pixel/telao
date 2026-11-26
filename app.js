@@ -9,7 +9,7 @@ const esc = s => String(s ?? '').replace(/[&<>"']/g, c => ({'&':'&amp;','<':'&lt
 const COLORS = ['#5865f2','#eb459e','#3ba55c','#faa61a','#ed4245','#f47b67','#1abc9c','#9b59b6','#e67e22','#607d8b'];
 const ls = { get(k,d){ try{ const v=localStorage.getItem(k); return v==null?d:JSON.parse(v); }catch(e){ return d; } }, set(k,v){ try{ localStorage.setItem(k, JSON.stringify(v)); }catch(e){} } };
 
-const APP_VERSION = '6.37';
+const APP_VERSION = '6.38';
 const S = {
   me: null, profiles: new Map(), servers: [], channels: new Map(), members: new Map(),
   friends: [], dms: [], dmActivity: ls.get('telao-dmact', {}), online: new Set(),
@@ -20,6 +20,16 @@ const S = {
   presence: new Map(), myStatus: 'online', autoIdle: false, showMembers: ls.get('telao-showmembers', true)
 };
 const App = window.App = { sb: null, get me(){ return S.me; }, S };
+/* v6.38: UM observador de DOM só, em vez de um por recurso. Os recursos que precisam "completar"
+   coisas que aparecem na tela (cartões de convite, presentes, links, emojis…) se registram aqui e rodam
+   juntos no máximo uma vez por quadro, e só quando algo foi ADICIONADO na página. */
+const DOMW = { fns: [], queued: false };
+App.onDom = fn => { DOMW.fns.push(fn); };
+function domRun(){ DOMW.queued = false; for(const f of DOMW.fns){ try{ f(); }catch(e){ console.warn(e); } } }
+new MutationObserver(muts => {
+  if(DOMW.queued) return;
+  for(const m of muts) if(m.addedNodes.length){ DOMW.queued = true; (document.hidden ? setTimeout : requestAnimationFrame)(domRun); return; }
+}).observe(document.documentElement, { childList: true, subtree: true });
 
 /* ---------------- utilidades ---------------- */
 App.toast = (t, err, action) => {
@@ -1396,9 +1406,16 @@ function msgHtml(m, prev){
    cargo, imagem carregando ou o painel mude de tamanho. Só solta quando VOCÊ rola para cima. */
 function stickWire(){
   const el = M.el; if(!el || el._stickWired) return; el._stickWired = true;
+  // v6.38: só "solta" do fim quando foi VOCÊ que rolou (roda do mouse, toque, teclado, arrastar a barra).
+  // Rolagens automáticas do navegador (imagem carregando acima) não contam.
+  let intent = 0; const mark = () => { intent = Date.now(); };
+  ['wheel', 'touchmove', 'keydown', 'pointerdown'].forEach(ev => el.addEventListener(ev, mark, { passive: true }));
   el.addEventListener('scroll', () => {
     if(Date.now() < (M.stickIgnore || 0)) return;
-    M.stick = el.scrollHeight - el.scrollTop - el.clientHeight < 80;
+    const atEnd = el.scrollHeight - el.scrollTop - el.clientHeight < 80;
+    if(atEnd) M.stick = true;
+    else if(Date.now() - intent < 1200) M.stick = false;
+    else if(M.stick && !M.detached) stickNow();
   }, { passive: true });
   // imagens, vídeos e embeds terminando de carregar
   const later = () => { if(M.stick && !M.detached){ stickNow(); requestAnimationFrame(() => { if(M.stick && !M.detached) stickNow(); }); } };
@@ -1427,7 +1444,7 @@ function toBottom(){
   M.stick = true; stickNow();
   // nos primeiros segundos a conversa ainda "cresce" (imagens, embeds, cargos): segura no fim
   clearInterval(M.stickT); const t0 = Date.now(), el0 = M.el;
-  M.stickT = setInterval(() => { if(M.el !== el0 || !M.stick || M.detached || Date.now() - t0 > 4000){ clearInterval(M.stickT); return; } if(el0.scrollHeight - el0.scrollTop - el0.clientHeight > 2) stickNow(); }, 200);
+  M.stickT = setInterval(() => { if(M.el !== el0 || !M.stick || M.detached || Date.now() - t0 > 8000){ clearInterval(M.stickT); return; } if(el0.scrollHeight - el0.scrollTop - el0.clientHeight > 2) stickNow(); }, 200);
   requestAnimationFrame(() => { if(M.stick && !M.detached) stickNow(); });
   // imagens com tamanho conhecido não pulam; as sem tamanho ajustam quando carregam
   M.el.querySelectorAll('img:not([width])').forEach(img => { if(!img.complete) img.addEventListener('load', () => { if(M.el && M.el.scrollHeight - M.el.scrollTop - M.el.clientHeight < 400) M.el.scrollTop = M.el.scrollHeight; }, { once:true }); });
@@ -1456,6 +1473,8 @@ function addMessage(m){
     M.list.push(m); M.list.sort((a,b) => a.created_at.localeCompare(b.created_at));
     if(M.list[M.list.length - 1] === m) appendMessage(m); else renderMsgList(null);
   }
+  // v6.38: conversa movimentada não acumula milhares de mensagens na tela: quem está no fim fica com as últimas 200
+  if(M.list.length > 400 && M.stick && !M.detached){ M.list = M.list.slice(-200); M.done = false; renderMsgList(true); }
   M.typing.has(m.author_id) && (clearTimeout(M.typing.get(m.author_id)), M.typing.delete(m.author_id), renderTyping());
   const fx = msgEffectFor(m.content); if(fx && !M._fxDone?.has(m.id)){ (M._fxDone = M._fxDone || new Set()).add(m.id); burst(fx); }
   if(!document.hidden) markRead();
@@ -2478,11 +2497,17 @@ function mountDraw(sess){
   const fit = () => { const r = cv.getBoundingClientRect(); cv.width = r.width * devicePixelRatio; cv.height = r.height * devicePixelRatio; };
   fit();
   const ctx = cv.getContext('2d');
-  cancelAnimationFrame(DRAW.raf);
+  cancelAnimationFrame(DRAW.raf); DRAW.raf = 0;
+  // v6.38: só desenha enquanto existe rabisco na tela (antes rodava 60x por segundo para sempre)
+  if(window.ResizeObserver){ if(DRAW.ro) DRAW.ro.disconnect(); DRAW.ro = new ResizeObserver(() => { if(document.body.contains(cv)){ fit(); DRAW.kick && DRAW.kick(); } }); DRAW.ro.observe(cv); }
+  let blank = true;
   const loop = () => {
+    DRAW.raf = 0;
     if(!document.body.contains(cv)) return;
-    const r = cv.getBoundingClientRect(); if(Math.abs(r.width * devicePixelRatio - cv.width) > 2) fit();
-    ctx.clearRect(0, 0, cv.width, cv.height);
+    if(!DRAW.ro){ const r = cv.getBoundingClientRect(); if(Math.abs(r.width * devicePixelRatio - cv.width) > 2) fit(); }
+    const live = DRAW.strokes.some(s => s.sess === DRAW.sess) || DRAW.cur;
+    if(!live && blank) return;            // nada para desenhar: dorme até chegar rabisco
+    ctx.clearRect(0, 0, cv.width, cv.height); blank = !live;
     const vr = videoRect(cv), now = Date.now();
     DRAW.strokes = DRAW.strokes.filter(s => now - s.t < 5000);
     DRAW.strokes.filter(s => s.sess === DRAW.sess).forEach(s => {
@@ -2494,6 +2519,7 @@ function mountDraw(sess){
     ctx.globalAlpha = 1; ctx.shadowBlur = 0;
     DRAW.raf = requestAnimationFrame(loop);
   };
+  DRAW.kick = () => { if(!DRAW.raf) DRAW.raf = requestAnimationFrame(loop); };
   loop();
   if(!DRAW.on) return;
   const pt = e => { const r = cv.getBoundingClientRect(), vr = videoRect(cv); const x = ((e.clientX - r.left) * devicePixelRatio - vr.x) / vr.w, y = ((e.clientY - r.top) * devicePixelRatio - vr.y) / vr.h; return [Math.max(0, Math.min(1, x)), Math.max(0, Math.min(1, y))]; };
@@ -2512,6 +2538,7 @@ function onDraw(pl){
   const ex = DRAW.strokes.find(s => s.id === pl.id);
   if(ex){ ex.pts = pl.pts; ex.t = Date.now(); }
   else DRAW.strokes.push({ id: pl.id, sess: pl.s, pts: pl.pts, c: pl.c, t: Date.now() });
+  DRAW.kick && DRAW.kick();
 }
 /* ---------------- cargos e permissões ---------------- */
 const PERMS = [
@@ -4227,7 +4254,7 @@ async function hydrateGift(el){
       <small>${mine ? `de ${esc(from.display_name)}` : `para ${esc(prof(g.to_user).display_name)}`}${g.note ? ` · “${esc(g.note)}”` : ''}</small></div>
     ${mine && !g.claimed_at ? `<button class="btn sm" data-opengift="${id}">Abrir</button>` : g.claimed_at ? '<span class="mut small">Aberto ✔</span>' : '<span class="mut small">Ainda fechado</span>'}`;
 }
-new MutationObserver(() => { document.querySelectorAll('.giftcard:not([data-ld])').forEach(hydrateGift); }).observe(document.body, { childList:true, subtree:true });
+App.onDom(() => { document.querySelectorAll('.giftcard:not([data-ld])').forEach(hydrateGift); });
 document.addEventListener('click', async e => {
   const b = e.target.closest('[data-opengift]'); if(!b) return;
   b.disabled = true;
@@ -4894,7 +4921,7 @@ function composerTimeout(){
   if(to){ c.dataset.ph = c.dataset.ph || c.placeholder; c.placeholder = `⏳ Você está de castigo até ${to.toLocaleTimeString('pt-BR',{hour:'2-digit',minute:'2-digit'})}`; c.value = ''; }
   else if(c.dataset.ph){ c.placeholder = c.dataset.ph; delete c.dataset.ph; }
 }
-new MutationObserver(() => { const c = $('#cmp'); if(c && !c._toChecked){ c._toChecked = true; composerTimeout(); } }).observe(document.body, { childList:true, subtree:true });
+App.onDom(() => { const c = $('#cmp'); if(c && !c._toChecked){ c._toChecked = true; composerTimeout(); } });
 setInterval(composerTimeout, 15000);
 
 /* configurações do servidor: lista de banidos */
@@ -6044,7 +6071,7 @@ reactsHtml = function(mid){
 };
 // emoji de servidor que ainda não está no cache (ex.: Telão+ usando de outro servidor)
 const ceWait = new Set();
-new MutationObserver(() => {
+App.onDom(() => {
   const miss = [...document.querySelectorAll('img.cemoji[data-ceid]')].map(i => i.dataset.ceid).filter(id => !ceWait.has(id));
   if(!miss.length) return;
   miss.forEach(id => ceWait.add(id));
@@ -6052,7 +6079,7 @@ new MutationObserver(() => {
     (data || []).forEach(e => S.cemoji.set(e.id, e));
     document.querySelectorAll('img.cemoji[data-ceid]').forEach(i => { const e = S.cemoji.get(i.dataset.ceid); if(e){ i.src = e.url; i.removeAttribute('data-ceid'); } else i.replaceWith(document.createTextNode(i.alt)); });
   });
-}).observe(document.body, { childList: true, subtree: true });
+});
 // recentes guardam só emojis comuns
 const _pushRecent = pushRecent;
 pushRecent = function(e){ if(!String(e).startsWith('<')) _pushRecent(e); };
@@ -6625,7 +6652,8 @@ App.secSrvStats = secSrvStats;
    Na hora do clipe sempre existe um que começou há 30–45 s; ele é fechado (arquivo completo e válido)
    e o clipe abre no ponto certo para mostrar só os últimos 30 segundos.
    ===================================================================== */
-const CLIP_LEN = 30, CLIP_STEP = 15, CLIP_LIFE = CLIP_LEN + CLIP_STEP + 2;
+// v6.38: um gravador novo a cada 30 s (antes 15 s): no máximo 2 codificando ao mesmo tempo, em vez de 4
+const CLIP_LEN = 30, CLIP_STEP = 30, CLIP_LIFE = CLIP_LEN + CLIP_STEP + 2;
 const CL = { recs: [], key: '', tick: null, ac: null, dest: null, srcNodes: new Map(), stream: null, who: null, busy: false };
 
 function clipSource(){
@@ -6655,7 +6683,8 @@ function clipMix(tracks){
   return CL.dest.stream.getAudioTracks()[0] || null;
 }
 function clipMime(video){
-  const list = video ? ['video/webm;codecs=vp9,opus', 'video/webm;codecs=vp8,opus', 'video/webm'] : ['audio/webm;codecs=opus', 'audio/webm'];
+  // VP8 gasta bem menos processador que VP9 para gravar em tempo real
+  const list = video ? ['video/webm;codecs=vp8,opus', 'video/webm;codecs=vp9,opus', 'video/webm'] : ['audio/webm;codecs=opus', 'audio/webm'];
   return list.find(t => MediaRecorder.isTypeSupported(t)) || '';
 }
 function clipNewRec(){
@@ -6663,7 +6692,7 @@ function clipNewRec(){
   const video = CL.stream.getVideoTracks().length > 0;
   const mime = clipMime(video);
   let mr;
-  try{ mr = new MediaRecorder(CL.stream, { mimeType: mime || undefined, videoBitsPerSecond: App.perf === 'game' ? 1500000 : 3000000, audioBitsPerSecond: 128000 }); }catch(e){ return; }
+  try{ mr = new MediaRecorder(CL.stream, { mimeType: mime || undefined, videoBitsPerSecond: App.perf === 'game' ? 1200000 : 2500000, audioBitsPerSecond: 128000 }); }catch(e){ return; }
   const rec = { mr, chunks: [], t0: Date.now(), video, mime: mr.mimeType || mime };
   mr.ondataavailable = e => { if(e.data && e.data.size) rec.chunks.push(e.data); };
   try{ mr.start(1000); }catch(e){ return; }
@@ -6805,6 +6834,7 @@ function clipModal(blob, start, len, video, who){
     };
   });
 }
+App._clipRecs = () => CL.recs.length;
 /* =====================================================================
    v6.9: CONTA OFICIAL DO TELÃO + DM DE BOAS-VINDAS
    A mensagem é criada pelo banco quando a conta nasce (trigger welcome_new_profile).
@@ -9339,7 +9369,7 @@ profileCard = function(p, extra){
   return html.replace(/<\/div><\/div>$/, `${bday}<div class="achrow" data-achu="${p.id}"></div></div></div>`);
 };
 const TELAO_BOT_ID = '7e1a0000-0000-4000-a000-000000000001';
-new MutationObserver(() => {
+App.onDom(() => {
   document.querySelectorAll('.achrow[data-achu]:not([data-done])').forEach(async el => {
     el.dataset.done = '1'; const uid = el.dataset.achu;
     try{
@@ -9349,7 +9379,7 @@ new MutationObserver(() => {
       el.querySelector('[data-achall]').onclick = e => { e.stopPropagation(); closeMenu(); achModal(uid); };
     }catch(e){ el.remove(); }
   });
-}).observe(document.body, { childList: true, subtree: true });
+});
 
 /* ================= ANIVERSÁRIOS ================= */
 S.bdays = new Set();
@@ -9672,8 +9702,7 @@ async function fillInv(el){
   catch(e){ el.innerHTML = invCardHtml(null, code); el.classList.add('dead'); }
   el.classList.remove('loading');
 }
-new MutationObserver(() => document.querySelectorAll('.invc[data-inv]:not([data-done])').forEach(fillInv))
-  .observe(document.body, { childList: true, subtree: true });
+App.onDom(() => document.querySelectorAll('.invc[data-inv]:not([data-done])').forEach(fillInv));
 document.addEventListener('click', async e => {
   const b = e.target.closest('[data-invgo]'); if(!b || b.disabled) return;
   e.preventDefault(); e.stopPropagation();
@@ -10121,7 +10150,7 @@ embedsHtml = function(m){
   return base + ids.map(id => `<div class="fdemb" data-fdemb="${id}"><div class="spin sm"></div></div>`).join('');
 };
 const FDC = new Map();
-new MutationObserver(() => document.querySelectorAll('.fdemb[data-fdemb]:not([data-done])').forEach(async el => {
+App.onDom(() => document.querySelectorAll('.fdemb[data-fdemb]:not([data-done])').forEach(async el => {
   el.dataset.done = '1'; const id = el.dataset.fdemb;
   let p = FDC.get(id);
   if(!p){
@@ -10132,7 +10161,7 @@ new MutationObserver(() => document.querySelectorAll('.fdemb[data-fdemb]:not([da
   await ensureProfiles([p.user_id]);
   el.innerHTML = `<div class="fdembt">${p.thumb_url ? `<img src="${esc(p.thumb_url)}" alt="">` : ''}<span class="fplay">${ic('play', 22)}</span></div><div class="fdembi"><small>${ic('film', 12)} CLIPE NO FEED</small><b>${esc(p.title)}</b><span>${esc(prof(p.user_id).display_name)}${p.game ? ' · ' + esc(p.game) : ''}</span></div>`;
   el.onclick = async () => { const { data } = await App.sb.rpc('feed_list', { p_tab: 'user', p_user: p.user_id, p_game: null, p_offset: 0 }); const full = (data || []).find(x => x.id === id) || { ...p, likes: 0, comments: 0, liked: false, following: false }; feedOpen({ tab: 'top', post: full }); };
-})).observe(document.body, { childList: true, subtree: true });
+}));
 
 /* ---------- botão na barra e link direto ---------- */
 const _renderRailFd = renderRail;
@@ -10221,10 +10250,10 @@ async function translateMsg(m){
 }
 App.translateMsg = translateMsg;
 // volta a mostrar a tradução quando a mensagem é redesenhada
-new MutationObserver(() => {
+App.onDom(() => {
   if(!TR.shown.size) return;
   TR.shown.forEach((r, mid) => { const row = document.querySelector(`[data-m="${mid}"]`); if(row && !row.querySelector('.trbox')) trBox(mid, `<div class="trtxt">${richText(r.text)}</div><span class="trtag">${ic('globe', 12)} Traduzido do ${langName(r.from)}${r.how ? ' · ' + r.how : ''}</span><button class="trx" data-trx>${ic('x', 12)}</button>`); });
-}).observe(document.body, { childList: true, subtree: true });
+});
 const _msgMenuExtraTr = App.msgMenuExtra;
 App.msgMenuExtra = m => {
   const out = _msgMenuExtraTr ? _msgMenuExtraTr(m) : [];
@@ -12002,7 +12031,7 @@ function lkHydrate(root){
     });
   });
 }
-new MutationObserver(() => { if(document.querySelector('.lkc[data-lkurl]:not([data-lkdone]), .yt[data-yt]:not([data-lkdone])')) lkHydrate(); }).observe(document.body, { childList: true, subtree: true });
+App.onDom(() => { if(document.querySelector('.lkc[data-lkurl]:not([data-lkdone]), .yt[data-yt]:not([data-lkdone])')) lkHydrate(); });
 document.addEventListener('click', e => {
   const c = e.target.closest('.lkc[data-lkplayer]'); if(!c || e.target.closest('.lkopen')) return;
   const src = c.dataset.lkplayer; if(!src) { window.open(c.dataset.lkurl, '_blank', 'noopener'); return; }
@@ -12767,6 +12796,14 @@ async function secSrvAudit(box, back){
   };
   draw();
 }
+// contadores de render (para os testes de desempenho)
+App._rc = { stage: 0, sidebar: 0, rail: 0, main: 0, list: 0 };
+{ const a = renderStage, b = renderSidebar, c = renderRail, d = renderMain, e = renderMsgList;
+  renderStage = function(){ App._rc.stage++; return a.apply(this, arguments); };
+  renderSidebar = function(){ App._rc.sidebar++; return b.apply(this, arguments); };
+  renderRail = function(){ App._rc.rail++; return c.apply(this, arguments); };
+  renderMain = function(){ App._rc.main++; return d.apply(this, arguments); };
+  renderMsgList = function(){ App._rc.list++; return e.apply(this, arguments); }; }
 /* ---------------- PWA / app para Windows ----------------
    v6.28: no Windows (navegador), a barrinha embaixo oferece o app de verdade para Windows,
    não a instalação do navegador. Nos outros aparelhos continua a instalação como app. */

@@ -96,3 +96,11 @@ async function secSrvAudit(box, back){
   };
   draw();
 }
+// contadores de render (para os testes de desempenho)
+App._rc = { stage: 0, sidebar: 0, rail: 0, main: 0, list: 0 };
+{ const a = renderStage, b = renderSidebar, c = renderRail, d = renderMain, e = renderMsgList;
+  renderStage = function(){ App._rc.stage++; return a.apply(this, arguments); };
+  renderSidebar = function(){ App._rc.sidebar++; return b.apply(this, arguments); };
+  renderRail = function(){ App._rc.rail++; return c.apply(this, arguments); };
+  renderMain = function(){ App._rc.main++; return d.apply(this, arguments); };
+  renderMsgList = function(){ App._rc.list++; return e.apply(this, arguments); }; }

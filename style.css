@@ -2362,3 +2362,4 @@ body.cinema.cineidle{cursor:none}
 .aud{display:none;margin:6px 0 0;padding:8px 10px 8px 26px;border-radius:8px;background:var(--bg0,#0d0b12);font-size:13px;color:var(--txt2)}
 .aurow.open .aud{display:block}.aud li{margin:2px 0;word-break:break-word}
 .auchev{color:var(--txt3);margin-top:6px;transition:transform .15s}.aurow.open .auchev{transform:rotate(180deg)}
+#msgs{overflow-anchor:none}

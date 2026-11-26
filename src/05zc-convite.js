@@ -48,8 +48,7 @@ async function fillInv(el){
   catch(e){ el.innerHTML = invCardHtml(null, code); el.classList.add('dead'); }
   el.classList.remove('loading');
 }
-new MutationObserver(() => document.querySelectorAll('.invc[data-inv]:not([data-done])').forEach(fillInv))
-  .observe(document.body, { childList: true, subtree: true });
+App.onDom(() => document.querySelectorAll('.invc[data-inv]:not([data-done])').forEach(fillInv));
 document.addEventListener('click', async e => {
   const b = e.target.closest('[data-invgo]'); if(!b || b.disabled) return;
   e.preventDefault(); e.stopPropagation();

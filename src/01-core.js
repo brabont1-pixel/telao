@@ -9,7 +9,7 @@ const esc = s => String(s ?? '').replace(/[&<>"']/g, c => ({'&':'&amp;','<':'&lt
 const COLORS = ['#5865f2','#eb459e','#3ba55c','#faa61a','#ed4245','#f47b67','#1abc9c','#9b59b6','#e67e22','#607d8b'];
 const ls = { get(k,d){ try{ const v=localStorage.getItem(k); return v==null?d:JSON.parse(v); }catch(e){ return d; } }, set(k,v){ try{ localStorage.setItem(k, JSON.stringify(v)); }catch(e){} } };
 
-const APP_VERSION = '6.37';
+const APP_VERSION = '6.38';
 const S = {
   me: null, profiles: new Map(), servers: [], channels: new Map(), members: new Map(),
   friends: [], dms: [], dmActivity: ls.get('telao-dmact', {}), online: new Set(),
@@ -20,6 +20,16 @@ const S = {
   presence: new Map(), myStatus: 'online', autoIdle: false, showMembers: ls.get('telao-showmembers', true)
 };
 const App = window.App = { sb: null, get me(){ return S.me; }, S };
+/* v6.38: UM observador de DOM só, em vez de um por recurso. Os recursos que precisam "completar"
+   coisas que aparecem na tela (cartões de convite, presentes, links, emojis…) se registram aqui e rodam
+   juntos no máximo uma vez por quadro, e só quando algo foi ADICIONADO na página. */
+const DOMW = { fns: [], queued: false };
+App.onDom = fn => { DOMW.fns.push(fn); };
+function domRun(){ DOMW.queued = false; for(const f of DOMW.fns){ try{ f(); }catch(e){ console.warn(e); } } }
+new MutationObserver(muts => {
+  if(DOMW.queued) return;
+  for(const m of muts) if(m.addedNodes.length){ DOMW.queued = true; (document.hidden ? setTimeout : requestAnimationFrame)(domRun); return; }
+}).observe(document.documentElement, { childList: true, subtree: true });
 
 /* ---------------- utilidades ---------------- */
 App.toast = (t, err, action) => {

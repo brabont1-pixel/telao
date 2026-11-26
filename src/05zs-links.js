@@ -79,7 +79,7 @@ function lkHydrate(root){
     });
   });
 }
-new MutationObserver(() => { if(document.querySelector('.lkc[data-lkurl]:not([data-lkdone]), .yt[data-yt]:not([data-lkdone])')) lkHydrate(); }).observe(document.body, { childList: true, subtree: true });
+App.onDom(() => { if(document.querySelector('.lkc[data-lkurl]:not([data-lkdone]), .yt[data-yt]:not([data-lkdone])')) lkHydrate(); });
 document.addEventListener('click', e => {
   const c = e.target.closest('.lkc[data-lkplayer]'); if(!c || e.target.closest('.lkopen')) return;
   const src = c.dataset.lkplayer; if(!src) { window.open(c.dataset.lkurl, '_blank', 'noopener'); return; }

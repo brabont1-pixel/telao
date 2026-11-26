@@ -353,7 +353,7 @@ embedsHtml = function(m){
   return base + ids.map(id => `<div class="fdemb" data-fdemb="${id}"><div class="spin sm"></div></div>`).join('');
 };
 const FDC = new Map();
-new MutationObserver(() => document.querySelectorAll('.fdemb[data-fdemb]:not([data-done])').forEach(async el => {
+App.onDom(() => document.querySelectorAll('.fdemb[data-fdemb]:not([data-done])').forEach(async el => {
   el.dataset.done = '1'; const id = el.dataset.fdemb;
   let p = FDC.get(id);
   if(!p){
@@ -364,7 +364,7 @@ new MutationObserver(() => document.querySelectorAll('.fdemb[data-fdemb]:not([da
   await ensureProfiles([p.user_id]);
   el.innerHTML = `<div class="fdembt">${p.thumb_url ? `<img src="${esc(p.thumb_url)}" alt="">` : ''}<span class="fplay">${ic('play', 22)}</span></div><div class="fdembi"><small>${ic('film', 12)} CLIPE NO FEED</small><b>${esc(p.title)}</b><span>${esc(prof(p.user_id).display_name)}${p.game ? ' · ' + esc(p.game) : ''}</span></div>`;
   el.onclick = async () => { const { data } = await App.sb.rpc('feed_list', { p_tab: 'user', p_user: p.user_id, p_game: null, p_offset: 0 }); const full = (data || []).find(x => x.id === id) || { ...p, likes: 0, comments: 0, liked: false, following: false }; feedOpen({ tab: 'top', post: full }); };
-})).observe(document.body, { childList: true, subtree: true });
+}));
 
 /* ---------- botão na barra e link direto ---------- */
 const _renderRailFd = renderRail;

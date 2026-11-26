@@ -494,11 +494,17 @@ function mountDraw(sess){
   const fit = () => { const r = cv.getBoundingClientRect(); cv.width = r.width * devicePixelRatio; cv.height = r.height * devicePixelRatio; };
   fit();
   const ctx = cv.getContext('2d');
-  cancelAnimationFrame(DRAW.raf);
+  cancelAnimationFrame(DRAW.raf); DRAW.raf = 0;
+  // v6.38: só desenha enquanto existe rabisco na tela (antes rodava 60x por segundo para sempre)
+  if(window.ResizeObserver){ if(DRAW.ro) DRAW.ro.disconnect(); DRAW.ro = new ResizeObserver(() => { if(document.body.contains(cv)){ fit(); DRAW.kick && DRAW.kick(); } }); DRAW.ro.observe(cv); }
+  let blank = true;
   const loop = () => {
+    DRAW.raf = 0;
     if(!document.body.contains(cv)) return;
-    const r = cv.getBoundingClientRect(); if(Math.abs(r.width * devicePixelRatio - cv.width) > 2) fit();
-    ctx.clearRect(0, 0, cv.width, cv.height);
+    if(!DRAW.ro){ const r = cv.getBoundingClientRect(); if(Math.abs(r.width * devicePixelRatio - cv.width) > 2) fit(); }
+    const live = DRAW.strokes.some(s => s.sess === DRAW.sess) || DRAW.cur;
+    if(!live && blank) return;            // nada para desenhar: dorme até chegar rabisco
+    ctx.clearRect(0, 0, cv.width, cv.height); blank = !live;
     const vr = videoRect(cv), now = Date.now();
     DRAW.strokes = DRAW.strokes.filter(s => now - s.t < 5000);
     DRAW.strokes.filter(s => s.sess === DRAW.sess).forEach(s => {
@@ -510,6 +516,7 @@ function mountDraw(sess){
     ctx.globalAlpha = 1; ctx.shadowBlur = 0;
     DRAW.raf = requestAnimationFrame(loop);
   };
+  DRAW.kick = () => { if(!DRAW.raf) DRAW.raf = requestAnimationFrame(loop); };
   loop();
   if(!DRAW.on) return;
   const pt = e => { const r = cv.getBoundingClientRect(), vr = videoRect(cv); const x = ((e.clientX - r.left) * devicePixelRatio - vr.x) / vr.w, y = ((e.clientY - r.top) * devicePixelRatio - vr.y) / vr.h; return [Math.max(0, Math.min(1, x)), Math.max(0, Math.min(1, y))]; };
@@ -528,4 +535,5 @@ function onDraw(pl){
   const ex = DRAW.strokes.find(s => s.id === pl.id);
   if(ex){ ex.pts = pl.pts; ex.t = Date.now(); }
   else DRAW.strokes.push({ id: pl.id, sess: pl.s, pts: pl.pts, c: pl.c, t: Date.now() });
+  DRAW.kick && DRAW.kick();
 }

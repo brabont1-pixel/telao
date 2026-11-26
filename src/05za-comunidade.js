@@ -223,7 +223,7 @@ profileCard = function(p, extra){
   return html.replace(/<\/div><\/div>$/, `${bday}<div class="achrow" data-achu="${p.id}"></div></div></div>`);
 };
 const TELAO_BOT_ID = '7e1a0000-0000-4000-a000-000000000001';
-new MutationObserver(() => {
+App.onDom(() => {
   document.querySelectorAll('.achrow[data-achu]:not([data-done])').forEach(async el => {
     el.dataset.done = '1'; const uid = el.dataset.achu;
     try{
@@ -233,7 +233,7 @@ new MutationObserver(() => {
       el.querySelector('[data-achall]').onclick = e => { e.stopPropagation(); closeMenu(); achModal(uid); };
     }catch(e){ el.remove(); }
   });
-}).observe(document.body, { childList: true, subtree: true });
+});
 
 /* ================= ANIVERSÁRIOS ================= */
 S.bdays = new Set();

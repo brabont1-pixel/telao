@@ -63,10 +63,10 @@ async function translateMsg(m){
 }
 App.translateMsg = translateMsg;
 // volta a mostrar a tradução quando a mensagem é redesenhada
-new MutationObserver(() => {
+App.onDom(() => {
   if(!TR.shown.size) return;
   TR.shown.forEach((r, mid) => { const row = document.querySelector(`[data-m="${mid}"]`); if(row && !row.querySelector('.trbox')) trBox(mid, `<div class="trtxt">${richText(r.text)}</div><span class="trtag">${ic('globe', 12)} Traduzido do ${langName(r.from)}${r.how ? ' · ' + r.how : ''}</span><button class="trx" data-trx>${ic('x', 12)}</button>`); });
-}).observe(document.body, { childList: true, subtree: true });
+});
 const _msgMenuExtraTr = App.msgMenuExtra;
 App.msgMenuExtra = m => {
   const out = _msgMenuExtraTr ? _msgMenuExtraTr(m) : [];

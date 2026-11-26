@@ -385,7 +385,7 @@ async function hydrateGift(el){
       <small>${mine ? `de ${esc(from.display_name)}` : `para ${esc(prof(g.to_user).display_name)}`}${g.note ? ` · “${esc(g.note)}”` : ''}</small></div>
     ${mine && !g.claimed_at ? `<button class="btn sm" data-opengift="${id}">Abrir</button>` : g.claimed_at ? '<span class="mut small">Aberto ✔</span>' : '<span class="mut small">Ainda fechado</span>'}`;
 }
-new MutationObserver(() => { document.querySelectorAll('.giftcard:not([data-ld])').forEach(hydrateGift); }).observe(document.body, { childList:true, subtree:true });
+App.onDom(() => { document.querySelectorAll('.giftcard:not([data-ld])').forEach(hydrateGift); });
 document.addEventListener('click', async e => {
   const b = e.target.closest('[data-opengift]'); if(!b) return;
   b.disabled = true;

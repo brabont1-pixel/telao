@@ -548,3 +548,11 @@ O "Spotify direto" (com Ouvir junto) continua opcional e só aparece se você co
 - Dá para filtrar por tipo e por pessoa, buscar por texto, e clicar numa linha para ver os detalhes.
 - É o próprio banco que grava (gatilhos), então ninguém consegue apagar ou inventar registro. Fica 90 dias.
 - Quem vê: dono, Administrador e quem tiver a permissão nova **Ver registro de auditoria** (em Cargos).
+
+# Versão 6.38: mais leve
+- **Rabisco na tela** (desenhar em cima da tela compartilhada): a camada de desenho redesenhava 60 vezes por segundo o tempo todo em que alguém via uma tela, mesmo sem ninguém rabiscando. Agora ela só trabalha enquanto tem rabisco. Nos testes, o trabalho da página assistindo uma tela caiu mais da metade.
+- **Clipes (Alt+C):** o Telão grava os últimos 30 s da call para os clipes. Antes eram até 4 gravações de vídeo em paralelo e no formato mais pesado (VP9); agora são no máximo 2, em VP8, que gasta bem menos processador, e com bitrate um pouco menor. Quem não usa clipes pode desligar em Configurações → Clipes.
+- **Observadores da página:** 8 recursos (convites, presentes, links, emojis, conquistas, feed, tradução e castigo) vigiavam a página inteira cada um por conta própria. Agora é um vigia só, que roda no máximo uma vez por quadro e só quando algo novo aparece.
+- **Conversas movimentadas:** quem está no fim da conversa fica com no máximo 200 mensagens na tela (as antigas voltam ao rolar para cima).
+- **Chat grudado no fim:** só solta quando você mesmo rola (roda do mouse, toque, teclado); rolagens automáticas do navegador não tiram mais o chat do fim.
+- Dica: em Configurações → Desempenho tem os modos **Equilibrado** e **Modo jogo** (Ctrl+Shift+G), que cortam efeitos de vidro e animações em PCs mais fracos.

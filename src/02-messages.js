@@ -355,9 +355,16 @@ function msgHtml(m, prev){
    cargo, imagem carregando ou o painel mude de tamanho. Só solta quando VOCÊ rola para cima. */
 function stickWire(){
   const el = M.el; if(!el || el._stickWired) return; el._stickWired = true;
+  // v6.38: só "solta" do fim quando foi VOCÊ que rolou (roda do mouse, toque, teclado, arrastar a barra).
+  // Rolagens automáticas do navegador (imagem carregando acima) não contam.
+  let intent = 0; const mark = () => { intent = Date.now(); };
+  ['wheel', 'touchmove', 'keydown', 'pointerdown'].forEach(ev => el.addEventListener(ev, mark, { passive: true }));
   el.addEventListener('scroll', () => {
     if(Date.now() < (M.stickIgnore || 0)) return;
-    M.stick = el.scrollHeight - el.scrollTop - el.clientHeight < 80;
+    const atEnd = el.scrollHeight - el.scrollTop - el.clientHeight < 80;
+    if(atEnd) M.stick = true;
+    else if(Date.now() - intent < 1200) M.stick = false;
+    else if(M.stick && !M.detached) stickNow();
   }, { passive: true });
   // imagens, vídeos e embeds terminando de carregar
   const later = () => { if(M.stick && !M.detached){ stickNow(); requestAnimationFrame(() => { if(M.stick && !M.detached) stickNow(); }); } };
@@ -386,7 +393,7 @@ function toBottom(){
   M.stick = true; stickNow();
   // nos primeiros segundos a conversa ainda "cresce" (imagens, embeds, cargos): segura no fim
   clearInterval(M.stickT); const t0 = Date.now(), el0 = M.el;
-  M.stickT = setInterval(() => { if(M.el !== el0 || !M.stick || M.detached || Date.now() - t0 > 4000){ clearInterval(M.stickT); return; } if(el0.scrollHeight - el0.scrollTop - el0.clientHeight > 2) stickNow(); }, 200);
+  M.stickT = setInterval(() => { if(M.el !== el0 || !M.stick || M.detached || Date.now() - t0 > 8000){ clearInterval(M.stickT); return; } if(el0.scrollHeight - el0.scrollTop - el0.clientHeight > 2) stickNow(); }, 200);
   requestAnimationFrame(() => { if(M.stick && !M.detached) stickNow(); });
   // imagens com tamanho conhecido não pulam; as sem tamanho ajustam quando carregam
   M.el.querySelectorAll('img:not([width])').forEach(img => { if(!img.complete) img.addEventListener('load', () => { if(M.el && M.el.scrollHeight - M.el.scrollTop - M.el.clientHeight < 400) M.el.scrollTop = M.el.scrollHeight; }, { once:true }); });
@@ -415,6 +422,8 @@ function addMessage(m){
     M.list.push(m); M.list.sort((a,b) => a.created_at.localeCompare(b.created_at));
     if(M.list[M.list.length - 1] === m) appendMessage(m); else renderMsgList(null);
   }
+  // v6.38: conversa movimentada não acumula milhares de mensagens na tela: quem está no fim fica com as últimas 200
+  if(M.list.length > 400 && M.stick && !M.detached){ M.list = M.list.slice(-200); M.done = false; renderMsgList(true); }
   M.typing.has(m.author_id) && (clearTimeout(M.typing.get(m.author_id)), M.typing.delete(m.author_id), renderTyping());
   const fx = msgEffectFor(m.content); if(fx && !M._fxDone?.has(m.id)){ (M._fxDone = M._fxDone || new Set()).add(m.id); burst(fx); }
   if(!document.hidden) markRead();
